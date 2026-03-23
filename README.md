@@ -39,7 +39,7 @@ So, if the future goal is a GCM, this code is currently the **physics column com
 - `scm/boundary_layer.py` - implicit boundary layer mixing
 - `scm/condensation.py` - large-scale saturation adjustment
 - `scm/convection_bm.py` - Betts-Miller convective adjustment
-- `scm/convection_mf.py` - simplified mass-flux convection
+- `scm/convection_mf.py` - mass-flux convection with entraining-plume closure
 - `scm/ensemble.py` - parameter sampling and mixed structural ensembles
 - `scm/diagnostics.py` - equilibrium and climate sensitivity diagnostics
 - `scm/run_scm.py` - experiment driver for spinup and CO2 perturbation runs
@@ -71,9 +71,19 @@ Each physics package returns tendencies or flux diagnostics, and the column mode
 The code supports two alternate convective closures:
 
 - **Betts-Miller**: relaxes temperature and moisture toward a reference moist-adiabatic state
-- **Mass-flux**: marches an entraining plume upward and diagnoses heating/moistening from plume-environment differences
+- **Mass-flux**: uses an entraining plume, a dilute-CAPE closure, detrainment moistening, and compensating subsidence warming
 
 This makes it easy to compare sensitivity to different structural assumptions.
+
+### Current mass-flux design
+
+The mass-flux scheme is no longer just a local plume-environment mixing model. Its current design is closer to a simplified moist-convection closure with three explicit ideas:
+
+- **Dilute CAPE closure**: convection is triggered and scaled using CAPE from an entraining parcel rather than undilute CAPE
+- **Detrainment moistening**: when plume buoyancy weakens, the scheme detrains near-saturated air into the free troposphere
+- **Subsidence warming**: the thermal tendency includes compensating subsidence associated with the plume mass budget
+
+This matters because the vertical heating and moistening structure is now intended to be more sensitive to free-tropospheric humidity and warming than the earlier version.
 
 ## Ensemble Mode
 
@@ -149,4 +159,3 @@ Typical use expects:
 - The code is a work in progress.
 - Several modules include defensive clamping and NaN checks to keep long integrations stable.
 - Some paths in the driver are still development-oriented and may be cleaned up later.
-
