@@ -79,7 +79,7 @@ def mass_flux_convection(state, grid, params):
 
     entrainment = params.get('entrainment_rate', 2.0e-4)  # per Pa
     tau_cape = params.get('tau_cape', 3600.0)
-    precip_eff = params.get('precip_efficiency', 0.8)
+    precip_eff = params.get('precip_efficiency', 0.5)
     cape_threshold = params.get('cape_threshold', 100.0)
     timestep = params.get('dt', 900.0)
 
@@ -159,7 +159,7 @@ def mass_flux_convection(state, grid, params):
         # target q increases, and the column retains more vapor —
         # that's the water vapor feedback.
         qs_env = saturation_specific_humidity(t[:, k], p_here)
-        q_target = 0.8 * qs_env  # detrained air reaches ~80% RH
+        q_target = 0.9 * qs_env  # detrained air reaches ~90% RH
         # only moisten (positive tendency), don't dry
         dq_detrain = torch.clamp(q_target - q[:, k], min=0.0)
         dq_norm[:, k] = detrain_rate * dq_detrain
@@ -180,7 +180,7 @@ def mass_flux_convection(state, grid, params):
     # boundary layer drying: the updraft removes moist air from the
     # lowest level. the drying rate is proportional to Mb * q_bl / mass_bl.
     bl_drying_rate = g / dp[:, -1]  # 1/s per unit Mb
-    dq_norm[:, -1] = dq_norm[:, -1] - bl_drying_rate * q[:, -1] * 0.1  # 10% removal rate
+    dq_norm[:, -1] = dq_norm[:, -1] - bl_drying_rate * q[:, -1] * 0.05  # 5% removal rate
 
     # CAPE closure: Mb so that dilute CAPE is removed over tau_cape
     col_heating = torch.sum(dt_norm.clamp(min=0.0) * dp / g, dim=1)

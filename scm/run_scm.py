@@ -55,7 +55,7 @@ def main():
 
     # configuration
     if args.demo:
-        n_bm, n_mf = 1, 1
+        n_bm, n_mf = 5, 5
         spinup_days, perturb_days = 200, 200
         print("demo mode: 10 members, 200-day spinup")
     else:
