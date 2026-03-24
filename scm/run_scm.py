@@ -15,7 +15,7 @@ sys.path.insert(0, '/home/claude')
 
 from scm.thermo import make_grid
 from scm.column_model import initial_state, run, update_derived
-from scm.ensemble import make_ensemble_params, default_params
+from scm.ensemble import make_ensemble_params, make_fixed_ensemble_params
 from scm.diagnostics import (
     equilibrium_stats, climate_sensitivity, summarize_ensemble
 )
@@ -56,8 +56,8 @@ def main():
     # configuration
     if args.demo:
         n_bm, n_mf = 5, 5
-        spinup_days, perturb_days = 200, 200
-        print("demo mode: 10 members, 200-day spinup")
+        spinup_days, perturb_days = 500, 500
+        print("demo mode: 10 members, fixed parameters, 500-day spinup")
     else:
         n_bm, n_mf = 50, 50
         spinup_days, perturb_days = 2000, 2000
@@ -85,7 +85,10 @@ def main():
         'co2_ref': 400.0,
         'use_slab_ocean': not args.fixed_sst,
     }
-    params = make_ensemble_params(n_bm, n_mf, base_params=base, device=device)
+    if args.demo:
+        params = make_fixed_ensemble_params(n_bm, n_mf, base_params=base, device=device)
+    else:
+        params = make_ensemble_params(n_bm, n_mf, base_params=base, device=device)
     state = initial_state(n_total, grid, params, device=device)
 
     # --- 1xCO2 spinup ---

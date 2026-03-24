@@ -128,6 +128,30 @@ def make_ensemble_params(n_bm, n_mf, base_params=None, device='cpu'):
     return params
 
 
+def make_fixed_ensemble_params(n_bm, n_mf, base_params=None, device='cpu'):
+    """create a deterministic mixed ensemble using the default parameter
+    values for every member. useful for debugging structural differences
+    without introducing random parameter spread."""
+
+    n_total = n_bm + n_mf
+
+    params = {}
+    for name, (default, lo, hi, desc) in parameter_ranges.items():
+        params[name] = torch.full((n_total,), default, device=device)
+
+    params['scheme_mask'] = torch.cat([
+        torch.zeros(n_bm, device=device),
+        torch.ones(n_mf, device=device),
+    ])
+
+    if base_params is not None:
+        for k, v in base_params.items():
+            if k not in params:
+                params[k] = v
+
+    return params
+
+
 def default_params(device='cpu'):
     """single-member default parameters for testing."""
     params = {}
