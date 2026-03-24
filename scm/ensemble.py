@@ -33,7 +33,7 @@ parameter_ranges = {
     # mass-flux convection
     'entrainment_rate': (1.5e-4, 0.5e-4, 5.0e-4, 'mf entrainment rate per Pa'),
     'tau_cape':         (3600.0, 1800.0, 7200.0, 'mf cape closure timescale'),
-    'precip_efficiency': (0.50, 0.30, 0.80, 'mf precip efficiency'),
+    'precip_efficiency': (0.80, 0.50, 0.95, 'mf precip efficiency'),
 
     # shared convection
     'cape_threshold': (100.0, 10.0, 500.0, 'cape threshold for triggering'),

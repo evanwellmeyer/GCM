@@ -79,7 +79,7 @@ def mass_flux_convection(state, grid, params):
 
     entrainment = params.get('entrainment_rate', 2.0e-4)  # per Pa
     tau_cape = params.get('tau_cape', 3600.0)
-    precip_eff = params.get('precip_efficiency', 0.5)
+    precip_eff = params.get('precip_efficiency', 0.8)
     cape_threshold = params.get('cape_threshold', 100.0)
     timestep = params.get('dt', 900.0)
 
@@ -152,16 +152,16 @@ def mass_flux_convection(state, grid, params):
         # temperature tendency: warming from plume air mixing in
         dt_norm[:, k] = detrain_rate * (t_plume - t[:, k])
 
-        # moisture tendency: the detrained air moistens the environment,
-        # but only up to a target RH. this represents the fact that
-        # convective detrainment creates anvil clouds at ~80% RH, not
-        # saturated air. the key: under warming, qs increases, so the
-        # target q increases, and the column retains more vapor —
-        # that's the water vapor feedback.
+        # moisture tendency: convection maintains the relative humidity
+        # of the free troposphere. when the environment warms, qs increases,
+        # and convection moistens to keep up. this directly produces the
+        # water vapor feedback.
+        # the tendency relaxes q toward rhconv * qs_env, similar to BM
+        # but with the mass-flux vertical structure.
         qs_env = saturation_specific_humidity(t[:, k], p_here)
-        q_target = 0.9 * qs_env  # detrained air reaches ~90% RH
-        # only moisten (positive tendency), don't dry
-        dq_detrain = torch.clamp(q_target - q[:, k], min=0.0)
+        rhconv = 0.7  # convection maintains ~70% RH in detrained layers
+        q_target = rhconv * qs_env
+        dq_detrain = (q_target - q[:, k])  # positive where env is drier than target
         dq_norm[:, k] = detrain_rate * dq_detrain
 
         # also add compensating subsidence warming below cloud top.
@@ -176,11 +176,6 @@ def mass_flux_convection(state, grid, params):
 
         # kill plume where it's clearly not buoyant
         mf_profile = mf_profile * (0.1 + 0.9 * buoyant)
-
-    # boundary layer drying: the updraft removes moist air from the
-    # lowest level. the drying rate is proportional to Mb * q_bl / mass_bl.
-    bl_drying_rate = g / dp[:, -1]  # 1/s per unit Mb
-    dq_norm[:, -1] = dq_norm[:, -1] - bl_drying_rate * q[:, -1] * 0.05  # 5% removal rate
 
     # CAPE closure: Mb so that dilute CAPE is removed over tau_cape
     col_heating = torch.sum(dt_norm.clamp(min=0.0) * dp / g, dim=1)
