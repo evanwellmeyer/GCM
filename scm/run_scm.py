@@ -42,6 +42,9 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--demo', action='store_true',
                         help='quick 10-member, 200-day test run')
+    parser.add_argument('--scheme', choices=['mixed', 'bm', 'mf'],
+                        default='mixed',
+                        help='convection configuration: mixed, bm only, or mf only')
     parser.add_argument('--no-plot', action='store_true',
                         help='skip plotting (if matplotlib not available)')
     parser.add_argument('--fixed-sst', action='store_true',
@@ -54,14 +57,30 @@ def main():
     print(f"using device: {device}")
 
     # configuration
-    if args.demo:
-        n_bm, n_mf = 5, 5
-        spinup_days, perturb_days = 500, 500
-        print("demo mode: 10 members, fixed parameters, 500-day spinup")
+    if args.scheme == 'mixed':
+        if args.demo:
+            n_bm, n_mf = 5, 5
+        else:
+            n_bm, n_mf = 50, 50
+    elif args.scheme == 'bm':
+        if args.demo:
+            n_bm, n_mf = 10, 0
+        else:
+            n_bm, n_mf = 100, 0
     else:
-        n_bm, n_mf = 50, 50
+        if args.demo:
+            n_bm, n_mf = 0, 10
+        else:
+            n_bm, n_mf = 0, 100
+
+    if args.demo:
+        spinup_days, perturb_days = 500, 500
+        print(f"demo mode: {n_bm + n_mf} members, scheme={args.scheme}, "
+              f"fixed parameters, 500-day spinup")
+    else:
         spinup_days, perturb_days = 2000, 2000
-        print(f"full mode: {n_bm + n_mf} members, {spinup_days}-day spinup")
+        print(f"full mode: {n_bm + n_mf} members, scheme={args.scheme}, "
+              f"{spinup_days}-day spinup")
 
     n_total = n_bm + n_mf
     dt = 900.0
