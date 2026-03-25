@@ -21,14 +21,17 @@ def betts_miller(state, grid, params):
 
     tau_bm = params.get('tau_bm', 7200.0)
     rhbm = params.get('rhbm', 0.7)
-    cape_threshold = params.get('cape_threshold', 100.0)
+    cape_threshold = params.get('cape_threshold', 50.0)
     timestep = params.get('dt', 900.0)
+    max_dt_day = params.get('bm_max_dt_day', 10.0)
+    max_dq_day = params.get('bm_max_dq_day', 5.0)
 
     batch = t.shape[0]
     nlevels = t.shape[1]
 
     cape_val = cape(t, q, p, grid)
-    activation = torch.sigmoid((cape_val - cape_threshold) / 50.0)
+    cape_excess = torch.clamp(cape_val - cape_threshold, min=0.0)
+    activation = (cape_excess > 0.0).to(t.dtype)
 
     if isinstance(tau_bm, torch.Tensor):
         relax = (timestep / tau_bm).clamp(max=0.8)
@@ -42,7 +45,7 @@ def betts_miller(state, grid, params):
 
     # convective layer mask: where the adiabat is warmer than environment
     buoyancy = t_ref - t
-    conv_mask = torch.sigmoid(buoyancy * 2.0)
+    conv_mask = (buoyancy > 0.0).to(t.dtype)
 
     # reference moisture at current temperature
     qs_current = saturation_specific_humidity(t, p)
@@ -77,16 +80,17 @@ def betts_miller(state, grid, params):
     dq_tend = relax_broad * dq_raw * activation.unsqueeze(1)
 
     # limit tendencies
-    max_dt = 10.0 / 86400.0 * timestep
-    max_dq = 5.0e-3 / 86400.0 * timestep
+    max_dt = max_dt_day / 86400.0 * timestep
+    max_dq = max_dq_day * 1.0e-3 / 86400.0 * timestep
     dt_tend = dt_tend.clamp(-max_dt, max_dt)
     dq_tend = dq_tend.clamp(-max_dq, max_dq)
 
     # precipitation: net moisture removal
-    precip = -torch.sum(dq_tend * dp / g, dim=1).clamp(min=0.0) / timestep
+    precip = (-torch.sum(dq_tend * dp / g, dim=1)).clamp(min=0.0) / timestep
 
     return {
         'dt': dt_tend / timestep,
         'dq': dq_tend / timestep,
         'precip': precip,
+        'cape': cape_val,
     }

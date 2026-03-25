@@ -35,7 +35,7 @@ def dilute_cape(t, q, p, entrainment):
         dp_step = (p_parcel - p_target).abs()
 
         # entrain environmental air
-        mix = (entrainment * dp_step).clamp(max=0.3)
+        mix = 1.0 - torch.exp(-(entrainment * dp_step).clamp(min=0.0, max=5.0))
         t_parcel = (1.0 - mix) * t_parcel + mix * t[:, k]
         q_parcel = (1.0 - mix) * q_parcel + mix * q[:, k]
 
@@ -77,18 +77,21 @@ def mass_flux_convection(state, grid, params):
     p = state['p']
     dp = state['dp']
 
-    entrainment = params.get('entrainment_rate', 2.0e-4)  # per Pa
+    entrainment = params.get('entrainment_rate', 5.0e-6)  # per Pa
     tau_cape = params.get('tau_cape', 3600.0)
     precip_eff = params.get('precip_efficiency', 0.8)
-    cape_threshold = params.get('cape_threshold', 100.0)
-    timestep = params.get('dt', 900.0)
-
+    cape_threshold = params.get('cape_threshold', 50.0)
+    detrain_rh = params.get('mf_detrain_rh', 0.7)
+    mb_max = params.get('mf_mb_max', 0.05)
+    bl_export_fraction = params.get('mf_bl_export_fraction', 0.02)
+    max_dt_day = params.get('mf_max_dt_day', 10.0)
+    max_dq_day = params.get('mf_max_dq_day', 5.0)
     batch = t.shape[0]
     nlevels = t.shape[1]
 
     # use dilute CAPE for the closure
     cape_val = dilute_cape(t, q, p, entrainment)
-    activation = torch.sigmoid((cape_val - cape_threshold) / 50.0)
+    cape_excess = torch.clamp(cape_val - cape_threshold, min=0.0)
 
     # march the plume upward
     t_plume = t[:, -1].clone()
@@ -96,10 +99,14 @@ def mass_flux_convection(state, grid, params):
 
     dt_norm = torch.zeros_like(t)
     dq_norm = torch.zeros_like(q)
-    condensate_col = torch.zeros(batch, device=t.device)
-
-    # track the plume mass flux (normalized, starts at 1)
+    # track the plume mass flux profile normalized by cloud-base mass flux.
+    # it grows from entrainment and shrinks from detrainment.
     mf_profile = torch.ones(batch, device=t.device)
+
+    if isinstance(detrain_rh, torch.Tensor) and detrain_rh.dim() == 1:
+        detrain_rh_col = detrain_rh.unsqueeze(1)
+    else:
+        detrain_rh_col = detrain_rh
 
     for k in range(nlevels - 2, -1, -1):
         p_here = p[:, k]
@@ -107,7 +114,7 @@ def mass_flux_convection(state, grid, params):
         dp_step = (p[:, k + 1] - p[:, k]).abs()
 
         # entrainment
-        mix = (entrainment * dp_step).clamp(max=0.3)
+        mix = 1.0 - torch.exp(-(entrainment * dp_step).clamp(min=0.0, max=5.0))
         t_plume = (1.0 - mix) * t_plume + mix * t[:, k]
         q_plume = (1.0 - mix) * q_plume + mix * q[:, k]
 
@@ -143,64 +150,66 @@ def mass_flux_convection(state, grid, params):
         mf_detrained = mf_profile * detrain_frac
         mf_profile = mf_profile * (1.0 - detrain_frac)
 
-        # the detrained air is a mix of plume and environment.
-        # it warms the environment (subsidence warming from mass removal)
-        # and moistens it (plume air is close to saturation).
-        mass_layer = dp_layer / g  # kg/m2
+        # detrainment replaces a fraction of the layer with plume air.
         detrain_rate = mf_detrained * g / dp_layer  # 1/s per unit Mb
 
         # temperature tendency: warming from plume air mixing in
         dt_norm[:, k] = detrain_rate * (t_plume - t[:, k])
 
-        # moisture tendency: moisten toward 80% RH at detrainment levels.
-        # only moisten (don't dry) — the BL drying is handled separately.
-        # under warming, qs increases, so the target q increases,
-        # putting more moisture into the column (water vapor feedback).
+        # moisture tendency: detrain plume air, but cap its humidity to a
+        # realistic anvil-layer RH target so the scheme cannot fill the free
+        # troposphere to saturation. unlike the earlier formulation, this
+        # can moisten or dry depending on the local environment.
         qs_env = saturation_specific_humidity(t[:, k], p_here)
-        q_target = 0.8 * qs_env
-        dq_detrain = torch.clamp(q_target - q[:, k], min=0.0)
-        dq_norm[:, k] = detrain_rate * dq_detrain
+        q_detrain = torch.minimum(q_plume, detrain_rh_col * qs_env)
+        dq_norm[:, k] = detrain_rate * (q_detrain - q[:, k])
 
-        # also add compensating subsidence warming below cloud top.
-        # the mass flux profile decreasing with height means air must
-        # subside to compensate, warming adiabatically.
+        # compensating subsidence is tied to actual mass-flux divergence,
+        # not the entrainment coefficient alone.
         if k < nlevels - 2:
-            subsidence_warming = mf_profile * entrainment * g / dp_layer
-            dt_norm[:, k] = dt_norm[:, k] + subsidence_warming * (t[:, k + 1] - t[:, k])
-
-        # accumulate condensate for precipitation
-        condensate_col = condensate_col + mf_profile * condensate * dp_layer / g
+            subsidence_rate = mf_detrained * g / dp_layer
+            dt_norm[:, k] = dt_norm[:, k] + subsidence_rate * (t[:, k + 1] - t[:, k])
 
         # kill plume where it's clearly not buoyant
         mf_profile = mf_profile * (0.3 + 0.7 * buoyant)
 
-    # BL drying: updraft removes moist air from the lowest level
-    bl_drying_rate = g / dp[:, -1]
-    dq_norm[:, -1] = dq_norm[:, -1] - bl_drying_rate * q[:, -1] * 0.1
+    # modest subcloud moisture export spread over the lowest few levels.
+    # this avoids the previous behavior where the lowest model level was
+    # dried aggressively enough to drive unrealistically large surface fluxes.
+    export_levels = min(3, nlevels)
+    for i in range(export_levels):
+        k = nlevels - 1 - i
+        dq_norm[:, k] = dq_norm[:, k] - (
+            bl_export_fraction * g / dp[:, k] * q[:, k] / export_levels
+        )
 
-    # CAPE closure: Mb so that dilute CAPE is removed over tau_cape
+    # CAPE closure: only CAPE above threshold can force deep convection.
     col_heating = torch.sum(dt_norm.clamp(min=0.0) * dp / g, dim=1)
     col_mass = dp.sum(dim=1) / g
     col_heating_safe = col_heating.clamp(min=1e-8)
-    mb = cape_val * col_mass / (cp * col_heating_safe * tau_cape)
-    mb = mb * activation
-    mb = mb.clamp(min=0.0, max=0.3)
+    mb = cape_excess * col_mass / (cp * col_heating_safe * tau_cape)
+    mb = mb.clamp(min=0.0)
+    if isinstance(mb_max, torch.Tensor):
+        mb = torch.minimum(mb, mb_max)
+    else:
+        mb = mb.clamp(max=mb_max)
 
     dt_tend = dt_norm * mb.unsqueeze(1)
     dq_tend = dq_norm * mb.unsqueeze(1)
 
     # limit tendencies
-    max_dt = 10.0 / 86400.0
-    max_dq = 5.0e-3 / 86400.0
+    max_dt = max_dt_day / 86400.0
+    max_dq = max_dq_day * 1.0e-3 / 86400.0
     dt_tend = dt_tend.clamp(-max_dt, max_dt)
     dq_tend = dq_tend.clamp(-max_dq, max_dq)
 
-    # precipitation
-    precip = precip_eff * condensate_col * mb
+    # precipitation follows the actual net convective drying tendency.
+    precip = precip_eff * (-torch.sum(dq_tend * dp / g, dim=1)).clamp(min=0.0)
     precip = precip.clamp(max=50.0 / 86400.0)
 
     return {
         'dt': dt_tend,
         'dq': dq_tend,
         'precip': precip,
+        'cape': cape_val,
     }

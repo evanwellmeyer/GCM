@@ -165,6 +165,18 @@ def dispatch_convection(state, grid, params):
     scheme_mask = params.get('scheme_mask', None)
 
     if scheme_mask is not None:
+        if torch.all(scheme_mask < 0.5):
+            out = betts_miller(state, grid, params)
+            for k in ['dt', 'dq', 'precip']:
+                out[k] = torch.nan_to_num(out[k], nan=0.0, posinf=0.0, neginf=0.0)
+            return out
+
+        if torch.all(scheme_mask >= 0.5):
+            out = mass_flux_convection(state, grid, params)
+            for k in ['dt', 'dq', 'precip']:
+                out[k] = torch.nan_to_num(out[k], nan=0.0, posinf=0.0, neginf=0.0)
+            return out
+
         # mixed structural ensemble: compute both and blend
         bm_out = betts_miller(state, grid, params)
         mf_out = mass_flux_convection(state, grid, params)

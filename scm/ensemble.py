@@ -24,19 +24,19 @@ parameter_ranges = {
     'ocean_depth':    (50.0, 20.0, 100.0, 'slab ocean mixed layer depth'),
 
     # boundary layer
-    'k_diff':         (10.0, 2.0, 30.0, 'boundary layer diffusivity'),
+    'k_diff':         (0.5, 0.1, 5.0, 'boundary layer diffusivity'),
 
     # betts-miller convection
     'tau_bm':         (7200.0, 1800.0, 14400.0, 'bm relaxation timescale'),
     'rhbm':           (0.70, 0.50, 0.90, 'bm reference relative humidity'),
 
     # mass-flux convection
-    'entrainment_rate': (1.5e-4, 0.5e-4, 5.0e-4, 'mf entrainment rate per Pa'),
+    'entrainment_rate': (5.0e-6, 1.0e-6, 3.0e-5, 'mf entrainment rate per Pa'),
     'tau_cape':         (3600.0, 1800.0, 7200.0, 'mf cape closure timescale'),
     'precip_efficiency': (0.80, 0.50, 0.95, 'mf precip efficiency'),
 
     # shared convection
-    'cape_threshold': (100.0, 10.0, 500.0, 'cape threshold for triggering'),
+    'cape_threshold': (50.0, 10.0, 300.0, 'cape threshold for triggering'),
 
     # large-scale condensation
     'ls_precip_fraction': (0.1, 0.05, 0.3, 'fraction of condensate removed per step'),

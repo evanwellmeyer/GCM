@@ -9,7 +9,7 @@ def boundary_layer_mixing(state, grid, params):
     """implicit vertical diffusion of temperature and moisture."""
 
     nlevels = grid['nlevels']
-    k_diff = params.get('k_diff', 10.0)
+    k_diff = params.get('k_diff', 0.5)
     dt = params.get('dt', 900.0)
 
     t = state['t']
