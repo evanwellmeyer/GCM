@@ -14,7 +14,7 @@ import sys
 sys.path.insert(0, '/home/claude')
 
 from scm.thermo import make_grid
-from scm.column_model import initial_state, run, update_derived
+from scm.column_model import initial_state, run
 from scm.ensemble import make_ensemble_params, make_fixed_ensemble_params
 from scm.diagnostics import (
     equilibrium_stats, climate_sensitivity, summarize_ensemble
@@ -38,13 +38,29 @@ def progress_callback(step, state, diag):
           f"OLR={olr_mean:.1f} W/m2  P={precip_mean:.2f} mm/day")
 
 
+def build_output_stem(args, spinup_days, perturb_days):
+    mode = 'demo' if args.demo else 'full'
+    sampling = 'fixed' if args.fixed_params or args.demo else 'random'
+    sst_mode = 'fixedsst' if args.fixed_sst else 'slabocean'
+    return (
+        f"scm_{mode}_{args.scheme}_{sampling}_{sst_mode}_"
+        f"spin{spinup_days}d_pert{perturb_days}d"
+    )
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--demo', action='store_true',
-                        help='quick 10-member, 200-day test run')
+                        help='10-member diagnostic run')
     parser.add_argument('--scheme', choices=['mixed', 'bm', 'mf'],
                         default='mixed',
                         help='convection configuration: mixed, bm only, or mf only')
+    parser.add_argument('--fixed-params', action='store_true',
+                        help='use default parameter values instead of sampling')
+    parser.add_argument('--spinup-days', type=int, default=None,
+                        help='override spinup length in days')
+    parser.add_argument('--perturb-days', type=int, default=None,
+                        help='override 2xCO2 branch length in days')
     parser.add_argument('--no-plot', action='store_true',
                         help='skip plotting (if matplotlib not available)')
     parser.add_argument('--fixed-sst', action='store_true',
@@ -74,13 +90,17 @@ def main():
             n_bm, n_mf = 0, 100
 
     if args.demo:
-        spinup_days, perturb_days = 500, 500
+        spinup_days = args.spinup_days if args.spinup_days is not None else 500
+        perturb_days = args.perturb_days if args.perturb_days is not None else 500
+        sampling = 'fixed parameters' if args.fixed_params or args.demo else 'sampled parameters'
         print(f"demo mode: {n_bm + n_mf} members, scheme={args.scheme}, "
-              f"fixed parameters, 500-day spinup")
+              f"{sampling}, {spinup_days}-day spinup")
     else:
-        spinup_days, perturb_days = 2000, 2000
+        spinup_days = args.spinup_days if args.spinup_days is not None else 2000
+        perturb_days = args.perturb_days if args.perturb_days is not None else 2000
+        sampling = 'fixed parameters' if args.fixed_params else 'sampled parameters'
         print(f"full mode: {n_bm + n_mf} members, scheme={args.scheme}, "
-              f"{spinup_days}-day spinup")
+              f"{sampling}, {spinup_days}-day spinup")
 
     n_total = n_bm + n_mf
     dt = 900.0
@@ -104,11 +124,12 @@ def main():
         'co2_ref': 400.0,
         'use_slab_ocean': not args.fixed_sst,
     }
-    if args.demo:
+    if args.demo or args.fixed_params:
         params = make_fixed_ensemble_params(n_bm, n_mf, base_params=base, device=device)
     else:
         params = make_ensemble_params(n_bm, n_mf, base_params=base, device=device)
     state = initial_state(n_total, grid, params, device=device)
+    output_stem = build_output_stem(args, spinup_days, perturb_days)
 
     # --- 1xCO2 spinup ---
     print(f"\nspinup: {n_total} members, {spinup_days} days...")
@@ -172,8 +193,9 @@ def main():
         'history_2x': [{k: v.cpu() if isinstance(v, torch.Tensor) else v
                         for k, v in d.items()} for d in history_2x],
     }
-    torch.save(output, 'scm_ensemble_results.pt')
-    print("\nresults saved to scm_ensemble_results.pt")
+    output_path = f'{output_stem}_results.pt'
+    torch.save(output, output_path)
+    print(f"\nresults saved to {output_path}")
 
     # --- plotting ---
     if not args.no_plot:
@@ -181,14 +203,15 @@ def main():
             from scm.plotting import full_diagnostic_figure
 
             combined_history = history_1x + history_2x
+            figure_path = f'{output_stem}_diagnostics.png'
 
             fig = full_diagnostic_figure(
                 combined_history, results, grid, state,
                 scheme_mask=params.get('scheme_mask'),
                 dt_days=10,
-                savepath='scm_ensemble_diagnostics.png',
+                savepath=figure_path,
             )
-            print("diagnostic figure saved to scm_ensemble_diagnostics.png")
+            print(f"diagnostic figure saved to {figure_path}")
         except ImportError:
             print("matplotlib not available, skipping plots")
         except Exception as e:
