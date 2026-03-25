@@ -2,3 +2,7 @@ __pycache__/
 *.pyc
 .DS_Store
 *.pt
+
+# generated SCM diagnostics
+scm*_results.pt
+scm*_diagnostics.png
