@@ -63,6 +63,40 @@ cloud_lw_tau = 0.0
 cloud_top_sigma = 0.65
 cloud_bottom_sigma = 0.95
 
+[calibration]
+enabled = false
+scheme = "mf"
+spinup_days = 100
+fixed_sst = false
+last_n = 10
+equilibrium_window = 10
+diag_interval_days = 10
+rad_interval_steps = 8
+top_n = 5
+ts_threshold = 0.1
+toa_threshold = 1.0
+label = ""
+
+[calibration.targets]
+ts = 300.0
+olr = 240.0
+asr = 240.0
+toa_net = 0.0
+surface_net_flux = 0.0
+
+[calibration.scales]
+ts = 5.0
+olr = 20.0
+asr = 20.0
+toa_net = 5.0
+surface_net_flux = 10.0
+
+[calibration.parameter_grid]
+# albedo = [0.28, 0.32]
+# f_window = [0.15, 0.20]
+# kappa_wv = [0.10, 0.15]
+# co2_base_tau = [1.00, 1.50]
+
 [params]
 # non-radiation parameter overrides can go here. by default this section is
 # left empty so sampled runs still use the ensemble parameter ranges defined

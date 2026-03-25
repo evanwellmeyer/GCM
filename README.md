@@ -182,6 +182,7 @@ Two example configs are included:
 - `scm/configs/default.toml` - baseline run settings
 - `scm/configs/trace_gases_example.toml` - example of the optional trace-gas radiation mode
 - `scm/configs/clouds_example.toml` - example of the optional cloud-radiative mode
+- `scm/configs/radiation_calibration.toml` - short-run sweep for tuning the semi-gray radiation baseline
 
 The config file is the preferred place for persistent run setup. Existing CLI flags still work and act as overrides.
 
@@ -234,6 +235,26 @@ Or the equivalent config-driven path:
 python -m scm.run_scm --config scm/configs/default.toml --scheme mf --fixed-params --device cpu --no-plot
 ```
 
+### Radiation calibration workflow
+
+The driver can also run a short, config-driven radiation calibration sweep. This is meant for tuning the current semi-gray baseline before adding more physics complexity.
+
+Example:
+
+```bash
+python -m scm.run_scm --config scm/configs/radiation_calibration.toml --device cpu --no-plot
+```
+
+When `[calibration].enabled = true`, the driver runs short fixed-parameter control integrations over the parameter combinations listed in `[calibration.parameter_grid]`, then ranks them by a simple score based on:
+
+- TOA net flux
+- surface net flux
+- OLR
+- ASR
+- surface temperature
+
+The calibration output prints the top candidates and saves a results file with the ranked sweep summary plus a TOML snippet for the best candidate.
+
 For full-mode fixed-parameter debugging runs, the driver now defaults to **one deterministic member** instead of creating 100 identical copies. If you want the old ensemble-shaped output, set:
 
 ```toml
@@ -267,6 +288,7 @@ The SCM now carries an explicit top-of-atmosphere energy-balance diagnostic:
 - `ASR` = absorbed shortwave radiation
 - `OLR` = outgoing longwave radiation
 - `TOA net` = `ASR - OLR`
+- `surface net` = net radiative plus turbulent flux into the slab ocean / surface reservoir
 
 This is useful for checking whether a control or perturbed run is actually near radiative-convective equilibrium.
 

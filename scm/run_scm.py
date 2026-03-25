@@ -1,11 +1,13 @@
 # run a mixed structural-parametric ensemble experiment.
 #
 # two modes:
-#   python -m scm.run_scm --demo     fast 10-member, 200-day test
+#   python -m scm.run_scm --demo     fast 10-member, 500-day test
 #   python -m scm.run_scm            full 100-member, 2000-day experiment
 #
 # spins up to radiative-convective equilibrium under 1xCO2,
-# then branches to 2xCO2 and runs to new equilibrium.
+# then branches to 2xCO2 and runs to a new equilibrium.
+# if calibration is enabled in the config, the driver runs a short
+# fixed-parameter radiation sweep instead of the 1x/2x experiment.
 
 import torch
 import time
@@ -13,9 +15,11 @@ import argparse
 import sys
 sys.path.insert(0, '/home/claude')
 
+from scm.calibration import run_radiation_calibration
 from scm.configuration import (
     load_run_config, DEFAULT_CONFIG_PATH, extract_param_overrides
 )
+from scm.experiment import build_output_stem, apply_param_overrides, member_counts
 from scm.thermo import make_grid
 from scm.column_model import initial_state, run
 from scm.ensemble import make_ensemble_params, make_fixed_ensemble_params
@@ -41,56 +45,6 @@ def progress_callback(step, state, diag):
     print(f"  step {step:6d}  Ts={ts_mean:.2f}+/-{ts_std:.2f} K  "
           f"OLR={olr_mean:.1f} W/m2  TOA={toa_mean:+.1f} W/m2  "
           f"P={precip_mean:.2f} mm/day")
-
-
-def build_output_stem(mode, scheme, sampling, fixed_sst, spinup_days,
-                      perturb_days, label=''):
-    sst_mode = 'fixedsst' if fixed_sst else 'slabocean'
-    stem = (
-        f"scm_{mode}_{scheme}_{sampling}_{sst_mode}_"
-        f"spin{spinup_days}d_pert{perturb_days}d"
-    )
-    if label:
-        stem = f"{stem}_{label}"
-    return stem
-
-
-def apply_param_overrides(params, overrides, n_total, device):
-    """apply scalar or per-member parameter overrides from config."""
-
-    for key, value in overrides.items():
-        if key in params and isinstance(params[key], torch.Tensor):
-            target = params[key]
-            if target.dim() == 1 and target.shape[0] == n_total:
-                if isinstance(value, list):
-                    tensor = torch.tensor(value, dtype=target.dtype, device=device)
-                    if tensor.shape != target.shape:
-                        raise ValueError(
-                            f"override for {key} must have shape {tuple(target.shape)}, "
-                            f"got {tuple(tensor.shape)}"
-                        )
-                    params[key] = tensor
-                else:
-                    params[key] = torch.full(
-                        target.shape, value, dtype=target.dtype, device=device
-                    )
-                continue
-        params[key] = value
-
-
-def member_counts(mode, scheme, fixed_params=False, preserve_ensemble_shape=False):
-    if mode == 'full' and fixed_params and not preserve_ensemble_shape:
-        if scheme == 'mixed':
-            return 1, 1
-        if scheme == 'bm':
-            return 1, 0
-        return 0, 1
-
-    if scheme == 'mixed':
-        return (5, 5) if mode == 'demo' else (50, 50)
-    if scheme == 'bm':
-        return (10, 0) if mode == 'demo' else (100, 0)
-    return (0, 10) if mode == 'demo' else (0, 100)
 
 
 def main():
@@ -140,6 +94,14 @@ def main():
     if args.device is not None:
         run_cfg['device'] = args.device
 
+    calibration_cfg = config.get('calibration', {})
+    if args.scheme is not None:
+        calibration_cfg['scheme'] = args.scheme
+    if args.spinup_days is not None:
+        calibration_cfg['spinup_days'] = args.spinup_days
+    if args.fixed_sst is not None:
+        calibration_cfg['fixed_sst'] = True
+    calibration_enabled = bool(calibration_cfg.get('enabled', False))
     mode = run_cfg.get('mode', 'full')
     scheme = run_cfg.get('scheme', 'mixed')
     sampling_mode = run_cfg.get('sampling', 'random')
@@ -160,6 +122,10 @@ def main():
         device = torch.device(device_name)
 
     print(f"using device: {device}")
+
+    if calibration_enabled:
+        run_radiation_calibration(config, device)
+        return
 
     n_bm, n_mf = member_counts(
         mode, scheme, fixed_params=fixed_params,
@@ -226,8 +192,10 @@ def main():
     print(f"\n1xCO2 equilibrium:")
     print(f"  Ts = {stats_1x['ts_mean'].mean():.2f} +/- "
           f"{stats_1x['ts_mean'].std(unbiased=False):.2f} K")
+    print(f"  ASR = {stats_1x['asr_mean'].mean():.1f} W/m2")
     print(f"  OLR = {stats_1x['olr_mean'].mean():.1f} W/m2")
     print(f"  TOA net = {stats_1x['toa_net_mean'].mean():+.2f} W/m2")
+    print(f"  surface net = {stats_1x['surface_net_flux_mean'].mean():+.2f} W/m2")
     print(f"  precip = {(stats_1x['precip_total_mean'] * 86400).mean():.2f} mm/day")
     print(f"  equilibrium check = {'PASS' if eq_1x else 'NOT CONVERGED'}")
 
@@ -250,8 +218,10 @@ def main():
     print(f"\n2xCO2 equilibrium:")
     print(f"  Ts = {stats_2x['ts_mean'].mean():.2f} +/- "
           f"{stats_2x['ts_mean'].std(unbiased=False):.2f} K")
+    print(f"  ASR = {stats_2x['asr_mean'].mean():.1f} W/m2")
     print(f"  OLR = {stats_2x['olr_mean'].mean():.1f} W/m2")
     print(f"  TOA net = {stats_2x['toa_net_mean'].mean():+.2f} W/m2")
+    print(f"  surface net = {stats_2x['surface_net_flux_mean'].mean():+.2f} W/m2")
     print(f"  precip = {(stats_2x['precip_total_mean'] * 86400).mean():.2f} mm/day")
     print(f"  equilibrium check = {'PASS' if eq_2x else 'NOT CONVERGED'}")
 

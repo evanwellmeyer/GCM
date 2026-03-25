@@ -171,6 +171,41 @@ def test_radiation(device):
     print("radiation: PASS\n")
 
 
+def test_calibration_utils():
+    """verify calibration grid generation and scoring are well-formed."""
+    print("=== calibration utils ===")
+    from scm.calibration import iter_parameter_grid, calibration_score
+
+    grid = {
+        'albedo': [0.28, 0.32],
+        'f_window': [0.15, 0.20],
+    }
+    candidates = list(iter_parameter_grid(grid))
+    print(f"candidate count = {len(candidates)} (expect 4)")
+    assert len(candidates) == 4
+
+    better = {
+        'ts': 300.0,
+        'olr': 240.0,
+        'asr': 240.0,
+        'toa_net': 0.5,
+        'surface_net_flux': 1.0,
+    }
+    worse = {
+        'ts': 290.0,
+        'olr': 210.0,
+        'asr': 280.0,
+        'toa_net': 20.0,
+        'surface_net_flux': 30.0,
+    }
+    better_score = calibration_score(better)
+    worse_score = calibration_score(worse)
+    print(f"better score = {better_score:.2f}, worse score = {worse_score:.2f}")
+    assert better_score < worse_score
+
+    print("calibration utils: PASS\n")
+
+
 def test_surface(device):
     """verify surface fluxes are reasonable."""
     print("=== surface ===")
@@ -496,6 +531,7 @@ def main():
 
     test_thermo(device)
     test_radiation(device)
+    test_calibration_utils()
     test_surface(device)
     test_condensation(device)
     test_convection_bm(device)
