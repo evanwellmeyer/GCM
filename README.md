@@ -66,6 +66,47 @@ state -> radiation -> surface fluxes -> boundary layer -> convection -> condensa
 
 Each physics package returns tendencies or flux diagnostics, and the column model applies them sequentially.
 
+## Radiation And Greenhouse Gases
+
+The radiation in this SCM is intentionally simple. It is a **semi-gray** scheme in [`scm/radiation.py`](scm/radiation.py):
+
+- Longwave is split into:
+  - a transparent window fraction
+  - a single absorbing band
+- Shortwave is represented as one band with water-vapor absorption
+
+In the current code, the longwave optical depth is made of two explicit pieces:
+
+- **Water vapor**: prognostic, through the model humidity field `q`
+- **CO2**: prescribed, through `co2` relative to `co2_ref`
+
+Concretely:
+
+- longwave water-vapor optical depth scales like `kappa_wv * q * dp / g`
+- longwave CO2 optical depth uses a simple logarithmic dependence on concentration, through `co2_base_tau + co2_log_factor * log(co2 / co2_ref)`
+- shortwave absorption also depends on water vapor through `sw_kappa_wv`
+
+This means the model currently treats:
+
+- `H2O` as an explicit radiatively active gas
+- `CO2` as an explicit prescribed greenhouse gas
+
+And it does **not** yet explicitly represent:
+
+- methane (`CH4`)
+- nitrous oxide (`N2O`)
+- ozone (`O3`)
+- aerosols
+- spectrally resolved clouds
+
+So if you are describing the current SCM to someone else, the right summary is:
+
+- it has a simplified radiative transfer model
+- it includes explicit water-vapor and CO2 effects
+- all other greenhouse-gas and cloud effects are either absent or implicitly folded into tuning parameters such as `f_window`, `co2_base_tau`, and `albedo`
+
+This is appropriate for a compact research SCM, but it is not yet a full GCM-grade radiation package.
+
 ## Convection Schemes
 
 The code supports two alternate convective closures:
@@ -113,7 +154,26 @@ This runs isolated checks for the thermodynamics, radiation, surface, condensati
 python -m scm.run_scm --demo
 ```
 
-Demo mode runs a small ensemble for a shorter spinup and perturbation period.
+Demo mode now defaults to:
+
+- 10 members
+- fixed parameters
+- 500-day 1xCO2 spinup
+- 500-day 2xCO2 branch
+
+You can also isolate one convection scheme:
+
+```bash
+python -m scm.run_scm --demo --scheme mf
+python -m scm.run_scm --demo --scheme bm
+python -m scm.run_scm --demo --scheme mixed
+```
+
+For controlled debugging runs, the most useful option is usually:
+
+```bash
+python -m scm.run_scm --scheme mf --fixed-params --spinup-days 2000 --perturb-days 2000 --device cpu --no-plot
+```
 
 ### Full experiment
 
@@ -123,14 +183,24 @@ python -m scm.run_scm
 
 By default this runs a larger ensemble, spins up under 1xCO2, then branches to 2xCO2.
 
+Useful driver flags:
+
+- `--scheme {mixed,bm,mf}`: choose mixed, Betts-Miller-only, or mass-flux-only runs
+- `--fixed-params`: use default parameters instead of sampling
+- `--spinup-days N`: override the 1xCO2 run length
+- `--perturb-days N`: override the 2xCO2 run length
+- `--fixed-sst`: disable slab-ocean evolution for faster debugging
+- `--device {cpu,cuda,mps}`: choose the execution device
+- `--no-plot`: skip figure generation
+
 ## Output
 
 The main driver saves:
 
-- `scm_ensemble_results.pt`
-- `scm_ensemble_diagnostics.png` if plotting is available
+- a results file named like `scm_demo_mf_fixed_slabocean_spin500d_pert500d_results.pt`
+- a diagnostics figure with a matching stem if plotting is available
 
-These contain equilibrium statistics, sensitivity estimates, parameter fields, and history snapshots.
+These contain equilibrium statistics, sensitivity estimates, parameter fields, and history snapshots. The filenames now encode mode, scheme, sampling mode, SST mode, and run lengths so runs do not overwrite each other as easily.
 
 ## Future GCM Connection
 
