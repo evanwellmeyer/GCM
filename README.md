@@ -253,6 +253,13 @@ When `[calibration].enabled = true`, the driver runs short fixed-parameter contr
 - ASR
 - surface temperature
 
+By default, the calibration runner batches candidates into chunks instead of running them strictly one by one. The main controls are:
+
+- `[calibration].batch_candidates = true`
+- `[calibration].batch_size = 16`
+
+This is the preferred way to make calibration runs use CPU threads or MPS more effectively.
+
 The calibration output prints the top candidates and saves a results file with the ranked sweep summary plus a TOML snippet for the best candidate.
 
 For full-mode fixed-parameter debugging runs, the driver now defaults to **one deterministic member** instead of creating 100 identical copies. If you want the old ensemble-shaped output, set:

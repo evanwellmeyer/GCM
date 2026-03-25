@@ -5,7 +5,7 @@ import torch
 
 from scm.column_model import initial_state, run
 from scm.configuration import extract_param_overrides
-from scm.diagnostics import check_equilibrium, equilibrium_stats
+from scm.diagnostics import equilibrium_stats
 from scm.ensemble import make_fixed_ensemble_params
 from scm.experiment import (
     apply_param_overrides,
@@ -119,6 +119,69 @@ def candidate_toml_snippet(candidate):
     return '\n'.join(lines).rstrip()
 
 
+def _equilibrium_flags(diag_history, window=50, ts_threshold=0.1, toa_threshold=1.0):
+    """Per-member equilibrium flags over the requested window."""
+
+    batch = diag_history[-1]['ts'].shape[0]
+    if window < 2 or len(diag_history) < window:
+        return torch.zeros(batch, dtype=torch.bool)
+
+    recent = diag_history[-window:]
+    recent_ts = torch.stack([d['ts'] for d in recent])
+    x = torch.arange(window, dtype=recent_ts.dtype, device=recent_ts.device)
+    x = x - x.mean()
+    slopes = (recent_ts * x.unsqueeze(1)).sum(dim=0) / (x * x).sum()
+    ts_ok = slopes.abs() < ts_threshold
+
+    if 'toa_net' not in recent[-1]:
+        return ts_ok.cpu()
+
+    recent_toa = torch.stack([d['toa_net'] for d in recent])
+    toa_ok = recent_toa.mean(dim=0).abs() < toa_threshold
+    return (ts_ok & toa_ok).cpu()
+
+
+def _candidate_member_indices(n_candidates, n_bm_per_candidate, n_mf_per_candidate):
+    """Return member indices for each candidate within a batched chunk."""
+
+    member_indices = []
+    bm_block = n_candidates * n_bm_per_candidate
+
+    for idx in range(n_candidates):
+        indices = []
+        if n_bm_per_candidate:
+            start = idx * n_bm_per_candidate
+            indices.extend(range(start, start + n_bm_per_candidate))
+        if n_mf_per_candidate:
+            start = bm_block + idx * n_mf_per_candidate
+            indices.extend(range(start, start + n_mf_per_candidate))
+        member_indices.append(indices)
+
+    return member_indices
+
+
+def _candidate_overrides_for_chunk(candidates, n_bm_per_candidate, n_mf_per_candidate):
+    """Expand candidate values into per-member override lists for a chunk."""
+
+    if not candidates or not candidates[0]:
+        return {}
+
+    override_keys = list(candidates[0].keys())
+    overrides = {}
+
+    for key in override_keys:
+        values = []
+        if n_bm_per_candidate:
+            for candidate in candidates:
+                values.extend([candidate[key]] * n_bm_per_candidate)
+        if n_mf_per_candidate:
+            for candidate in candidates:
+                values.extend([candidate[key]] * n_mf_per_candidate)
+        overrides[key] = values
+
+    return overrides
+
+
 def run_radiation_calibration(config, device):
     """Run short fixed-parameter control integrations over a radiation grid."""
 
@@ -145,11 +208,15 @@ def run_radiation_calibration(config, device):
     ts_threshold = float(calibration_cfg.get('ts_threshold', 0.1))
     toa_threshold = float(calibration_cfg.get('toa_threshold', 1.0))
     label = calibration_cfg.get('label', run_cfg.get('label', ''))
+    batch_candidates = bool(calibration_cfg.get('batch_candidates', True))
+    batch_size = int(calibration_cfg.get('batch_size', 16))
+    if not batch_candidates:
+        batch_size = 1
+    batch_size = max(1, batch_size)
 
-    n_bm, n_mf = member_counts(
+    n_bm_per_candidate, n_mf_per_candidate = member_counts(
         'full', scheme, fixed_params=True, preserve_ensemble_shape=preserve_shape
     )
-    n_total = n_bm + n_mf
     dt = float(numerics_cfg.get('dt', 900.0))
     steps_per_day = int(86400 / dt)
     spinup_steps = spinup_days * steps_per_day
@@ -174,19 +241,32 @@ def run_radiation_calibration(config, device):
 
     print(
         f"\nradiation calibration: {len(candidates)} candidates, "
-        f"scheme={scheme}, {spinup_days}-day control runs"
+        f"scheme={scheme}, {spinup_days}-day control runs, "
+        f"batch_size={batch_size}"
     )
 
     results = []
     t0_all = time.time()
 
-    for idx, candidate in enumerate(candidates, start=1):
-        params = make_fixed_ensemble_params(n_bm, n_mf, base_params=base_params, device=device)
-        apply_param_overrides(params, param_overrides, n_total, device)
-        apply_param_overrides(params, candidate, n_total, device)
+    for chunk_start in range(0, len(candidates), batch_size):
+        chunk = candidates[chunk_start:chunk_start + batch_size]
+        chunk_n_bm = len(chunk) * n_bm_per_candidate
+        chunk_n_mf = len(chunk) * n_mf_per_candidate
+        chunk_n_total = chunk_n_bm + chunk_n_mf
+
+        params = make_fixed_ensemble_params(
+            chunk_n_bm, chunk_n_mf, base_params=base_params, device=device
+        )
+        apply_param_overrides(params, param_overrides, chunk_n_total, device)
+        apply_param_overrides(
+            params,
+            _candidate_overrides_for_chunk(chunk, n_bm_per_candidate, n_mf_per_candidate),
+            chunk_n_total,
+            device,
+        )
         params['use_slab_ocean'] = not fixed_sst
 
-        state = initial_state(n_total, grid, params, device=device)
+        state = initial_state(chunk_n_total, grid, params, device=device)
         t0 = time.time()
         state, history = run(
             state, grid, params, spinup_steps,
@@ -196,40 +276,47 @@ def run_radiation_calibration(config, device):
         )
         elapsed = time.time() - t0
         stats = equilibrium_stats(history, last_n=last_n)
-        eq = check_equilibrium(
+        eq_flags = _equilibrium_flags(
             history,
             window=min(eq_window, len(history)),
             ts_threshold=ts_threshold,
             toa_threshold=toa_threshold,
         )
-
-        metrics = {
-            'ts': float(stats['ts_mean'].mean().item()),
-            'olr': float(stats['olr_mean'].mean().item()),
-            'asr': float(stats['asr_mean'].mean().item()),
-            'toa_net': float(stats['toa_net_mean'].mean().item()),
-            'surface_net_flux': float(stats['surface_net_flux_mean'].mean().item()),
-            'precip': float((stats['precip_total_mean'] * 86400.0).mean().item()),
-        }
-        score = calibration_score(metrics, targets=targets, scales=scales)
-
-        result = {
-            'index': idx,
-            'candidate': candidate,
-            'metrics': metrics,
-            'score': score,
-            'equilibrium': eq,
-            'elapsed_s': elapsed,
-        }
-        results.append(result)
-
-        print(
-            f"  [{idx:02d}/{len(candidates):02d}] score={score:5.2f}  "
-            f"TOA={metrics['toa_net']:+6.2f}  SFC={metrics['surface_net_flux']:+6.2f}  "
-            f"Ts={metrics['ts']:6.2f}  OLR={metrics['olr']:6.1f}  "
-            f"ASR={metrics['asr']:6.1f}  P={metrics['precip']:4.2f}  "
-            f"eq={'PASS' if eq else 'NO'}  {format_candidate(candidate)}"
+        member_groups = _candidate_member_indices(
+            len(chunk), n_bm_per_candidate, n_mf_per_candidate
         )
+
+        for local_idx, candidate in enumerate(chunk):
+            member_idx = member_groups[local_idx]
+            idx = chunk_start + local_idx + 1
+            metrics = {
+                'ts': float(stats['ts_mean'][member_idx].mean().item()),
+                'olr': float(stats['olr_mean'][member_idx].mean().item()),
+                'asr': float(stats['asr_mean'][member_idx].mean().item()),
+                'toa_net': float(stats['toa_net_mean'][member_idx].mean().item()),
+                'surface_net_flux': float(stats['surface_net_flux_mean'][member_idx].mean().item()),
+                'precip': float((stats['precip_total_mean'][member_idx] * 86400.0).mean().item()),
+            }
+            eq = bool(eq_flags[member_idx].all().item())
+            score = calibration_score(metrics, targets=targets, scales=scales)
+
+            result = {
+                'index': idx,
+                'candidate': candidate,
+                'metrics': metrics,
+                'score': score,
+                'equilibrium': eq,
+                'elapsed_s': elapsed / max(1, len(chunk)),
+            }
+            results.append(result)
+
+            print(
+                f"  [{idx:02d}/{len(candidates):02d}] score={score:5.2f}  "
+                f"TOA={metrics['toa_net']:+6.2f}  SFC={metrics['surface_net_flux']:+6.2f}  "
+                f"Ts={metrics['ts']:6.2f}  OLR={metrics['olr']:6.1f}  "
+                f"ASR={metrics['asr']:6.1f}  P={metrics['precip']:4.2f}  "
+                f"eq={'PASS' if eq else 'NO'}  {format_candidate(candidate)}"
+            )
 
     ranked = sorted(results, key=lambda item: item['score'])
     elapsed_all = time.time() - t0_all
@@ -261,6 +348,8 @@ def run_radiation_calibration(config, device):
             'scheme': scheme,
             'targets': targets,
             'scales': scales,
+            'batch_candidates': batch_candidates,
+            'batch_size': batch_size,
             'results': ranked,
             'best': best,
             'best_toml_snippet': best_snippet,

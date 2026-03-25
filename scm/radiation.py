@@ -56,6 +56,18 @@ def _cloud_layer_weights(grid, batch, device, dtype, params):
     return mask / counts
 
 
+def _forward_flux_sweep(transmissivity, source, boundary):
+    """Vectorized solution of y[k+1] = y[k] * transmissivity[k] + source[k]."""
+
+    batch = transmissivity.shape[0]
+    one = torch.ones(batch, 1, device=transmissivity.device, dtype=transmissivity.dtype)
+    zero = torch.zeros(batch, 1, device=transmissivity.device, dtype=transmissivity.dtype)
+    prefix = torch.cat([one, torch.cumprod(transmissivity, dim=1)], dim=1)
+    scaled_source = source / prefix[:, 1:].clamp(min=1.0e-12)
+    accum = torch.cumsum(scaled_source, dim=1)
+    return prefix * (boundary.unsqueeze(1) + torch.cat([zero, accum], dim=1))
+
+
 def compute_longwave(t, q, ts, p, dp, grid, params):
     """two-band longwave radiation. returns heating rates (batch, nlevels)
     in K/s, surface downwelling LW in W/m2, and OLR in W/m2."""
@@ -127,26 +139,25 @@ def compute_longwave(t, q, ts, p, dp, grid, params):
     f_abs_sfc = 1.0 - f_win_sfc
     b_surface = f_abs_sfc * sigma_sb * ts ** 4  # (batch,)
 
-    # upwelling flux at interfaces, marching from surface upward.
-    # interface nlevels is the surface, interface 0 is TOA.
-    f_up = torch.zeros(batch, nlevels + 1, device=t.device)
-    f_up[:, nlevels] = b_surface
+    emission = b_level * (1.0 - transmissivity)
 
-    for k in range(nlevels - 1, -1, -1):
-        f_up[:, k] = f_up[:, k + 1] * transmissivity[:, k] + b_level[:, k] * (1.0 - transmissivity[:, k])
+    # upwelling flux at interfaces. interface nlevels is the surface,
+    # interface 0 is TOA.
+    f_up = _forward_flux_sweep(
+        transmissivity.flip(1),
+        emission.flip(1),
+        b_surface,
+    ).flip(1)
 
     # downwelling flux, marching from TOA downward
-    f_dn = torch.zeros(batch, nlevels + 1, device=t.device)
-    f_dn[:, 0] = 0.0
-
-    for k in range(nlevels):
-        f_dn[:, k + 1] = f_dn[:, k] * transmissivity[:, k] + b_level[:, k] * (1.0 - transmissivity[:, k])
+    f_dn = _forward_flux_sweep(
+        transmissivity,
+        emission,
+        torch.zeros(batch, device=t.device, dtype=t.dtype),
+    )
 
     f_net = f_up - f_dn
-
-    heating = torch.zeros_like(t)
-    for k in range(nlevels):
-        heating[:, k] = -g / cp * (f_net[:, k] - f_net[:, k + 1]) / dp[:, k]
+    heating = -g / cp * (f_net[:, :-1] - f_net[:, 1:]) / dp
 
     olr_window = f_win_sfc * sigma_sb * ts ** 4
     olr = olr_window + f_up[:, 0]
@@ -163,7 +174,7 @@ def compute_shortwave(t, q, ts, p, dp, grid, params):
 
     s0 = params.get('solar_constant', 1360.0)
     zenith_factor = params.get('zenith_factor', 0.25)
-    albedo = params.get('albedo', 0.1)
+    albedo = _as_batch_tensor(params.get('albedo', 0.1), batch, t.device, t.dtype)
     sw_kappa_wv = _as_batch_tensor(params.get('sw_kappa_wv', 0.01), batch, t.device, t.dtype)
 
     toa_insolation = _as_batch_tensor(s0 * zenith_factor, batch, t.device, t.dtype)
@@ -194,32 +205,29 @@ def compute_shortwave(t, q, ts, p, dp, grid, params):
     # sw_kappa_wv stays as (batch,) or scalar — it's used in a per-level
     # loop where q[:, k] and dp[:, k] are already (batch,)
 
-    sw_down = torch.zeros(batch, nlevels + 1, device=t.device)
-    sw_up = torch.zeros(batch, nlevels + 1, device=t.device)
-    sw_down[:, 0] = toa_insolation * (1.0 - cloud_reflectivity)
+    sw_top = toa_insolation * (1.0 - cloud_reflectivity)
     sw_reflected_cloud = toa_insolation * cloud_reflectivity
-    sw_trans = torch.zeros(batch, nlevels, device=t.device, dtype=t.dtype)
-
-    for k in range(nlevels):
-        sw_tau = sw_kappa_wv * q[:, k] * dp[:, k] / g + o3_sw_layer_tau + cloud_sw_layer_tau[:, k]
-        sw_trans[:, k] = torch.exp(-sw_tau)
-        sw_down[:, k + 1] = sw_down[:, k] * sw_trans[:, k]
+    sw_tau = (
+        sw_kappa_wv.unsqueeze(1) * q * dp / g
+        + o3_sw_layer_tau.unsqueeze(1)
+        + cloud_sw_layer_tau
+    )
+    sw_trans = torch.exp(-sw_tau)
+    one = torch.ones(batch, 1, device=t.device, dtype=t.dtype)
+    down_prod = torch.cat([one, torch.cumprod(sw_trans, dim=1)], dim=1)
+    sw_down = sw_top.unsqueeze(1) * down_prod
 
     sw_absorbed_sfc = sw_down[:, nlevels] * (1.0 - albedo)
-    sw_up[:, nlevels] = sw_down[:, nlevels] * albedo
-
-    for k in range(nlevels - 1, -1, -1):
-        sw_up[:, k] = sw_up[:, k + 1] * sw_trans[:, k]
+    sw_up_sfc = sw_down[:, nlevels] * albedo
+    up_prod = torch.cat([torch.cumprod(sw_trans.flip(1), dim=1).flip(1), one], dim=1)
+    sw_up = sw_up_sfc.unsqueeze(1) * up_prod
 
     sw_reflected_toa = sw_reflected_cloud + sw_up[:, 0]
     asr = toa_insolation - sw_reflected_toa
 
-    heating = torch.zeros_like(t)
-    for k in range(nlevels):
-        net_sw_k = sw_down[:, k] - sw_up[:, k]
-        net_sw_kp1 = sw_down[:, k + 1] - sw_up[:, k + 1]
-        absorbed_in_layer = net_sw_k - net_sw_kp1
-        heating[:, k] = g / cp * absorbed_in_layer / dp[:, k]
+    net_sw = sw_down - sw_up
+    absorbed_in_layer = net_sw[:, :-1] - net_sw[:, 1:]
+    heating = g / cp * absorbed_in_layer / dp
 
     return heating, sw_absorbed_sfc, asr, sw_reflected_toa, toa_insolation
 
