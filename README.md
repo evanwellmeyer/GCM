@@ -121,6 +121,21 @@ If enabled, the radiation can add simple extra optical-depth terms for:
 
 This is still **not** a spectrally resolved radiation package. It is a way to add configurable trace-gas effects without replacing the current simplified radiation model.
 
+### Optional cloud-radiative extension
+
+The same semi-gray radiation can also include a simple optional cloud-radiative layer.
+
+The current cloud hooks are bulk and configurable:
+
+- `cloud_fraction`
+- `cloud_sw_reflectivity`
+- `cloud_sw_tau`
+- `cloud_lw_tau`
+- `cloud_top_sigma`
+- `cloud_bottom_sigma`
+
+In this form, clouds are still a simplified radiative parameterization, not a full cloud microphysics or cloud overlap scheme.
+
 ## Convection Schemes
 
 The code supports two alternate convective closures:
@@ -166,8 +181,17 @@ Two example configs are included:
 
 - `scm/configs/default.toml` - baseline run settings
 - `scm/configs/trace_gases_example.toml` - example of the optional trace-gas radiation mode
+- `scm/configs/clouds_example.toml` - example of the optional cloud-radiative mode
 
 The config file is the preferred place for persistent run setup. Existing CLI flags still work and act as overrides.
+
+The radiation settings are now structured into sections like:
+
+- `[radiation]`
+- `[radiation.longwave]`
+- `[radiation.shortwave]`
+- `[radiation.trace_gases]`
+- `[radiation.clouds]`
 
 ### Quick component tests
 
@@ -210,6 +234,13 @@ Or the equivalent config-driven path:
 python -m scm.run_scm --config scm/configs/default.toml --scheme mf --fixed-params --device cpu --no-plot
 ```
 
+For full-mode fixed-parameter debugging runs, the driver now defaults to **one deterministic member** instead of creating 100 identical copies. If you want the old ensemble-shaped output, set:
+
+```toml
+[run]
+preserve_ensemble_shape = true
+```
+
 ### Full experiment
 
 ```bash
@@ -228,6 +259,16 @@ Useful driver flags:
 - `--fixed-sst`: disable slab-ocean evolution for faster debugging
 - `--device {cpu,cuda,mps}`: choose the execution device
 - `--no-plot`: skip figure generation
+
+## Diagnostics
+
+The SCM now carries an explicit top-of-atmosphere energy-balance diagnostic:
+
+- `ASR` = absorbed shortwave radiation
+- `OLR` = outgoing longwave radiation
+- `TOA net` = `ASR - OLR`
+
+This is useful for checking whether a control or perturbed run is actually near radiative-convective equilibrium.
 
 ## Output
 

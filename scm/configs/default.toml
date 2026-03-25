@@ -8,6 +8,7 @@ fixed_sst = false
 plot = true
 device = "auto"
 label = ""
+preserve_ensemble_shape = false
 
 [numerics]
 dt = 900.0
@@ -26,22 +27,48 @@ co2 = 400.0
 co2_ref = 400.0
 co2_2x = 800.0
 
+[radiation]
+scheme = "semi_gray"
+
+[radiation.longwave]
+f_window = 0.15
+kappa_wv = 0.15
+co2_log_factor = 0.14
+co2_base_tau = 1.50
+
+[radiation.shortwave]
+sw_kappa_wv = 0.01
+albedo = 0.28
+
+[radiation.trace_gases]
+enabled = false
+ch4 = 1.8
+ch4_ref = 1.8
+ch4_base_tau = 0.00
+ch4_log_factor = 0.00
+n2o = 0.332
+n2o_ref = 0.332
+n2o_base_tau = 0.00
+n2o_log_factor = 0.00
+o3_lw_tau = 0.00
+o3_sw_tau = 0.00
+other_ghg_tau = 0.00
+
+[radiation.clouds]
+enabled = false
+cloud_fraction = 0.0
+cloud_sw_reflectivity = 0.0
+cloud_sw_tau = 0.0
+cloud_lw_tau = 0.0
+cloud_top_sigma = 0.65
+cloud_bottom_sigma = 0.95
+
 [params]
-# model parameter overrides go here. by default this section is empty so
-# sampled runs still sample the ensemble parameters defined in scm/ensemble.py.
+# non-radiation parameter overrides can go here. by default this section is
+# left empty so sampled runs still use the ensemble parameter ranges defined
+# in scm/ensemble.py.
 #
 # examples:
-# radiation_mode = "semi_gray_plus_trace_gases"
-# trace_gases_enabled = true
-# ch4 = 1.8
-# ch4_ref = 1.8
-# ch4_base_tau = 0.02
-# ch4_log_factor = 0.01
-# n2o = 0.332
-# n2o_ref = 0.332
-# n2o_base_tau = 0.01
-# n2o_log_factor = 0.01
-# o3_lw_tau = 0.0
-# o3_sw_tau = 0.0
-# other_ghg_tau = 0.0
-
+# tau_cape = 3600.0
+# mf_mb_max = 0.05
+# bm_max_dt_day = 10.0

@@ -9,7 +9,7 @@
 #   2xCO2 forcing ~ 3-4 W/m2
 
 import torch
-from scm.thermo import sigma_sb, g, cp, Lv, saturation_specific_humidity
+from scm.thermo import sigma_sb, g, cp, saturation_specific_humidity
 
 
 # diffusivity factor for converting vertical optical depth to effective
@@ -36,7 +36,27 @@ def _trace_gases_enabled(params):
     return bool(params.get('trace_gases_enabled', False)) or mode == 'semi_gray_plus_trace_gases'
 
 
-def compute_longwave(t, q, ts, p, dp, params):
+def _clouds_enabled(params):
+    mode = params.get('radiation_mode', 'semi_gray')
+    return bool(params.get('cloud_radiative_effects_enabled', False)) or (
+        mode == 'semi_gray_plus_clouds'
+        or mode == 'semi_gray_plus_trace_gases_clouds'
+    )
+
+
+def _cloud_layer_weights(grid, batch, device, dtype, params):
+    """return normalized cloud-layer weights on model full levels."""
+
+    sigma = grid['sigma_full'].to(device=device, dtype=dtype)
+    top = _as_batch_tensor(params.get('cloud_top_sigma', 0.65), batch, device, dtype)
+    bottom = _as_batch_tensor(params.get('cloud_bottom_sigma', 0.95), batch, device, dtype)
+    sigma_2d = sigma.unsqueeze(0).expand(batch, -1)
+    mask = ((sigma_2d >= top.unsqueeze(1)) & (sigma_2d <= bottom.unsqueeze(1))).to(dtype)
+    counts = mask.sum(dim=1, keepdim=True).clamp(min=1.0)
+    return mask / counts
+
+
+def compute_longwave(t, q, ts, p, dp, grid, params):
     """two-band longwave radiation. returns heating rates (batch, nlevels)
     in K/s, surface downwelling LW in W/m2, and OLR in W/m2."""
 
@@ -87,7 +107,15 @@ def compute_longwave(t, q, ts, p, dp, params):
         other_ghg_tau = to_col(params.get('other_ghg_tau', 0.0))
         tau_trace = (ch4_total_tau + n2o_total_tau + o3_lw_tau + other_ghg_tau) / nlevels
 
-    dtau = tau_wv + tau_co2 + tau_trace  # (batch, nlevels)
+    tau_cloud = torch.zeros_like(tau_co2)
+    if _clouds_enabled(params):
+        cloud_fraction = to_col(params.get('cloud_fraction', 0.0)).clamp(min=0.0, max=1.0)
+        cloud_lw_tau = to_col(params.get('cloud_lw_tau', 0.0)).clamp(min=0.0)
+        tau_cloud = cloud_fraction * cloud_lw_tau * _cloud_layer_weights(
+            grid, batch, t.device, t.dtype, params
+        )
+
+    dtau = tau_wv + tau_co2 + tau_trace + tau_cloud  # (batch, nlevels)
     transmissivity = torch.exp(-dtau * mu_diff)
 
     # planck emission in the absorbing band at each level
@@ -127,7 +155,7 @@ def compute_longwave(t, q, ts, p, dp, params):
     return heating, lw_down_sfc, olr
 
 
-def compute_shortwave(t, q, ts, p, dp, params):
+def compute_shortwave(t, q, ts, p, dp, grid, params):
     """single-band shortwave with water vapor absorption."""
 
     batch = t.shape[0]
@@ -138,50 +166,79 @@ def compute_shortwave(t, q, ts, p, dp, params):
     albedo = params.get('albedo', 0.1)
     sw_kappa_wv = _as_batch_tensor(params.get('sw_kappa_wv', 0.01), batch, t.device, t.dtype)
 
-    toa_insolation = s0 * zenith_factor
+    toa_insolation = _as_batch_tensor(s0 * zenith_factor, batch, t.device, t.dtype)
     o3_sw_layer_tau = torch.zeros(batch, device=t.device, dtype=t.dtype)
     if _trace_gases_enabled(params):
         o3_sw_layer_tau = _as_batch_tensor(
             params.get('o3_sw_tau', 0.0), batch, t.device, t.dtype
         ) / nlevels
 
+    cloud_reflectivity = torch.zeros(batch, device=t.device, dtype=t.dtype)
+    cloud_sw_layer_tau = torch.zeros(batch, nlevels, device=t.device, dtype=t.dtype)
+    if _clouds_enabled(params):
+        cloud_fraction = _as_batch_tensor(
+            params.get('cloud_fraction', 0.0), batch, t.device, t.dtype
+        ).clamp(min=0.0, max=1.0)
+        cloud_reflectivity = (
+            cloud_fraction
+            * _as_batch_tensor(params.get('cloud_sw_reflectivity', 0.0), batch, t.device, t.dtype)
+        ).clamp(min=0.0, max=0.95)
+        cloud_sw_tau_total = (
+            cloud_fraction
+            * _as_batch_tensor(params.get('cloud_sw_tau', 0.0), batch, t.device, t.dtype).clamp(min=0.0)
+        )
+        cloud_sw_layer_tau = cloud_sw_tau_total.unsqueeze(1) * _cloud_layer_weights(
+            grid, batch, t.device, t.dtype, params
+        )
+
     # sw_kappa_wv stays as (batch,) or scalar — it's used in a per-level
     # loop where q[:, k] and dp[:, k] are already (batch,)
 
     sw_down = torch.zeros(batch, nlevels + 1, device=t.device)
-    if isinstance(toa_insolation, torch.Tensor):
-        sw_down[:, 0] = toa_insolation.squeeze()
-    else:
-        sw_down[:, 0] = toa_insolation
+    sw_up = torch.zeros(batch, nlevels + 1, device=t.device)
+    sw_down[:, 0] = toa_insolation * (1.0 - cloud_reflectivity)
+    sw_reflected_cloud = toa_insolation * cloud_reflectivity
+    sw_trans = torch.zeros(batch, nlevels, device=t.device, dtype=t.dtype)
 
     for k in range(nlevels):
-        sw_tau = sw_kappa_wv * q[:, k] * dp[:, k] / g + o3_sw_layer_tau
-        sw_down[:, k + 1] = sw_down[:, k] * torch.exp(-sw_tau)
+        sw_tau = sw_kappa_wv * q[:, k] * dp[:, k] / g + o3_sw_layer_tau + cloud_sw_layer_tau[:, k]
+        sw_trans[:, k] = torch.exp(-sw_tau)
+        sw_down[:, k + 1] = sw_down[:, k] * sw_trans[:, k]
 
     sw_absorbed_sfc = sw_down[:, nlevels] * (1.0 - albedo)
+    sw_up[:, nlevels] = sw_down[:, nlevels] * albedo
+
+    for k in range(nlevels - 1, -1, -1):
+        sw_up[:, k] = sw_up[:, k + 1] * sw_trans[:, k]
+
+    sw_reflected_toa = sw_reflected_cloud + sw_up[:, 0]
+    asr = toa_insolation - sw_reflected_toa
 
     heating = torch.zeros_like(t)
     for k in range(nlevels):
-        absorbed_in_layer = sw_down[:, k] - sw_down[:, k + 1]
+        net_sw_k = sw_down[:, k] - sw_up[:, k]
+        net_sw_kp1 = sw_down[:, k + 1] - sw_up[:, k + 1]
+        absorbed_in_layer = net_sw_k - net_sw_kp1
         heating[:, k] = g / cp * absorbed_in_layer / dp[:, k]
 
-    return heating, sw_absorbed_sfc
+    return heating, sw_absorbed_sfc, asr, sw_reflected_toa, toa_insolation
 
 
-def radiation(state, grid, params):
-    """full radiation calculation."""
+def semi_gray_radiation(state, grid, params):
+    """semi-gray radiation with optional trace-gas and cloud extensions."""
 
     p = state['p']
     dp = state['dp']
 
     lw_heating, lw_down_sfc, olr = compute_longwave(
-        state['t'], state['q'], state['ts'], p, dp, params
+        state['t'], state['q'], state['ts'], p, dp, grid, params
     )
-    sw_heating, sw_absorbed_sfc = compute_shortwave(
-        state['t'], state['q'], state['ts'], p, dp, params
+    sw_heating, sw_absorbed_sfc, asr, sw_reflected_toa, toa_insolation = compute_shortwave(
+        state['t'], state['q'], state['ts'], p, dp, grid, params
     )
 
     lw_up_sfc = sigma_sb * state['ts'] ** 4
+    toa_net = asr - olr
 
     return {
         'dt': lw_heating + sw_heating,
@@ -189,5 +246,18 @@ def radiation(state, grid, params):
         'lw_down_sfc': lw_down_sfc,
         'lw_up_sfc': lw_up_sfc,
         'sw_absorbed_sfc': sw_absorbed_sfc,
+        'sw_reflected_toa': sw_reflected_toa,
+        'toa_insolation': toa_insolation,
+        'asr': asr,
+        'toa_net': toa_net,
         'olr': olr,
     }
+
+
+def radiation(state, grid, params):
+    """full radiation calculation with scheme dispatch."""
+
+    scheme = params.get('radiation_scheme', 'semi_gray')
+    if scheme == 'semi_gray':
+        return semi_gray_radiation(state, grid, params)
+    raise ValueError(f"unknown radiation scheme: {scheme}")

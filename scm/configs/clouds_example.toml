@@ -1,0 +1,20 @@
+[run]
+mode = "demo"
+scheme = "mf"
+sampling = "fixed"
+spinup_days = 500
+perturb_days = 500
+plot = false
+label = "clouds"
+
+[radiation]
+scheme = "semi_gray"
+
+[radiation.clouds]
+enabled = true
+cloud_fraction = 0.5
+cloud_sw_reflectivity = 0.35
+cloud_sw_tau = 0.10
+cloud_lw_tau = 0.50
+cloud_top_sigma = 0.60
+cloud_bottom_sigma = 0.90

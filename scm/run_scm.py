@@ -13,12 +13,14 @@ import argparse
 import sys
 sys.path.insert(0, '/home/claude')
 
-from scm.configuration import load_run_config, DEFAULT_CONFIG_PATH
+from scm.configuration import (
+    load_run_config, DEFAULT_CONFIG_PATH, extract_param_overrides
+)
 from scm.thermo import make_grid
 from scm.column_model import initial_state, run
 from scm.ensemble import make_ensemble_params, make_fixed_ensemble_params
 from scm.diagnostics import (
-    equilibrium_stats, climate_sensitivity, summarize_ensemble
+    check_equilibrium, equilibrium_stats, climate_sensitivity, summarize_ensemble
 )
 
 
@@ -32,11 +34,13 @@ def pick_device():
 
 def progress_callback(step, state, diag):
     ts_mean = state['ts'].mean().item()
-    ts_std = state['ts'].std().item()
+    ts_std = state['ts'].std(unbiased=False).item()
     olr_mean = diag['olr'].mean().item()
+    toa_mean = diag['toa_net'].mean().item()
     precip_mean = (diag['precip_total'] * 86400).mean().item()
     print(f"  step {step:6d}  Ts={ts_mean:.2f}+/-{ts_std:.2f} K  "
-          f"OLR={olr_mean:.1f} W/m2  P={precip_mean:.2f} mm/day")
+          f"OLR={olr_mean:.1f} W/m2  TOA={toa_mean:+.1f} W/m2  "
+          f"P={precip_mean:.2f} mm/day")
 
 
 def build_output_stem(mode, scheme, sampling, fixed_sst, spinup_days,
@@ -74,7 +78,14 @@ def apply_param_overrides(params, overrides, n_total, device):
         params[key] = value
 
 
-def member_counts(mode, scheme):
+def member_counts(mode, scheme, fixed_params=False, preserve_ensemble_shape=False):
+    if mode == 'full' and fixed_params and not preserve_ensemble_shape:
+        if scheme == 'mixed':
+            return 1, 1
+        if scheme == 'bm':
+            return 1, 0
+        return 0, 1
+
     if scheme == 'mixed':
         return (5, 5) if mode == 'demo' else (50, 50)
     if scheme == 'bm':
@@ -110,7 +121,7 @@ def main():
     numerics_cfg = config.get('numerics', {})
     initial_cfg = config.get('initial', {})
     forcing_cfg = config.get('forcing', {})
-    param_overrides = dict(config.get('params', {}))
+    param_overrides = extract_param_overrides(config)
 
     if args.demo is not None:
         run_cfg['mode'] = 'demo'
@@ -138,6 +149,7 @@ def main():
     spinup_days = int(run_cfg.get('spinup_days', 500 if mode == 'demo' else 2000))
     perturb_days = int(run_cfg.get('perturb_days', 500 if mode == 'demo' else 2000))
     label = run_cfg.get('label', '')
+    preserve_ensemble_shape = bool(run_cfg.get('preserve_ensemble_shape', False))
 
     device_name = run_cfg.get('device', 'auto')
     if args.device:
@@ -149,7 +161,10 @@ def main():
 
     print(f"using device: {device}")
 
-    n_bm, n_mf = member_counts(mode, scheme)
+    n_bm, n_mf = member_counts(
+        mode, scheme, fixed_params=fixed_params,
+        preserve_ensemble_shape=preserve_ensemble_shape,
+    )
 
     if mode == 'demo':
         sampling = 'fixed parameters' if fixed_params else 'sampled parameters'
@@ -207,11 +222,14 @@ def main():
     print(f"done in {elapsed:.1f} s ({sim_speed:.0f} member-days/s)")
 
     stats_1x = equilibrium_stats(history_1x, last_n=50)
+    eq_1x = check_equilibrium(history_1x)
     print(f"\n1xCO2 equilibrium:")
     print(f"  Ts = {stats_1x['ts_mean'].mean():.2f} +/- "
-          f"{stats_1x['ts_mean'].std():.2f} K")
+          f"{stats_1x['ts_mean'].std(unbiased=False):.2f} K")
     print(f"  OLR = {stats_1x['olr_mean'].mean():.1f} W/m2")
+    print(f"  TOA net = {stats_1x['toa_net_mean'].mean():+.2f} W/m2")
     print(f"  precip = {(stats_1x['precip_total_mean'] * 86400).mean():.2f} mm/day")
+    print(f"  equilibrium check = {'PASS' if eq_1x else 'NOT CONVERGED'}")
 
     # --- branch to 2xCO2 ---
     print(f"\nbranching to 2xCO2 for {perturb_days} days...")
@@ -228,11 +246,14 @@ def main():
     print(f"done in {elapsed:.1f} s ({sim_speed:.0f} member-days/s)")
 
     stats_2x = equilibrium_stats(history_2x, last_n=50)
+    eq_2x = check_equilibrium(history_2x)
     print(f"\n2xCO2 equilibrium:")
     print(f"  Ts = {stats_2x['ts_mean'].mean():.2f} +/- "
-          f"{stats_2x['ts_mean'].std():.2f} K")
+          f"{stats_2x['ts_mean'].std(unbiased=False):.2f} K")
     print(f"  OLR = {stats_2x['olr_mean'].mean():.1f} W/m2")
+    print(f"  TOA net = {stats_2x['toa_net_mean'].mean():+.2f} W/m2")
     print(f"  precip = {(stats_2x['precip_total_mean'] * 86400).mean():.2f} mm/day")
+    print(f"  equilibrium check = {'PASS' if eq_2x else 'NOT CONVERGED'}")
 
     # --- climate sensitivity ---
     print("\n--- climate sensitivity ---")

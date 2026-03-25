@@ -7,9 +7,11 @@ perturb_days = 500
 plot = false
 label = "trace_gases"
 
-[params]
-radiation_mode = "semi_gray_plus_trace_gases"
-trace_gases_enabled = true
+[radiation]
+scheme = "semi_gray"
+
+[radiation.trace_gases]
+enabled = true
 
 # current SCM radiation stays semi-gray even in this mode. these are bulk
 # optical-depth terms, not a line-by-line or band-by-band radiation model.

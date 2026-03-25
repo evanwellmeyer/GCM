@@ -6,11 +6,12 @@ import torch
 from scm.thermo import Lv, g
 
 
-def check_equilibrium(diag_history, window=50, threshold=0.1):
+def check_equilibrium(diag_history, window=50, ts_threshold=0.1, toa_threshold=1.0):
     """check if the model has reached radiative-convective equilibrium by
-    looking at the trend in surface temperature over the last `window`
-    diagnostic snapshots. returns True if the trend is below threshold K
-    per window length for all ensemble members."""
+    looking at the trend in surface temperature and TOA net flux over the
+    last `window` diagnostic snapshots. returns True if the surface
+    temperature trend is below ts_threshold K per window length and the
+    mean TOA imbalance is below toa_threshold W/m2 for all ensemble members."""
 
     if len(diag_history) < window:
         return False
@@ -22,7 +23,13 @@ def check_equilibrium(diag_history, window=50, threshold=0.1):
     slopes = (recent_ts * x.unsqueeze(1)).sum(dim=0) / (x * x).sum()
     max_trend = slopes.abs().max().item()
 
-    return max_trend < threshold
+    if 'toa_net' not in diag_history[-1]:
+        return max_trend < ts_threshold
+
+    recent_toa = torch.stack([d['toa_net'] for d in diag_history[-window:]])
+    max_toa_imbalance = recent_toa.mean(dim=0).abs().max().item()
+
+    return max_trend < ts_threshold and max_toa_imbalance < toa_threshold
 
 
 def equilibrium_stats(diag_history, last_n=50):
@@ -35,12 +42,13 @@ def equilibrium_stats(diag_history, last_n=50):
     recent = diag_history[-last_n:]
 
     stats = {}
-    for key in ['ts', 'olr', 'precip_total', 'precip_conv', 'precip_ls',
-                'shf', 'lhf']:
+    for key in ['ts', 'olr', 'asr', 'toa_net', 'precip_total', 'precip_conv',
+                'precip_ls', 'shf', 'lhf', 'sw_absorbed_sfc', 'sw_reflected_toa',
+                'lw_down_sfc', 'lw_up_sfc', 'surface_net_flux']:
         if key in recent[0]:
             vals = torch.stack([d[key] for d in recent])
             stats[key + '_mean'] = vals.mean(dim=0)
-            stats[key + '_std'] = vals.std(dim=0)
+            stats[key + '_std'] = vals.std(dim=0, unbiased=False)
 
     # mean temperature profile
     t_profiles = torch.stack([d['t'] for d in recent])
@@ -86,14 +94,13 @@ def energy_balance(state, diag):
     """check the top-of-atmosphere and surface energy balance.
     useful for debugging: at equilibrium both should be near zero."""
 
-    # toa: absorbed solar minus olr
-    # we don't have absorbed solar directly in the diag, but we can
-    # compute it from olr + surface balance + column tendency
-    # for now just return what we have
     return {
+        'asr': diag['asr'],
         'olr': diag['olr'],
+        'toa_net': diag['toa_net'],
         'shf': diag['shf'],
         'lhf': diag['lhf'],
+        'surface_net_flux': diag['surface_net_flux'],
     }
 
 
@@ -106,11 +113,11 @@ def summarize_ensemble(sensitivity_results, scheme_mask=None):
     hs = sensitivity_results['hydro_sensitivity']
 
     print(f"ensemble size: {ecs.shape[0]}")
-    print(f"ecs:  mean={ecs.mean():.2f} K, std={ecs.std():.2f}, "
+    print(f"ecs:  mean={ecs.mean():.2f} K, std={ecs.std(unbiased=False):.2f}, "
           f"range=[{ecs.min():.2f}, {ecs.max():.2f}]")
-    print(f"dP:   mean={dp.mean():.3f} mm/day, std={dp.std():.3f}, "
+    print(f"dP:   mean={dp.mean():.3f} mm/day, std={dp.std(unbiased=False):.3f}, "
           f"range=[{dp.min():.3f}, {dp.max():.3f}]")
-    print(f"HS:   mean={hs.mean():.2f} %/K, std={hs.std():.2f}")
+    print(f"HS:   mean={hs.mean():.2f} %/K, std={hs.std(unbiased=False):.2f}")
 
     if scheme_mask is not None:
         bm_mask = scheme_mask < 0.5
@@ -118,10 +125,10 @@ def summarize_ensemble(sensitivity_results, scheme_mask=None):
 
         if bm_mask.any():
             print(f"\nbetts-miller ({bm_mask.sum()} members):")
-            print(f"  ecs: mean={ecs[bm_mask].mean():.2f}, std={ecs[bm_mask].std():.2f}")
-            print(f"  dP:  mean={dp[bm_mask].mean():.3f}, std={dp[bm_mask].std():.3f}")
+            print(f"  ecs: mean={ecs[bm_mask].mean():.2f}, std={ecs[bm_mask].std(unbiased=False):.2f}")
+            print(f"  dP:  mean={dp[bm_mask].mean():.3f}, std={dp[bm_mask].std(unbiased=False):.3f}")
 
         if mf_mask.any():
             print(f"\nmass-flux ({mf_mask.sum()} members):")
-            print(f"  ecs: mean={ecs[mf_mask].mean():.2f}, std={ecs[mf_mask].std():.2f}")
-            print(f"  dP:  mean={dp[mf_mask].mean():.3f}, std={dp[mf_mask].std():.3f}")
+            print(f"  ecs: mean={ecs[mf_mask].mean():.2f}, std={ecs[mf_mask].std(unbiased=False):.2f}")
+            print(f"  dP:  mean={dp[mf_mask].mean():.3f}, std={dp[mf_mask].std(unbiased=False):.3f}")

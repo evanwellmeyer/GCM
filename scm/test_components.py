@@ -114,6 +114,8 @@ def test_radiation(device):
     print(f"OLR (1xCO2) = {olr_1x:.1f} W/m2 (expect ~220-280)")
     print(f"OLR (2xCO2) = {olr_2x:.1f} W/m2")
     print(f"2xCO2 forcing = {forcing:.2f} W/m2 (expect ~2-5)")
+    print(f"ASR (1xCO2) = {out_1x['asr'][0].item():.1f} W/m2")
+    print(f"TOA net (1xCO2) = {out_1x['toa_net'][0].item():+.2f} W/m2")
     print(f"LW down at surface = {out_1x['lw_down_sfc'][0].item():.1f} W/m2")
     print(f"SW absorbed at surface = {out_1x['sw_absorbed_sfc'][0].item():.1f} W/m2")
 
@@ -147,6 +149,24 @@ def test_radiation(device):
     print(f"trace-gas OLR (base) = {out_trace_1x['olr'][0].item():.1f} W/m2")
     print(f"trace-gas CH4 doubling forcing = {trace_forcing:.2f} W/m2 (expect > 0)")
     assert trace_forcing > 0.0, "trace-gas branch should reduce OLR when CH4 increases"
+
+    params_cloudy = {
+        'radiation_scheme': 'semi_gray',
+        'radiation_mode': 'semi_gray_plus_clouds',
+        'cloud_radiative_effects_enabled': True,
+        'cloud_fraction': 0.5,
+        'cloud_sw_reflectivity': 0.4,
+        'cloud_sw_tau': 0.1,
+        'cloud_lw_tau': 0.5,
+        'cloud_top_sigma': 0.6,
+        'cloud_bottom_sigma': 0.9,
+    }
+    out_cloudy = radiation(state, grid, params_cloudy)
+    print(f"cloudy ASR = {out_cloudy['asr'][0].item():.1f} W/m2")
+    print(f"cloudy OLR = {out_cloudy['olr'][0].item():.1f} W/m2")
+    assert out_cloudy['asr'][0].item() < out_1x['asr'][0].item(), (
+        "cloud shortwave reflection should reduce absorbed solar"
+    )
 
     print("radiation: PASS\n")
 
