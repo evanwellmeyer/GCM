@@ -13,6 +13,7 @@ import argparse
 import sys
 sys.path.insert(0, '/home/claude')
 
+from scm.configuration import load_run_config, DEFAULT_CONFIG_PATH
 from scm.thermo import make_grid
 from scm.column_model import initial_state, run
 from scm.ensemble import make_ensemble_params, make_fixed_ensemble_params
@@ -38,98 +39,160 @@ def progress_callback(step, state, diag):
           f"OLR={olr_mean:.1f} W/m2  P={precip_mean:.2f} mm/day")
 
 
-def build_output_stem(args, spinup_days, perturb_days):
-    mode = 'demo' if args.demo else 'full'
-    sampling = 'fixed' if args.fixed_params or args.demo else 'random'
-    sst_mode = 'fixedsst' if args.fixed_sst else 'slabocean'
-    return (
-        f"scm_{mode}_{args.scheme}_{sampling}_{sst_mode}_"
+def build_output_stem(mode, scheme, sampling, fixed_sst, spinup_days,
+                      perturb_days, label=''):
+    sst_mode = 'fixedsst' if fixed_sst else 'slabocean'
+    stem = (
+        f"scm_{mode}_{scheme}_{sampling}_{sst_mode}_"
         f"spin{spinup_days}d_pert{perturb_days}d"
     )
+    if label:
+        stem = f"{stem}_{label}"
+    return stem
+
+
+def apply_param_overrides(params, overrides, n_total, device):
+    """apply scalar or per-member parameter overrides from config."""
+
+    for key, value in overrides.items():
+        if key in params and isinstance(params[key], torch.Tensor):
+            target = params[key]
+            if target.dim() == 1 and target.shape[0] == n_total:
+                if isinstance(value, list):
+                    tensor = torch.tensor(value, dtype=target.dtype, device=device)
+                    if tensor.shape != target.shape:
+                        raise ValueError(
+                            f"override for {key} must have shape {tuple(target.shape)}, "
+                            f"got {tuple(tensor.shape)}"
+                        )
+                    params[key] = tensor
+                else:
+                    params[key] = torch.full(
+                        target.shape, value, dtype=target.dtype, device=device
+                    )
+                continue
+        params[key] = value
+
+
+def member_counts(mode, scheme):
+    if scheme == 'mixed':
+        return (5, 5) if mode == 'demo' else (50, 50)
+    if scheme == 'bm':
+        return (10, 0) if mode == 'demo' else (100, 0)
+    return (0, 10) if mode == 'demo' else (0, 100)
 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--demo', action='store_true',
+    parser.add_argument('--config', type=str, default=None,
+                        help=f'path to TOML run config (default: {DEFAULT_CONFIG_PATH})')
+    parser.add_argument('--demo', action='store_true', default=None,
                         help='10-member diagnostic run')
     parser.add_argument('--scheme', choices=['mixed', 'bm', 'mf'],
-                        default='mixed',
+                        default=None,
                         help='convection configuration: mixed, bm only, or mf only')
-    parser.add_argument('--fixed-params', action='store_true',
+    parser.add_argument('--fixed-params', action='store_true', default=None,
                         help='use default parameter values instead of sampling')
     parser.add_argument('--spinup-days', type=int, default=None,
                         help='override spinup length in days')
     parser.add_argument('--perturb-days', type=int, default=None,
                         help='override 2xCO2 branch length in days')
-    parser.add_argument('--no-plot', action='store_true',
+    parser.add_argument('--no-plot', action='store_true', default=None,
                         help='skip plotting (if matplotlib not available)')
-    parser.add_argument('--fixed-sst', action='store_true',
+    parser.add_argument('--fixed-sst', action='store_true', default=None,
                         help='fixed SST mode (fast equilibration for debugging)')
     parser.add_argument('--device', type=str, default=None,
                         help='force device (cpu/cuda/mps)')
     args = parser.parse_args()
 
-    device = torch.device(args.device) if args.device else pick_device()
+    config = load_run_config(args.config)
+    run_cfg = config.get('run', {})
+    numerics_cfg = config.get('numerics', {})
+    initial_cfg = config.get('initial', {})
+    forcing_cfg = config.get('forcing', {})
+    param_overrides = dict(config.get('params', {}))
+
+    if args.demo is not None:
+        run_cfg['mode'] = 'demo'
+    if args.scheme is not None:
+        run_cfg['scheme'] = args.scheme
+    if args.fixed_params is not None:
+        run_cfg['sampling'] = 'fixed'
+    if args.spinup_days is not None:
+        run_cfg['spinup_days'] = args.spinup_days
+    if args.perturb_days is not None:
+        run_cfg['perturb_days'] = args.perturb_days
+    if args.no_plot is not None:
+        run_cfg['plot'] = False
+    if args.fixed_sst is not None:
+        run_cfg['fixed_sst'] = True
+    if args.device is not None:
+        run_cfg['device'] = args.device
+
+    mode = run_cfg.get('mode', 'full')
+    scheme = run_cfg.get('scheme', 'mixed')
+    sampling_mode = run_cfg.get('sampling', 'random')
+    fixed_params = (sampling_mode == 'fixed') or (mode == 'demo')
+    fixed_sst = bool(run_cfg.get('fixed_sst', False))
+    plot_enabled = bool(run_cfg.get('plot', True))
+    spinup_days = int(run_cfg.get('spinup_days', 500 if mode == 'demo' else 2000))
+    perturb_days = int(run_cfg.get('perturb_days', 500 if mode == 'demo' else 2000))
+    label = run_cfg.get('label', '')
+
+    device_name = run_cfg.get('device', 'auto')
+    if args.device:
+        device = torch.device(args.device)
+    elif device_name == 'auto':
+        device = pick_device()
+    else:
+        device = torch.device(device_name)
+
     print(f"using device: {device}")
 
-    # configuration
-    if args.scheme == 'mixed':
-        if args.demo:
-            n_bm, n_mf = 5, 5
-        else:
-            n_bm, n_mf = 50, 50
-    elif args.scheme == 'bm':
-        if args.demo:
-            n_bm, n_mf = 10, 0
-        else:
-            n_bm, n_mf = 100, 0
-    else:
-        if args.demo:
-            n_bm, n_mf = 0, 10
-        else:
-            n_bm, n_mf = 0, 100
+    n_bm, n_mf = member_counts(mode, scheme)
 
-    if args.demo:
-        spinup_days = args.spinup_days if args.spinup_days is not None else 500
-        perturb_days = args.perturb_days if args.perturb_days is not None else 500
-        sampling = 'fixed parameters' if args.fixed_params or args.demo else 'sampled parameters'
-        print(f"demo mode: {n_bm + n_mf} members, scheme={args.scheme}, "
+    if mode == 'demo':
+        sampling = 'fixed parameters' if fixed_params else 'sampled parameters'
+        print(f"demo mode: {n_bm + n_mf} members, scheme={scheme}, "
               f"{sampling}, {spinup_days}-day spinup")
     else:
-        spinup_days = args.spinup_days if args.spinup_days is not None else 2000
-        perturb_days = args.perturb_days if args.perturb_days is not None else 2000
-        sampling = 'fixed parameters' if args.fixed_params else 'sampled parameters'
-        print(f"full mode: {n_bm + n_mf} members, scheme={args.scheme}, "
+        sampling = 'fixed parameters' if fixed_params else 'sampled parameters'
+        print(f"full mode: {n_bm + n_mf} members, scheme={scheme}, "
               f"{sampling}, {spinup_days}-day spinup")
 
     n_total = n_bm + n_mf
-    dt = 900.0
+    dt = float(numerics_cfg.get('dt', 900.0))
     steps_per_day = int(86400 / dt)
     spinup_steps = spinup_days * steps_per_day
     perturb_steps = perturb_days * steps_per_day
-    diag_every = steps_per_day * 10
-    rad_every = 8
+    diag_every = steps_per_day * int(numerics_cfg.get('diag_interval_days', 10))
+    rad_every = int(numerics_cfg.get('rad_interval_steps', 8))
 
     # grid
-    grid = make_grid(nlevels=20, device=device)
+    grid = make_grid(nlevels=int(numerics_cfg.get('nlevels', 20)), device=device)
 
     # ensemble parameters
     base = {
         'dt': dt,
-        'ps0': 1e5,
-        'ts_init': 290.0,
-        'solar_constant': 1360.0,
-        'zenith_factor': 0.25,
-        'co2': 400.0,
-        'co2_ref': 400.0,
-        'use_slab_ocean': not args.fixed_sst,
+        'ps0': float(initial_cfg.get('ps0', 1e5)),
+        'ts_init': float(initial_cfg.get('ts_init', 290.0)),
+        'solar_constant': float(forcing_cfg.get('solar_constant', 1360.0)),
+        'zenith_factor': float(forcing_cfg.get('zenith_factor', 0.25)),
+        'co2': float(forcing_cfg.get('co2', 400.0)),
+        'co2_ref': float(forcing_cfg.get('co2_ref', 400.0)),
+        'use_slab_ocean': not fixed_sst,
     }
-    if args.demo or args.fixed_params:
+    if mode == 'demo' or fixed_params:
         params = make_fixed_ensemble_params(n_bm, n_mf, base_params=base, device=device)
     else:
         params = make_ensemble_params(n_bm, n_mf, base_params=base, device=device)
+    apply_param_overrides(params, param_overrides, n_total, device)
+    params['use_slab_ocean'] = not fixed_sst
     state = initial_state(n_total, grid, params, device=device)
-    output_stem = build_output_stem(args, spinup_days, perturb_days)
+    output_stem = build_output_stem(
+        mode, scheme, 'fixed' if (mode == 'demo' or fixed_params) else 'random',
+        fixed_sst, spinup_days, perturb_days, label=label,
+    )
 
     # --- 1xCO2 spinup ---
     print(f"\nspinup: {n_total} members, {spinup_days} days...")
@@ -152,7 +215,7 @@ def main():
 
     # --- branch to 2xCO2 ---
     print(f"\nbranching to 2xCO2 for {perturb_days} days...")
-    params['co2'] = 800.0
+    params['co2'] = float(forcing_cfg.get('co2_2x', 800.0))
 
     t0 = time.time()
     state, history_2x = run(
@@ -186,6 +249,7 @@ def main():
                         for k, v in results.items()},
         'params': {k: v.cpu() if isinstance(v, torch.Tensor) else v
                    for k, v in params.items()},
+        'config': config,
         'scheme_mask': params.get('scheme_mask').cpu()
                        if params.get('scheme_mask') is not None else None,
         'history_1x': [{k: v.cpu() if isinstance(v, torch.Tensor) else v
@@ -198,7 +262,7 @@ def main():
     print(f"\nresults saved to {output_path}")
 
     # --- plotting ---
-    if not args.no_plot:
+    if plot_enabled:
         try:
             from scm.plotting import full_diagnostic_figure
 

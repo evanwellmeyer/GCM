@@ -1,0 +1,47 @@
+[run]
+mode = "full"
+scheme = "mixed"
+sampling = "random"
+spinup_days = 2000
+perturb_days = 2000
+fixed_sst = false
+plot = true
+device = "auto"
+label = ""
+
+[numerics]
+dt = 900.0
+nlevels = 20
+rad_interval_steps = 8
+diag_interval_days = 10
+
+[initial]
+ps0 = 100000.0
+ts_init = 290.0
+
+[forcing]
+solar_constant = 1360.0
+zenith_factor = 0.25
+co2 = 400.0
+co2_ref = 400.0
+co2_2x = 800.0
+
+[params]
+# model parameter overrides go here. by default this section is empty so
+# sampled runs still sample the ensemble parameters defined in scm/ensemble.py.
+#
+# examples:
+# radiation_mode = "semi_gray_plus_trace_gases"
+# trace_gases_enabled = true
+# ch4 = 1.8
+# ch4_ref = 1.8
+# ch4_base_tau = 0.02
+# ch4_log_factor = 0.01
+# n2o = 0.332
+# n2o_ref = 0.332
+# n2o_base_tau = 0.01
+# n2o_log_factor = 0.01
+# o3_lw_tau = 0.0
+# o3_sw_tau = 0.0
+# other_ghg_tau = 0.0
+

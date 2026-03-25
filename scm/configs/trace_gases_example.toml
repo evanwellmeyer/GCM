@@ -1,0 +1,28 @@
+[run]
+mode = "demo"
+scheme = "mf"
+sampling = "fixed"
+spinup_days = 500
+perturb_days = 500
+plot = false
+label = "trace_gases"
+
+[params]
+radiation_mode = "semi_gray_plus_trace_gases"
+trace_gases_enabled = true
+
+# current SCM radiation stays semi-gray even in this mode. these are bulk
+# optical-depth terms, not a line-by-line or band-by-band radiation model.
+ch4 = 1.8
+ch4_ref = 1.8
+ch4_base_tau = 0.02
+ch4_log_factor = 0.01
+
+n2o = 0.332
+n2o_ref = 0.332
+n2o_base_tau = 0.01
+n2o_log_factor = 0.01
+
+o3_lw_tau = 0.02
+o3_sw_tau = 0.01
+other_ghg_tau = 0.00

@@ -17,6 +17,25 @@ from scm.thermo import sigma_sb, g, cp, Lv, saturation_specific_humidity
 mu_diff = 1.66
 
 
+def _as_batch_tensor(x, batch, device, dtype):
+    """broadcast scalar or batch-like input to shape (batch,)."""
+
+    t = torch.as_tensor(x, dtype=dtype, device=device)
+    if t.dim() == 0:
+        return t.expand(batch)
+    if t.dim() == 1:
+        if t.shape[0] == 1:
+            return t.expand(batch)
+        if t.shape[0] == batch:
+            return t
+    raise ValueError(f"cannot broadcast value with shape {tuple(t.shape)} to batch={batch}")
+
+
+def _trace_gases_enabled(params):
+    mode = params.get('radiation_mode', 'semi_gray')
+    return bool(params.get('trace_gases_enabled', False)) or mode == 'semi_gray_plus_trace_gases'
+
+
 def compute_longwave(t, q, ts, p, dp, params):
     """two-band longwave radiation. returns heating rates (batch, nlevels)
     in K/s, surface downwelling LW in W/m2, and OLR in W/m2."""
@@ -33,10 +52,7 @@ def compute_longwave(t, q, ts, p, dp, params):
 
     # ensure per-member params broadcast correctly to (batch, nlevels)
     def to_col(x):
-        """reshape a scalar or (batch,) tensor to (batch, 1) for broadcasting."""
-        if isinstance(x, torch.Tensor) and x.dim() == 1:
-            return x.unsqueeze(1)
-        return x
+        return _as_batch_tensor(x, batch, t.device, t.dtype).unsqueeze(1)
 
     kappa_wv = to_col(kappa_wv)
     co2_log_factor = to_col(co2_log_factor)
@@ -47,22 +63,39 @@ def compute_longwave(t, q, ts, p, dp, params):
     tau_wv = kappa_wv * q * dp / g  # (batch, nlevels)
 
     # CO2 optical depth
-    co2_ratio = co2 / co2_ref if not isinstance(co2_ref, torch.Tensor) else co2 / co2_ref
-    co2_ratio_t = torch.as_tensor(co2_ratio, dtype=t.dtype, device=t.device)
-    if co2_ratio_t.dim() == 1:
-        co2_ratio_t = co2_ratio_t.unsqueeze(1)
+    co2_ratio = to_col(co2) / to_col(co2_ref).clamp(min=1e-6)
+    co2_ratio_t = co2_ratio
     co2_total_tau = co2_base_tau + co2_log_factor * torch.log(co2_ratio_t.clamp(min=0.01))
     tau_co2 = co2_total_tau / nlevels
 
-    dtau = tau_wv + tau_co2  # (batch, nlevels)
+    tau_trace = torch.zeros_like(tau_co2)
+    if _trace_gases_enabled(params):
+        ch4_ratio = to_col(params.get('ch4', 1.8)) / to_col(params.get('ch4_ref', 1.8)).clamp(min=1e-6)
+        n2o_ratio = to_col(params.get('n2o', 0.332)) / to_col(params.get('n2o_ref', 0.332)).clamp(min=1e-6)
+
+        ch4_total_tau = (
+            to_col(params.get('ch4_base_tau', 0.0))
+            + to_col(params.get('ch4_log_factor', 0.0))
+            * torch.log(ch4_ratio.clamp(min=0.01))
+        )
+        n2o_total_tau = (
+            to_col(params.get('n2o_base_tau', 0.0))
+            + to_col(params.get('n2o_log_factor', 0.0))
+            * torch.log(n2o_ratio.clamp(min=0.01))
+        )
+        o3_lw_tau = to_col(params.get('o3_lw_tau', 0.0))
+        other_ghg_tau = to_col(params.get('other_ghg_tau', 0.0))
+        tau_trace = (ch4_total_tau + n2o_total_tau + o3_lw_tau + other_ghg_tau) / nlevels
+
+    dtau = tau_wv + tau_co2 + tau_trace  # (batch, nlevels)
     transmissivity = torch.exp(-dtau * mu_diff)
 
     # planck emission in the absorbing band at each level
     f_abs = 1.0 - f_win_col
     b_level = f_abs * sigma_sb * t ** 4  # (batch, nlevels)
 
-    # surface emission — need f_win as (batch,) not (batch, 1)
-    f_win_sfc = f_win if not isinstance(f_win, torch.Tensor) else f_win
+    # surface emission — use (batch,) not (batch, 1)
+    f_win_sfc = _as_batch_tensor(f_win, batch, t.device, t.dtype)
     f_abs_sfc = 1.0 - f_win_sfc
     b_surface = f_abs_sfc * sigma_sb * ts ** 4  # (batch,)
 
@@ -103,9 +136,14 @@ def compute_shortwave(t, q, ts, p, dp, params):
     s0 = params.get('solar_constant', 1360.0)
     zenith_factor = params.get('zenith_factor', 0.25)
     albedo = params.get('albedo', 0.1)
-    sw_kappa_wv = params.get('sw_kappa_wv', 0.01)
+    sw_kappa_wv = _as_batch_tensor(params.get('sw_kappa_wv', 0.01), batch, t.device, t.dtype)
 
     toa_insolation = s0 * zenith_factor
+    o3_sw_layer_tau = torch.zeros(batch, device=t.device, dtype=t.dtype)
+    if _trace_gases_enabled(params):
+        o3_sw_layer_tau = _as_batch_tensor(
+            params.get('o3_sw_tau', 0.0), batch, t.device, t.dtype
+        ) / nlevels
 
     # sw_kappa_wv stays as (batch,) or scalar — it's used in a per-level
     # loop where q[:, k] and dp[:, k] are already (batch,)
@@ -117,7 +155,7 @@ def compute_shortwave(t, q, ts, p, dp, params):
         sw_down[:, 0] = toa_insolation
 
     for k in range(nlevels):
-        sw_tau = sw_kappa_wv * q[:, k] * dp[:, k] / g
+        sw_tau = sw_kappa_wv * q[:, k] * dp[:, k] / g + o3_sw_layer_tau
         sw_down[:, k + 1] = sw_down[:, k] * torch.exp(-sw_tau)
 
     sw_absorbed_sfc = sw_down[:, nlevels] * (1.0 - albedo)

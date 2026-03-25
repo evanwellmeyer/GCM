@@ -128,6 +128,26 @@ def test_radiation(device):
     if forcing > 10:
         print("WARNING: CO2 forcing seems too strong.")
 
+    params_trace_1x = {
+        'co2': 400.0, 'co2_ref': 400.0,
+        'radiation_mode': 'semi_gray_plus_trace_gases',
+        'trace_gases_enabled': True,
+        'ch4': 1.8, 'ch4_ref': 1.8,
+        'ch4_base_tau': 0.02, 'ch4_log_factor': 0.01,
+        'n2o': 0.332, 'n2o_ref': 0.332,
+        'n2o_base_tau': 0.01, 'n2o_log_factor': 0.01,
+        'o3_lw_tau': 0.02,
+        'o3_sw_tau': 0.01,
+    }
+    params_trace_2x = dict(params_trace_1x)
+    params_trace_2x['ch4'] = 3.6
+    out_trace_1x = radiation(state, grid, params_trace_1x)
+    out_trace_2x = radiation(state, grid, params_trace_2x)
+    trace_forcing = out_trace_1x['olr'][0].item() - out_trace_2x['olr'][0].item()
+    print(f"trace-gas OLR (base) = {out_trace_1x['olr'][0].item():.1f} W/m2")
+    print(f"trace-gas CH4 doubling forcing = {trace_forcing:.2f} W/m2 (expect > 0)")
+    assert trace_forcing > 0.0, "trace-gas branch should reduce OLR when CH4 increases"
+
     print("radiation: PASS\n")
 
 

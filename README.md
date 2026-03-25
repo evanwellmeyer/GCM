@@ -107,6 +107,20 @@ So if you are describing the current SCM to someone else, the right summary is:
 
 This is appropriate for a compact research SCM, but it is not yet a full GCM-grade radiation package.
 
+### Optional trace-gas extension
+
+The code now also supports an **optional bulk trace-gas extension** while keeping the same semi-gray solver.
+
+If enabled, the radiation can add simple extra optical-depth terms for:
+
+- methane (`CH4`)
+- nitrous oxide (`N2O`)
+- ozone longwave absorption (`o3_lw_tau`)
+- ozone shortwave absorption (`o3_sw_tau`)
+- a catch-all minor-greenhouse-gas term (`other_ghg_tau`)
+
+This is still **not** a spectrally resolved radiation package. It is a way to add configurable trace-gas effects without replacing the current simplified radiation model.
+
 ## Convection Schemes
 
 The code supports two alternate convective closures:
@@ -139,6 +153,21 @@ The current experiment design is:
 This is useful for exploring how parameter uncertainty and structural uncertainty interact.
 
 ## How To Run
+
+### Config-driven runs
+
+The driver now supports TOML configuration files:
+
+```bash
+python -m scm.run_scm --config scm/configs/default.toml
+```
+
+Two example configs are included:
+
+- `scm/configs/default.toml` - baseline run settings
+- `scm/configs/trace_gases_example.toml` - example of the optional trace-gas radiation mode
+
+The config file is the preferred place for persistent run setup. Existing CLI flags still work and act as overrides.
 
 ### Quick component tests
 
@@ -175,6 +204,12 @@ For controlled debugging runs, the most useful option is usually:
 python -m scm.run_scm --scheme mf --fixed-params --spinup-days 2000 --perturb-days 2000 --device cpu --no-plot
 ```
 
+Or the equivalent config-driven path:
+
+```bash
+python -m scm.run_scm --config scm/configs/default.toml --scheme mf --fixed-params --device cpu --no-plot
+```
+
 ### Full experiment
 
 ```bash
@@ -185,6 +220,7 @@ By default this runs a larger ensemble, spins up under 1xCO2, then branches to 2
 
 Useful driver flags:
 
+- `--config PATH`: load a TOML config file
 - `--scheme {mixed,bm,mf}`: choose mixed, Betts-Miller-only, or mass-flux-only runs
 - `--fixed-params`: use default parameters instead of sampling
 - `--spinup-days N`: override the 1xCO2 run length
