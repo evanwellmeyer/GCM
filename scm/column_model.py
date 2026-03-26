@@ -91,6 +91,7 @@ def step(state, grid, params, rad_cache=None):
     state = update_derived(state, grid)
     ts_prev = state['ts'].clone()
     atm_energy_prev = atmospheric_energy_content(state, grid)
+    atm_energy_start = atm_energy_prev.clone()
 
     # --- radiation ---
     if rad_cache is None:
@@ -103,6 +104,7 @@ def step(state, grid, params, rad_cache=None):
     rad_dt = torch.nan_to_num(rad_out['dt'], nan=0.0)
     state['t'] = state['t'] + rad_dt * dt
     state['q'] = state['q'] + rad_out['dq'] * dt
+    atm_energy_after_rad = atmospheric_energy_content(state, grid)
 
     # --- surface fluxes ---
     state = update_derived(state, grid)
@@ -113,6 +115,7 @@ def step(state, grid, params, rad_cache=None):
     sfc_dq = torch.nan_to_num(sfc_out['dq'], nan=0.0)
     state['t'] = state['t'] + sfc_dt * dt
     state['q'] = state['q'] + sfc_dq * dt
+    atm_energy_after_surface = atmospheric_energy_content(state, grid)
 
     # --- boundary layer mixing ---
     state = update_derived(state, grid)
@@ -122,6 +125,7 @@ def step(state, grid, params, rad_cache=None):
     bl_dq = torch.nan_to_num(bl_out['dq'], nan=0.0)
     state['t'] = state['t'] + bl_dt * dt
     state['q'] = state['q'] + bl_dq * dt
+    atm_energy_after_bl = atmospheric_energy_content(state, grid)
 
     # --- shallow convection ---
     state = update_derived(state, grid)
@@ -132,6 +136,7 @@ def step(state, grid, params, rad_cache=None):
     shallow_dq = torch.nan_to_num(shallow_out['dq'], nan=0.0)
     state['t'] = state['t'] + shallow_dt * dt
     state['q'] = state['q'] + shallow_dq * dt
+    atm_energy_after_shallow = atmospheric_energy_content(state, grid)
 
     # --- convection ---
     state = update_derived(state, grid)
@@ -140,6 +145,7 @@ def step(state, grid, params, rad_cache=None):
     check_nan('conv dq', conv_out['dq'])
     state['t'] = state['t'] + conv_out['dt'] * dt
     state['q'] = state['q'] + conv_out['dq'] * dt
+    atm_energy_after_conv = atmospheric_energy_content(state, grid)
 
     # --- large-scale condensation (instantaneous adjustment) ---
     state = update_derived(state, grid)
@@ -149,6 +155,7 @@ def step(state, grid, params, rad_cache=None):
     cond_dq = torch.nan_to_num(cond_out['dq'], nan=0.0)
     state['t'] = state['t'] + cond_dt
     state['q'] = state['q'] + cond_dq
+    atm_energy_after_cond = atmospheric_energy_content(state, grid)
 
     # --- cloud microphysics / cloud-radiative state ---
     cloud_out = cloud_microphysics_step(state, grid, params, cond_out, conv_out)
@@ -178,8 +185,8 @@ def step(state, grid, params, rad_cache=None):
     )
 
     if params.get('include_precip_enthalpy_flux', True):
-        precip_temperature = 0.5 * (ts_prev + state['t'][:, -1])
-        precip_heat_flux = c_water * precip_temperature * precip_total
+        precip_temperature = state['t'][:, -1]
+        precip_heat_flux = c_water * (precip_temperature - ts_prev) * precip_total
     else:
         precip_heat_flux = torch.zeros_like(state['ts'])
 
@@ -198,6 +205,12 @@ def step(state, grid, params, rad_cache=None):
         slab_energy_tendency = slab_heat_capacity(params) * (state['ts'] - ts_prev) / dt
 
     atm_energy_now = atmospheric_energy_content(state, grid)
+    rad_energy_tendency = (atm_energy_after_rad - atm_energy_start) / dt
+    surface_energy_tendency = (atm_energy_after_surface - atm_energy_after_rad) / dt
+    bl_energy_tendency = (atm_energy_after_bl - atm_energy_after_surface) / dt
+    shallow_energy_tendency = (atm_energy_after_shallow - atm_energy_after_bl) / dt
+    conv_energy_tendency = (atm_energy_after_conv - atm_energy_after_shallow) / dt
+    condensation_energy_tendency = (atm_energy_after_cond - atm_energy_after_conv) / dt
     atm_energy_tendency = (atm_energy_now - atm_energy_prev) / dt
     atmos_flux_convergence = rad_out['toa_net'] - surface_total_flux
     atmos_energy_residual = atmos_flux_convergence - atm_energy_tendency
@@ -223,6 +236,12 @@ def step(state, grid, params, rad_cache=None):
         'surface_net_flux': surface_net_flux,
         'surface_total_flux': surface_total_flux,
         'precip_heat_flux': precip_heat_flux,
+        'rad_energy_tendency': rad_energy_tendency,
+        'surface_energy_tendency': surface_energy_tendency,
+        'bl_energy_tendency': bl_energy_tendency,
+        'shallow_energy_tendency': shallow_energy_tendency,
+        'conv_energy_tendency': conv_energy_tendency,
+        'condensation_energy_tendency': condensation_energy_tendency,
         'atmos_flux_convergence': atmos_flux_convergence,
         'atmos_energy_tendency': atm_energy_tendency,
         'atmos_energy_residual': atmos_energy_residual,
@@ -235,6 +254,7 @@ def step(state, grid, params, rad_cache=None):
         ),
         'lwp': cloud_out['lwp'].sum(dim=1),
         'iwp': cloud_out['iwp'].sum(dim=1),
+        'conv_mse_residual': conv_out.get('mse_residual', torch.zeros_like(state['ts'])),
     }
 
     return state, diag, rad_out

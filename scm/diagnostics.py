@@ -51,9 +51,13 @@ def equilibrium_stats(diag_history, last_n=50):
                 'precip_ls', 'precip_cloud', 'precip_heat_flux',
                 'shf', 'lhf', 'sw_absorbed_sfc', 'sw_reflected_toa',
                 'lw_down_sfc', 'lw_up_sfc', 'surface_net_flux', 'surface_total_flux',
+                'rad_energy_tendency', 'surface_energy_tendency',
+                'bl_energy_tendency', 'shallow_energy_tendency',
+                'conv_energy_tendency', 'condensation_energy_tendency',
                 'atmos_flux_convergence', 'atmos_energy_tendency',
                 'atmos_energy_residual', 'slab_energy_tendency',
                 'column_energy_tendency', 'column_energy_residual',
+                'conv_mse_residual',
                 'cloud_cover', 'lwp', 'iwp']:
         if key in recent[0]:
             vals = torch.stack([d[key] for d in recent])
@@ -113,12 +117,19 @@ def energy_balance(state, diag):
         'surface_net_flux': diag['surface_net_flux'],
         'precip_heat_flux': diag.get('precip_heat_flux'),
         'surface_total_flux': diag.get('surface_total_flux'),
+        'rad_energy_tendency': diag.get('rad_energy_tendency'),
+        'surface_energy_tendency': diag.get('surface_energy_tendency'),
+        'bl_energy_tendency': diag.get('bl_energy_tendency'),
+        'shallow_energy_tendency': diag.get('shallow_energy_tendency'),
+        'conv_energy_tendency': diag.get('conv_energy_tendency'),
+        'condensation_energy_tendency': diag.get('condensation_energy_tendency'),
         'atmos_flux_convergence': diag.get('atmos_flux_convergence'),
         'atmos_energy_tendency': diag.get('atmos_energy_tendency'),
         'atmos_energy_residual': diag.get('atmos_energy_residual'),
         'slab_energy_tendency': diag.get('slab_energy_tendency'),
         'column_energy_tendency': diag.get('column_energy_tendency'),
         'column_energy_residual': diag.get('column_energy_residual'),
+        'conv_mse_residual': diag.get('conv_mse_residual'),
     }
 
 

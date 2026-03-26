@@ -99,6 +99,7 @@ def mass_flux_convection(state, grid, params):
     max_dq_day = params.get('mf_max_dq_day', 5.0)
     cond_retain = params.get('mf_condensate_retention', 0.25)
     cond_fallout = params.get('mf_condensate_fallout', 0.45)
+    enforce_mse = bool(params.get('mf_enforce_mse_conservation', True))
     batch = t.shape[0]
     nlevels = t.shape[1]
 
@@ -225,6 +226,18 @@ def mass_flux_convection(state, grid, params):
     dt_tend = dt_tend.clamp(-max_dt, max_dt)
     dq_tend = dq_tend.clamp(-max_dq, max_dq)
 
+    # Keep the capped heating and drying tendencies close to column
+    # moist-enthalpy conserving so convection does not create energy
+    # simply because the two profiles were limited independently.
+    mse_residual = torch.sum((cp * dt_tend + Lv * dq_tend) * dp / g, dim=1)
+    if enforce_mse:
+        active_mask = ((dt_tend.abs() + dq_tend.abs()) > 0.0).to(t.dtype)
+        active_mass = torch.sum(active_mask * dp / g, dim=1).clamp(min=1.0e-8)
+        temp_correction = mse_residual / (cp * active_mass)
+        dt_tend = dt_tend - temp_correction.unsqueeze(1) * active_mask
+        dt_tend = dt_tend.clamp(-max_dt, max_dt)
+        mse_residual = torch.sum((cp * dt_tend + Lv * dq_tend) * dp / g, dim=1)
+
     # precipitation follows the actual net convective drying tendency.
     precip = precip_eff * (-torch.sum(dq_tend * dp / g, dim=1)).clamp(min=0.0)
     precip = precip.clamp(max=50.0 / 86400.0)
@@ -234,4 +247,5 @@ def mass_flux_convection(state, grid, params):
         'dq': dq_tend,
         'precip': precip,
         'cape': cape_val,
+        'mse_residual': mse_residual,
     }

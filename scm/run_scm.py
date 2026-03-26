@@ -207,6 +207,10 @@ def main():
         print(f"  column tendency = {stats_1x['column_energy_tendency_mean'].mean():+.2f} W/m2")
     if 'column_energy_residual_mean' in stats_1x:
         print(f"  column residual = {stats_1x['column_energy_residual_mean'].mean():+.2f} W/m2")
+    if 'conv_energy_tendency_mean' in stats_1x:
+        print(f"  conv energy = {stats_1x['conv_energy_tendency_mean'].mean():+.2f} W/m2")
+    if 'conv_mse_residual_mean' in stats_1x:
+        print(f"  conv mse residual = {stats_1x['conv_mse_residual_mean'].mean():+.2e} W/m2")
     print(f"  precip = {(stats_1x['precip_total_mean'] * 86400).mean():.2f} mm/day")
     print(f"  equilibrium check = {'PASS' if eq_1x else 'NOT CONVERGED'}")
 
@@ -241,6 +245,10 @@ def main():
         print(f"  column tendency = {stats_2x['column_energy_tendency_mean'].mean():+.2f} W/m2")
     if 'column_energy_residual_mean' in stats_2x:
         print(f"  column residual = {stats_2x['column_energy_residual_mean'].mean():+.2f} W/m2")
+    if 'conv_energy_tendency_mean' in stats_2x:
+        print(f"  conv energy = {stats_2x['conv_energy_tendency_mean'].mean():+.2f} W/m2")
+    if 'conv_mse_residual_mean' in stats_2x:
+        print(f"  conv mse residual = {stats_2x['conv_mse_residual_mean'].mean():+.2e} W/m2")
     print(f"  precip = {(stats_2x['precip_total_mean'] * 86400).mean():.2f} mm/day")
     print(f"  equilibrium check = {'PASS' if eq_2x else 'NOT CONVERGED'}")
 

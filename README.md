@@ -395,7 +395,7 @@ The SCM now carries an explicit column energy-budget diagnostic set:
 - `OLR` = outgoing longwave radiation
 - `TOA net` = `ASR - OLR`
 - `surface net` = net radiative plus turbulent flux into the slab ocean / surface reservoir
-- `precip heat` = sensible enthalpy carried into the surface reservoir by precipitation
+- `precip heat` = precipitation enthalpy exchange `c_w P (T_precip - T_s)` at the surface
 - `surface total` = `surface net + precip heat`
 - `atmos flux convergence` = `TOA net - surface total`
 - `atmos energy tendency` = diagnosed storage tendency of atmospheric moist static energy
@@ -403,6 +403,10 @@ The SCM now carries an explicit column energy-budget diagnostic set:
 - `column residual` = `TOA net - column tendency`
 
 This is useful for separating a true radiative imbalance from missing energy bookkeeping. In the richer default path the precipitation enthalpy term matters enough that `TOA net` alone is no longer the whole story.
+
+The mass-flux convection path also applies a column moist-enthalpy correction so the
+combined convective `T` and `q` tendencies stay energetically closed after the
+profile caps are applied.
 
 ## Output
 

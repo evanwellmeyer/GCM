@@ -160,6 +160,7 @@ surface_moisture_levels = 1
 include_precip_enthalpy_flux = true
 mf_condensate_retention = 0.25
 mf_condensate_fallout = 0.45
+mf_enforce_mse_conservation = true
 #
 # examples:
 # tau_cape = 3600.0

@@ -443,6 +443,9 @@ def test_energy_budget_diagnostics(device):
         'precip_heat_flux', 'surface_total_flux', 'atmos_flux_convergence',
         'atmos_energy_tendency', 'atmos_energy_residual',
         'slab_energy_tendency', 'column_energy_tendency', 'column_energy_residual',
+        'rad_energy_tendency', 'surface_energy_tendency', 'bl_energy_tendency',
+        'shallow_energy_tendency', 'conv_energy_tendency',
+        'condensation_energy_tendency', 'conv_mse_residual',
     ]:
         assert key in diag, f"missing diagnostic: {key}"
         assert torch.isfinite(diag[key]).all(), f"non-finite diagnostic: {key}"
@@ -550,7 +553,7 @@ def test_convection_mf(device):
     """verify mass-flux scheme activates for unstable columns."""
     print("=== convection (mass-flux) ===")
     from scm.thermo import (make_grid, pressure_at_full, dp_from_ps,
-                            saturation_specific_humidity, cape)
+                            saturation_specific_humidity, cape, cp, Lv)
     from scm.convection_mf import mass_flux_convection, dilute_cape
 
     grid = make_grid(nlevels=20, device=device)
@@ -589,10 +592,13 @@ def test_convection_mf(device):
     print(f"heating profile (K/day): {dt_profile.tolist()[:5]}... (top levels)")
     print(f"dilute CAPE without loading: {dcape_noload[0].item():.0f} J/kg")
     print(f"dilute CAPE with loading: {dcape_load[0].item():.0f} J/kg")
+    conv_mse = torch.sum((cp * out['dt'][0] + Lv * out['dq'][0]) * dp[0] / 9.81).item()
+    print(f"convective mse residual: {conv_mse:.4e} W/m2")
 
     assert dcape_load[0].item() < dcape_noload[0].item(), (
         "condensate loading should reduce dilute CAPE"
     )
+    assert abs(conv_mse) < 1.0e-2, "MF correction should keep column moist enthalpy nearly closed"
 
     print("convection (mf): PASS\n")
 
