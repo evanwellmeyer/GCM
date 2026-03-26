@@ -17,6 +17,9 @@ enabled = false
 [cloud_microphysics]
 enabled = false
 
+[shallow_convection]
+enabled = false
+
 [params]
 boundary_layer_scheme = "constant"
 surface_heat_levels = 8

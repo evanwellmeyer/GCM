@@ -13,6 +13,7 @@ from scm.surface import surface_fluxes, slab_ocean_tendency
 from scm.boundary_layer import boundary_layer_mixing
 from scm.condensation import condensation
 from scm.cloud_microphysics import initialize_cloud_state, cloud_microphysics_step
+from scm.convection_shallow import shallow_convection
 from scm.convection_bm import betts_miller
 from scm.convection_mf import mass_flux_convection
 
@@ -112,6 +113,16 @@ def step(state, grid, params, rad_cache=None):
     state['t'] = state['t'] + bl_dt * dt
     state['q'] = state['q'] + bl_dq * dt
 
+    # --- shallow convection ---
+    state = update_derived(state, grid)
+    shallow_out = shallow_convection(state, grid, params)
+    check_nan('shallow dt', shallow_out['dt'])
+    check_nan('shallow dq', shallow_out['dq'])
+    shallow_dt = torch.nan_to_num(shallow_out['dt'], nan=0.0)
+    shallow_dq = torch.nan_to_num(shallow_out['dq'], nan=0.0)
+    state['t'] = state['t'] + shallow_dt * dt
+    state['q'] = state['q'] + shallow_dq * dt
+
     # --- convection ---
     state = update_derived(state, grid)
     conv_out = dispatch_convection(state, grid, params)
@@ -149,11 +160,12 @@ def step(state, grid, params, rad_cache=None):
         state['ts'] = state['ts'].clamp(min=200.0, max=350.0)
 
     # diagnostics
+    precip_shallow = shallow_out.get('precip', torch.zeros_like(state['ts']))
     precip_conv = conv_out.get('precip', torch.zeros_like(state['ts']))
     precip_ls = cond_out.get('precip', torch.zeros_like(state['ts'])) / dt
     precip_cloud = cloud_out.get('precip', torch.zeros_like(state['ts'])) / dt
     # sanity cap on total precip diagnostic
-    precip_total = (precip_conv + precip_ls + precip_cloud).clamp(max=100.0 / 86400.0)
+    precip_total = (precip_shallow + precip_conv + precip_ls + precip_cloud).clamp(max=100.0 / 86400.0)
     surface_net_flux = (
         rad_out['sw_absorbed_sfc']
         + rad_out['lw_down_sfc']
@@ -165,6 +177,7 @@ def step(state, grid, params, rad_cache=None):
         'olr': rad_out['olr'],
         'asr': rad_out['asr'],
         'toa_net': rad_out['toa_net'],
+        'precip_shallow': precip_shallow,
         'precip_conv': precip_conv,
         'precip_ls': precip_ls,
         'precip_cloud': precip_cloud,

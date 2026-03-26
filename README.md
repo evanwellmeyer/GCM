@@ -237,6 +237,7 @@ The radiation settings are now structured into sections like:
 - `[radiation.trace_gases]`
 - `[radiation.clouds]`
 - `[cloud_microphysics]`
+- `[shallow_convection]`
 - `[params]` for generic physics overrides that do not yet have their own dedicated section
 
 Two config knobs are especially relevant for the richer default path:
@@ -304,6 +305,16 @@ Its cloud-microphysics defaults are also intentionally stricter than the earlier
 - `cloud_qc_ref = 8.0e-4`
 - `cloud_autoconv_qc_thresh = 3.0e-4`
 - `cloud_autoconv_power = 2.0`
+- `conv_cloud_efficiency = 0.0015`
+- `cloud_cf_rh_power = 2.0`
+- `cloud_cf_qc_power = 1.5`
+
+The richer default path also enables a conservative shallow-convection section:
+
+- `top_sigma = 0.72`
+- `base_sigma = 0.90`
+- `tau = 14400 s`
+- no shallow-convective precipitation by default
 
 Those overrides are there to keep the lowest atmospheric level better coupled to the slab surface under the multiband plus cloud-microphysics configuration.
 

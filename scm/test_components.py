@@ -304,6 +304,52 @@ def test_quadratic_autoconversion(device):
     print("quadratic autoconversion: PASS\n")
 
 
+def test_shallow_convection(device):
+    """verify the shallow scheme moistens just above the BL without precipitating."""
+    print("=== shallow convection ===")
+    from scm.thermo import make_grid, pressure_at_full, dp_from_ps, saturation_specific_humidity
+    from scm.convection_shallow import shallow_convection
+
+    grid = make_grid(nlevels=20, device=device)
+    batch = 1
+    ps = torch.full((batch,), 1e5, device=device)
+    p = pressure_at_full(grid, ps)
+    dp = dp_from_ps(grid, ps)
+
+    sigma = grid['sigma_full']
+    sigma_2d = sigma.unsqueeze(0)
+    t = torch.clamp(293.0 * sigma_2d ** 0.18, min=210.0)
+    qs = saturation_specific_humidity(t, p)
+    rh_profile = 0.25 + 0.70 * sigma_2d ** 4
+    q = torch.clamp(rh_profile * qs, min=1.0e-7)
+    state = {'t': t, 'q': q, 'ts': torch.full((batch,), 293.0, device=device), 'p': p, 'dp': dp}
+
+    params = {
+        'shallow_convection_enabled': True,
+        'shallow_tau': 3600.0,
+        'shallow_top_sigma': 0.72,
+        'shallow_base_sigma': 0.90,
+        'shallow_rh_trigger': 0.75,
+        'shallow_cape_suppress': 1.0e6,
+        'shallow_mse_scale': 1000.0,
+        'shallow_max_dt_day': 3.0,
+        'shallow_max_dq_day': 3.0,
+        'dt': 900.0,
+    }
+    out = shallow_convection(state, grid, params)
+    up_mask = (sigma >= 0.72) & (sigma < 0.90)
+    low_mask = sigma >= 0.90
+    dq_day = out['dq'][0] * 86400.0 * 1000.0
+    print(f"upper-layer moistening = {dq_day[up_mask].mean().item():.2f} g/kg/day")
+    print(f"subcloud drying = {dq_day[low_mask].mean().item():.2f} g/kg/day")
+
+    assert out['precip'][0].item() == 0.0, "shallow convection should not precipitate here"
+    assert dq_day[up_mask].mean().item() > 0.0, "shallow convection should moisten above the BL"
+    assert dq_day[low_mask].mean().item() < 0.0, "shallow convection should dry the subcloud layer"
+
+    print("shallow convection: PASS\n")
+
+
 def test_calibration_utils():
     """verify calibration grid generation and scoring are well-formed."""
     print("=== calibration utils ===")
@@ -666,6 +712,7 @@ def main():
     test_radiation(device)
     test_cloud_microphysics(device)
     test_quadratic_autoconversion(device)
+    test_shallow_convection(device)
     test_calibration_utils()
     test_surface(device)
     test_condensation(device)

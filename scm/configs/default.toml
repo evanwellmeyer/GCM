@@ -86,10 +86,14 @@ cloud_ls_precip_fraction = 0.90
 cloud_rh_evap = 0.70
 cloud_rh_min = 0.90
 cloud_qc_ref = 8.0e-4
+cloud_cf_qc_min = 2.0e-4
+cloud_cf_rh_power = 2.0
+cloud_cf_qc_power = 1.5
+cloud_cf_max = 0.6
 cloud_qc_max = 5.0e-3
 cloud_liquid_temp = 273.15
 cloud_ice_temp = 258.15
-conv_cloud_efficiency = 0.005
+conv_cloud_efficiency = 0.0015
 conv_cloud_anvil_center_sigma = 0.45
 conv_cloud_anvil_width_sigma = 0.18
 cloud_k_liq_sw = 15.0
@@ -98,6 +102,17 @@ cloud_k_liq_lw = 6.0
 cloud_k_ice_lw = 3.0
 cloud_sw_scattering_efficiency = 0.04
 cloud_sw_absorption_fraction = 0.05
+
+[shallow_convection]
+enabled = true
+tau = 14400.0
+top_sigma = 0.72
+base_sigma = 0.90
+rh_trigger = 0.78
+cape_suppress = 600.0
+mse_scale = 3000.0
+max_dt_day = 1.5
+max_dq_day = 1.5
 
 [calibration]
 enabled = false

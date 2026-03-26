@@ -117,6 +117,10 @@ def extract_param_overrides(config):
             "cloud_rh_evap": cloud_microphysics.get("cloud_rh_evap"),
             "cloud_rh_min": cloud_microphysics.get("cloud_rh_min"),
             "cloud_qc_ref": cloud_microphysics.get("cloud_qc_ref"),
+            "cloud_cf_qc_min": cloud_microphysics.get("cloud_cf_qc_min"),
+            "cloud_cf_rh_power": cloud_microphysics.get("cloud_cf_rh_power"),
+            "cloud_cf_qc_power": cloud_microphysics.get("cloud_cf_qc_power"),
+            "cloud_cf_max": cloud_microphysics.get("cloud_cf_max"),
             "cloud_qc_max": cloud_microphysics.get("cloud_qc_max"),
             "cloud_liquid_temp": cloud_microphysics.get("cloud_liquid_temp"),
             "cloud_ice_temp": cloud_microphysics.get("cloud_ice_temp"),
@@ -129,6 +133,20 @@ def extract_param_overrides(config):
             "cloud_k_ice_lw": cloud_microphysics.get("cloud_k_ice_lw"),
             "cloud_sw_scattering_efficiency": cloud_microphysics.get("cloud_sw_scattering_efficiency"),
             "cloud_sw_absorption_fraction": cloud_microphysics.get("cloud_sw_absorption_fraction"),
+        }))
+
+    shallow_convection = config.get("shallow_convection", {})
+    if shallow_convection:
+        params["shallow_convection_enabled"] = bool(shallow_convection.get("enabled", False))
+        params.update(_non_null_items({
+            "shallow_tau": shallow_convection.get("tau"),
+            "shallow_top_sigma": shallow_convection.get("top_sigma"),
+            "shallow_base_sigma": shallow_convection.get("base_sigma"),
+            "shallow_rh_trigger": shallow_convection.get("rh_trigger"),
+            "shallow_cape_suppress": shallow_convection.get("cape_suppress"),
+            "shallow_mse_scale": shallow_convection.get("mse_scale"),
+            "shallow_max_dt_day": shallow_convection.get("max_dt_day"),
+            "shallow_max_dq_day": shallow_convection.get("max_dq_day"),
         }))
 
     return params

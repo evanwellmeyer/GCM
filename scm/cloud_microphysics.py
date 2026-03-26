@@ -118,13 +118,21 @@ def cloud_microphysics_step(state, grid, params, cond_out, conv_out):
 
     rh_min = float(params.get('cloud_rh_min', 0.75))
     qc_ref = float(params.get('cloud_qc_ref', 1.0e-4))
+    qc_min = float(params.get('cloud_cf_qc_min', 0.0))
+    rh_power = max(float(params.get('cloud_cf_rh_power', 1.0)), 1.0)
+    qc_power = max(float(params.get('cloud_cf_qc_power', 0.5)), 0.5)
+    cf_max = float(params.get('cloud_cf_max', 1.0))
     rh_cloud = torch.clamp((rh - rh_min) / max(1.0 - rh_min, 1.0e-3), min=0.0, max=1.0)
-    qc_cloud = torch.clamp(qc / max(qc_ref, 1.0e-8), min=0.0, max=1.0)
+    qc_cloud = torch.clamp(
+        (qc - qc_min) / max(qc_ref - qc_min, 1.0e-8),
+        min=0.0, max=1.0
+    )
 
     # Require both near-saturation and nontrivial condensate before
     # diagnosing large cloud fraction. The previous max-based diagnostic
     # saturated to cloud_fraction ~= 1 almost anywhere RH was high.
-    cloud_fraction = (rh_cloud * torch.sqrt(qc_cloud)).clamp(min=0.0, max=1.0)
+    cloud_fraction = (torch.pow(rh_cloud, rh_power) * torch.pow(qc_cloud, qc_power))
+    cloud_fraction = cloud_fraction.clamp(min=0.0, max=cf_max)
     cloud_fraction = cloud_fraction * (qc > 1.0e-8).to(dtype)
 
     k_liq_sw = float(params.get('cloud_k_liq_sw', 80.0))
