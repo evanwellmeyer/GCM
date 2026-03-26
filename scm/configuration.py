@@ -64,6 +64,7 @@ def extract_param_overrides(config):
 
         params.update(_non_null_items(radiation.get("longwave", {})))
         params.update(_non_null_items(radiation.get("shortwave", {})))
+        params.update(_non_null_items(radiation.get("multiband", {})))
 
         trace = radiation.get("trace_gases", {})
         if trace:
@@ -102,5 +103,29 @@ def extract_param_overrides(config):
 
         if "radiation_mode" not in params:
             params["radiation_mode"] = derive_radiation_mode(trace_enabled, clouds_enabled)
+
+    cloud_microphysics = config.get("cloud_microphysics", {})
+    if cloud_microphysics:
+        params["cloud_microphysics_enabled"] = bool(cloud_microphysics.get("enabled", False))
+        params.update(_non_null_items({
+            "cloud_autoconv_tau": cloud_microphysics.get("cloud_autoconv_tau"),
+            "cloud_evap_tau": cloud_microphysics.get("cloud_evap_tau"),
+            "cloud_ls_precip_fraction": cloud_microphysics.get("cloud_ls_precip_fraction"),
+            "cloud_rh_evap": cloud_microphysics.get("cloud_rh_evap"),
+            "cloud_rh_min": cloud_microphysics.get("cloud_rh_min"),
+            "cloud_qc_ref": cloud_microphysics.get("cloud_qc_ref"),
+            "cloud_qc_max": cloud_microphysics.get("cloud_qc_max"),
+            "cloud_liquid_temp": cloud_microphysics.get("cloud_liquid_temp"),
+            "cloud_ice_temp": cloud_microphysics.get("cloud_ice_temp"),
+            "conv_cloud_efficiency": cloud_microphysics.get("conv_cloud_efficiency"),
+            "conv_cloud_anvil_center_sigma": cloud_microphysics.get("conv_cloud_anvil_center_sigma"),
+            "conv_cloud_anvil_width_sigma": cloud_microphysics.get("conv_cloud_anvil_width_sigma"),
+            "cloud_k_liq_sw": cloud_microphysics.get("cloud_k_liq_sw"),
+            "cloud_k_ice_sw": cloud_microphysics.get("cloud_k_ice_sw"),
+            "cloud_k_liq_lw": cloud_microphysics.get("cloud_k_liq_lw"),
+            "cloud_k_ice_lw": cloud_microphysics.get("cloud_k_ice_lw"),
+            "cloud_sw_scattering_efficiency": cloud_microphysics.get("cloud_sw_scattering_efficiency"),
+            "cloud_sw_absorption_fraction": cloud_microphysics.get("cloud_sw_absorption_fraction"),
+        }))
 
     return params

@@ -8,6 +8,15 @@ label = "radiation_calibration"
 [radiation]
 scheme = "semi_gray"
 
+[radiation.trace_gases]
+enabled = false
+
+[radiation.clouds]
+enabled = false
+
+[cloud_microphysics]
+enabled = false
+
 [calibration]
 enabled = true
 scheme = "mf"

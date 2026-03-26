@@ -28,30 +28,41 @@ co2_ref = 400.0
 co2_2x = 800.0
 
 [radiation]
-scheme = "semi_gray"
+scheme = "multiband"
 
 [radiation.longwave]
-f_window = 0.22
-kappa_wv = 0.10
+f_window = 0.15
+kappa_wv = 0.15
 co2_log_factor = 0.14
-co2_base_tau = 0.80
+co2_base_tau = 1.50
 
 [radiation.shortwave]
 sw_kappa_wv = 0.01
-albedo = 0.36
+albedo = 0.28
+
+[radiation.multiband]
+lw_band_weights = [0.10, 0.25, 0.35, 0.30]
+lw_band_wv_kappa = [0.00, 0.10, 0.22, 0.40]
+lw_band_co2_base_tau = [0.00, 0.15, 0.65, 0.35]
+lw_band_co2_log_factor = [0.00, 0.01, 0.12, 0.06]
+lw_band_trace_scale = [0.00, 0.20, 0.60, 0.20]
+sw_band_weights = [0.55, 0.30, 0.15]
+sw_band_wv_kappa = [0.00, 0.015, 0.00]
+sw_band_o3_tau = [0.00, 0.02, 0.10]
+sw_band_cloud_abs_scale = [0.10, 0.25, 0.10]
 
 [radiation.trace_gases]
-enabled = false
+enabled = true
 ch4 = 1.8
 ch4_ref = 1.8
-ch4_base_tau = 0.00
-ch4_log_factor = 0.00
+ch4_base_tau = 0.02
+ch4_log_factor = 0.01
 n2o = 0.332
 n2o_ref = 0.332
-n2o_base_tau = 0.00
-n2o_log_factor = 0.00
-o3_lw_tau = 0.00
-o3_sw_tau = 0.00
+n2o_base_tau = 0.01
+n2o_log_factor = 0.01
+o3_lw_tau = 0.02
+o3_sw_tau = 0.03
 other_ghg_tau = 0.00
 
 [radiation.clouds]
@@ -62,6 +73,27 @@ cloud_sw_tau = 0.0
 cloud_lw_tau = 0.0
 cloud_top_sigma = 0.65
 cloud_bottom_sigma = 0.95
+
+[cloud_microphysics]
+enabled = true
+cloud_autoconv_tau = 10800.0
+cloud_evap_tau = 3600.0
+cloud_ls_precip_fraction = 0.80
+cloud_rh_evap = 0.70
+cloud_rh_min = 0.88
+cloud_qc_ref = 5.0e-4
+cloud_qc_max = 5.0e-3
+cloud_liquid_temp = 273.15
+cloud_ice_temp = 258.15
+conv_cloud_efficiency = 0.005
+conv_cloud_anvil_center_sigma = 0.45
+conv_cloud_anvil_width_sigma = 0.18
+cloud_k_liq_sw = 15.0
+cloud_k_ice_sw = 8.0
+cloud_k_liq_lw = 8.0
+cloud_k_ice_lw = 4.0
+cloud_sw_scattering_efficiency = 0.04
+cloud_sw_absorption_fraction = 0.05
 
 [calibration]
 enabled = false

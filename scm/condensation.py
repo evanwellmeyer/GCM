@@ -22,6 +22,7 @@ def condensation(state, grid, params):
     # how much of the supersaturation to actually remove as precip.
     # allowing some to persist crudely represents cloud water.
     precip_frac = params.get('ls_precip_fraction', 0.1)
+    cloud_microphysics = bool(params.get('cloud_microphysics_enabled', False))
 
     qs = saturation_specific_humidity(t, p)
 
@@ -41,10 +42,9 @@ def condensation(state, grid, params):
         t_new = t_new + dt_heating
         q_new = q_new + dq
 
-    # only remove a fraction of the condensate as precipitation.
-    # the rest stays in the column as "cloud water" (supersaturation).
-    full_dq = q_new - q  # full adjustment (negative where condensation)
-    full_dt = t_new - t  # full heating
+    # full saturation adjustment (negative where condensation)
+    full_dq = q_new - q
+    full_dt = t_new - t
 
     # handle scalar or batched precip_frac
     if isinstance(precip_frac, torch.Tensor) and precip_frac.dim() == 1:
@@ -52,15 +52,34 @@ def condensation(state, grid, params):
     else:
         pf = precip_frac
 
-    dt_tend = pf * full_dt
-    dq_tend = pf * full_dq
+    if cloud_microphysics:
+        cloud_precip_frac = params.get('cloud_ls_precip_fraction', 0.8)
+        if isinstance(cloud_precip_frac, torch.Tensor) and cloud_precip_frac.dim() == 1:
+            cpf = cloud_precip_frac.unsqueeze(1)
+        else:
+            cpf = cloud_precip_frac
 
-    # precipitation from the removed fraction
-    condensate = (-dq_tend).clamp(min=0.0)  # kg/kg removed
-    precip = torch.sum(condensate * dp / g, dim=1)
+        # In the microphysics-coupled path, vapor is adjusted fully to
+        # saturation and the condensed water is split between precipitation
+        # and an explicit cloud condensate reservoir.
+        dt_tend = full_dt
+        dq_tend = full_dq
+        condensate_total = (-full_dq).clamp(min=0.0)
+        precip_removed = cpf * condensate_total
+        cloud_source = (1.0 - cpf) * condensate_total
+        precip = torch.sum(precip_removed * dp / g, dim=1)
+    else:
+        # Legacy simplified path: only a fraction of the supersaturation
+        # is removed from vapor, and the rest remains implicitly in q.
+        dt_tend = pf * full_dt
+        dq_tend = pf * full_dq
+        condensate = (-dq_tend).clamp(min=0.0)
+        cloud_source = torch.zeros_like(q)
+        precip = torch.sum(condensate * dp / g, dim=1)
 
     return {
         'dt': dt_tend,
         'dq': dq_tend,
         'precip': precip,
+        'cloud_source': cloud_source,
     }

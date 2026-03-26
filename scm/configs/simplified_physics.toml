@@ -1,0 +1,24 @@
+[run]
+label = "simplified"
+
+[radiation]
+scheme = "semi_gray"
+
+[radiation.longwave]
+f_window = 0.15
+kappa_wv = 0.15
+co2_log_factor = 0.14
+co2_base_tau = 1.50
+
+[radiation.shortwave]
+sw_kappa_wv = 0.01
+albedo = 0.28
+
+[radiation.trace_gases]
+enabled = false
+
+[radiation.clouds]
+enabled = false
+
+[cloud_microphysics]
+enabled = false

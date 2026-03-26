@@ -168,7 +168,83 @@ def test_radiation(device):
         "cloud shortwave reflection should reduce absorbed solar"
     )
 
+    state_micro = dict(state)
+    state_micro['cloud_fraction'] = torch.full_like(q, 0.15)
+    state_micro['cloud_sw_tau_layer'] = torch.full_like(q, 0.02)
+    state_micro['cloud_lw_tau_layer'] = torch.full_like(q, 0.03)
+    params_multi_1x = {
+        'radiation_scheme': 'multiband',
+        'co2': 400.0, 'co2_ref': 400.0,
+        'albedo': 0.28,
+        'lw_band_weights': [0.10, 0.25, 0.35, 0.30],
+        'lw_band_wv_kappa': [0.00, 0.10, 0.22, 0.40],
+        'lw_band_co2_base_tau': [0.00, 0.15, 0.65, 0.35],
+        'lw_band_co2_log_factor': [0.00, 0.01, 0.12, 0.06],
+        'lw_band_trace_scale': [0.00, 0.20, 0.60, 0.20],
+        'trace_gases_enabled': True,
+        'ch4': 1.8, 'ch4_ref': 1.8,
+        'ch4_base_tau': 0.02, 'ch4_log_factor': 0.01,
+        'n2o': 0.332, 'n2o_ref': 0.332,
+        'n2o_base_tau': 0.01, 'n2o_log_factor': 0.01,
+        'o3_lw_tau': 0.02,
+        'o3_sw_tau': 0.03,
+        'cloud_microphysics_enabled': True,
+    }
+    params_multi_2x = dict(params_multi_1x)
+    params_multi_2x['co2'] = 800.0
+    out_multi_1x = radiation(state_micro, grid, params_multi_1x)
+    out_multi_2x = radiation(state_micro, grid, params_multi_2x)
+    multi_forcing = out_multi_1x['olr'][0].item() - out_multi_2x['olr'][0].item()
+    print(f"multiband OLR (1xCO2) = {out_multi_1x['olr'][0].item():.1f} W/m2")
+    print(f"multiband 2xCO2 forcing = {multi_forcing:.2f} W/m2 (expect > 0)")
+    assert multi_forcing > 0.0, "multiband branch should reduce OLR under 2xCO2"
+    assert out_multi_1x['asr'][0].item() < out_1x['asr'][0].item(), (
+        "microphysics-coupled clouds should reduce ASR relative to clear sky"
+    )
+
     print("radiation: PASS\n")
+
+
+def test_cloud_microphysics(device):
+    """verify explicit cloud condensate and cloud optics are produced."""
+    print("=== cloud microphysics ===")
+    from scm.thermo import make_grid, pressure_at_full, dp_from_ps, saturation_specific_humidity
+    from scm.condensation import condensation
+    from scm.cloud_microphysics import initialize_cloud_state, cloud_microphysics_step
+
+    grid = make_grid(nlevels=20, device=device)
+    batch = 2
+    ps = torch.full((batch,), 1e5, device=device)
+    p = pressure_at_full(grid, ps)
+    dp = dp_from_ps(grid, ps)
+
+    sigma = grid['sigma_full'].unsqueeze(0).expand(batch, -1)
+    t = torch.clamp(295.0 * sigma ** 0.19, min=200.0)
+    qs = saturation_specific_humidity(t, p)
+    q = torch.clamp(1.05 * qs, min=1e-7)
+
+    state = {'t': t, 'q': q, 'ts': torch.full((batch,), 295.0, device=device), 'p': p, 'dp': dp}
+    state.update(initialize_cloud_state(batch, grid, device=device))
+
+    params = {
+        'ls_precip_fraction': 0.3,
+        'cloud_microphysics_enabled': True,
+        'cloud_ls_precip_fraction': 0.8,
+        'dt': 900.0,
+    }
+    cond_out = condensation(state, grid, params)
+    conv_out = {'precip': torch.zeros(batch, device=device)}
+    cloud_out = cloud_microphysics_step(state, grid, params, cond_out, conv_out)
+
+    print(f"cloud source = {cond_out['cloud_source'][0].sum().item():.3e} kg/kg")
+    print(f"qc column = {cloud_out['qc'][0].sum().item():.3e} kg/kg")
+    print(f"cloud cover = {(1.0 - torch.prod(1.0 - cloud_out['cloud_fraction'][0])).item():.2f}")
+
+    assert cond_out['cloud_source'].sum().item() > 0.0, "microphysics path should create cloud source"
+    assert cloud_out['qc'].sum().item() > 0.0, "cloud condensate should accumulate"
+    assert cloud_out['cloud_sw_tau_layer'].sum().item() > 0.0, "cloud SW optical depth should be positive"
+
+    print("cloud microphysics: PASS\n")
 
 
 def test_calibration_utils():
@@ -531,6 +607,7 @@ def main():
 
     test_thermo(device)
     test_radiation(device)
+    test_cloud_microphysics(device)
     test_calibration_utils()
     test_surface(device)
     test_condensation(device)

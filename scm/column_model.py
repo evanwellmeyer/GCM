@@ -12,6 +12,7 @@ from scm.radiation import radiation
 from scm.surface import surface_fluxes, slab_ocean_tendency
 from scm.boundary_layer import boundary_layer_mixing
 from scm.condensation import condensation
+from scm.cloud_microphysics import initialize_cloud_state, cloud_microphysics_step
 from scm.convection_bm import betts_miller
 from scm.convection_mf import mass_flux_convection
 
@@ -41,12 +42,14 @@ def initial_state(batch, grid, params, device='cpu'):
     q = rh_profile * qs
     q = torch.clamp(q, min=1e-7)
 
-    return {
+    state = {
         't': t,
         'q': q,
         'ts': ts,
         'ps': ps,
     }
+    state.update(initialize_cloud_state(batch, grid, device=device))
+    return state
 
 
 def update_derived(state, grid):
@@ -126,6 +129,13 @@ def step(state, grid, params, rad_cache=None):
     state['t'] = state['t'] + cond_dt
     state['q'] = state['q'] + cond_dq
 
+    # --- cloud microphysics / cloud-radiative state ---
+    cloud_out = cloud_microphysics_step(state, grid, params, cond_out, conv_out)
+    state['qc'] = cloud_out['qc']
+    state['cloud_fraction'] = cloud_out['cloud_fraction']
+    state['cloud_sw_tau_layer'] = cloud_out['cloud_sw_tau_layer']
+    state['cloud_lw_tau_layer'] = cloud_out['cloud_lw_tau_layer']
+
     # --- clamp to physical range ---
     state['q'] = torch.clamp(state['q'], min=1e-7, max=0.1)
     state['t'] = torch.clamp(state['t'], min=150.0, max=350.0)
@@ -165,6 +175,11 @@ def step(state, grid, params, rad_cache=None):
         'lw_up_sfc': rad_out['lw_up_sfc'],
         'surface_net_flux': surface_net_flux,
         'cape': conv_out.get('cape', torch.zeros_like(state['ts'])),
+        'cloud_cover': 1.0 - torch.prod(
+            1.0 - cloud_out['cloud_fraction'].clamp(min=0.0, max=1.0), dim=1
+        ),
+        'lwp': cloud_out['lwp'].sum(dim=1),
+        'iwp': cloud_out['iwp'].sum(dim=1),
     }
 
     return state, diag, rad_out
@@ -254,6 +269,7 @@ def run(state, grid, params, nsteps, rad_interval=8, diag_interval=100,
             snapshot['ts'] = state['ts'].detach().clone()
             snapshot['t'] = state['t'].detach().clone()
             snapshot['q'] = state['q'].detach().clone()
+            snapshot['qc'] = state['qc'].detach().clone()
             diag_history.append(snapshot)
 
             if callback is not None:

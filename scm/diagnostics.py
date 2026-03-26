@@ -44,7 +44,8 @@ def equilibrium_stats(diag_history, last_n=50):
     stats = {}
     for key in ['ts', 'olr', 'asr', 'toa_net', 'precip_total', 'precip_conv',
                 'precip_ls', 'shf', 'lhf', 'sw_absorbed_sfc', 'sw_reflected_toa',
-                'lw_down_sfc', 'lw_up_sfc', 'surface_net_flux']:
+                'lw_down_sfc', 'lw_up_sfc', 'surface_net_flux',
+                'cloud_cover', 'lwp', 'iwp']:
         if key in recent[0]:
             vals = torch.stack([d[key] for d in recent])
             stats[key + '_mean'] = vals.mean(dim=0)

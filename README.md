@@ -34,10 +34,11 @@ So, if the future goal is a GCM, this code is currently the **physics column com
 
 - `scm/column_model.py` - time stepping, state updates, and physics dispatch
 - `scm/thermo.py` - thermodynamics, vertical grid, CAPE, and moist adiabat utilities
-- `scm/radiation.py` - semi-gray shortwave and longwave radiation
+- `scm/radiation.py` - semi-gray and multiband radiation solvers
 - `scm/surface.py` - surface fluxes and slab ocean update
 - `scm/boundary_layer.py` - implicit boundary layer mixing
 - `scm/condensation.py` - large-scale saturation adjustment
+- `scm/cloud_microphysics.py` - prognostic cloud condensate and cloud-radiative properties
 - `scm/convection_bm.py` - Betts-Miller convective adjustment
 - `scm/convection_mf.py` - mass-flux convection with entraining-plume closure
 - `scm/ensemble.py` - parameter sampling and mixed structural ensembles
@@ -68,48 +69,47 @@ Each physics package returns tendencies or flux diagnostics, and the column mode
 
 ## Radiation And Greenhouse Gases
 
-The radiation in this SCM is intentionally simple. It is a **semi-gray** scheme in [`scm/radiation.py`](scm/radiation.py):
+The radiation in this SCM now has two selectable modes in [`scm/radiation.py`](scm/radiation.py):
 
-- Longwave is split into:
-  - a transparent window fraction
-  - a single absorbing band
-- Shortwave is represented as one band with water-vapor absorption
+- **`multiband`**: the current default
+- **`semi_gray`**: the simplified fallback
 
-In the current code, the longwave optical depth is made of two explicit pieces:
+The default `multiband` path is still lightweight compared with a full GCM radiation package, but it is more realistic than the original single-band solver:
 
-- **Water vapor**: prognostic, through the model humidity field `q`
-- **CO2**: prescribed, through `co2` relative to `co2_ref`
+- longwave is split across multiple gray bands with different water-vapor and CO2 optical depths
+- shortwave is split across multiple bands with configurable water-vapor and ozone absorption
+- optional bulk trace-gas terms can be added for `CH4`, `N2O`, `O3`, and a catch-all minor-greenhouse-gas optical depth
+- cloud-radiative properties can be taken either from prescribed bulk cloud parameters or from prognostic cloud condensate produced by `scm/cloud_microphysics.py`
 
-Concretely:
+The simplified `semi_gray` path is still available for fast debugging and calibration. In that mode:
 
-- longwave water-vapor optical depth scales like `kappa_wv * q * dp / g`
-- longwave CO2 optical depth uses a simple logarithmic dependence on concentration, through `co2_base_tau + co2_log_factor * log(co2 / co2_ref)`
-- shortwave absorption also depends on water vapor through `sw_kappa_wv`
+- longwave is split into a transparent window fraction and a single absorbing band
+- shortwave is represented as one band with water-vapor absorption
+- CO2 forcing enters through `co2_base_tau + co2_log_factor * log(co2 / co2_ref)`
 
-This means the model currently treats:
+Across both modes, the model currently treats:
 
 - `H2O` as an explicit radiatively active gas
 - `CO2` as an explicit prescribed greenhouse gas
+- `CH4`, `N2O`, and `O3` as optional bulk radiative extensions
 
-And it does **not** yet explicitly represent:
+It still does **not** yet provide:
 
-- methane (`CH4`)
-- nitrous oxide (`N2O`)
-- ozone (`O3`)
 - aerosols
-- spectrally resolved clouds
+- line-by-line or correlated-k spectroscopy
+- a production-quality cloud overlap scheme
 
 So if you are describing the current SCM to someone else, the right summary is:
 
-- it has a simplified radiative transfer model
-- it includes explicit water-vapor and CO2 effects
-- all other greenhouse-gas and cloud effects are either absent or implicitly folded into tuning parameters such as `f_window`, `co2_base_tau`, and `albedo`
+- it has a modular radiation system with a richer default multiband mode and a simpler semi-gray fallback
+- it includes explicit water-vapor and prescribed-CO2 effects
+- it can add bulk trace-gas and cloud-radiative effects without switching to a full spectral package
 
 This is appropriate for a compact research SCM, but it is not yet a full GCM-grade radiation package.
 
 ### Optional trace-gas extension
 
-The code now also supports an **optional bulk trace-gas extension** while keeping the same semi-gray solver.
+Both radiation modes support an **optional bulk trace-gas extension**.
 
 If enabled, the radiation can add simple extra optical-depth terms for:
 
@@ -119,22 +119,23 @@ If enabled, the radiation can add simple extra optical-depth terms for:
 - ozone shortwave absorption (`o3_sw_tau`)
 - a catch-all minor-greenhouse-gas term (`other_ghg_tau`)
 
-This is still **not** a spectrally resolved radiation package. It is a way to add configurable trace-gas effects without replacing the current simplified radiation model.
+This is still **not** a spectrally resolved radiation package. It is a way to add configurable trace-gas effects without replacing the lightweight SCM solver.
 
 ### Optional cloud-radiative extension
 
-The same semi-gray radiation can also include a simple optional cloud-radiative layer.
+Cloud-radiative effects can now be supplied in two ways:
 
-The current cloud hooks are bulk and configurable:
+- **prescribed bulk clouds** through `[radiation.clouds]`
+- **microphysics-coupled clouds** through `[cloud_microphysics]`, where large-scale condensation and convective detrainment feed a prognostic condensate field `qc`
 
-- `cloud_fraction`
-- `cloud_sw_reflectivity`
-- `cloud_sw_tau`
-- `cloud_lw_tau`
-- `cloud_top_sigma`
-- `cloud_bottom_sigma`
+The microphysics-coupled path diagnoses:
 
-In this form, clouds are still a simplified radiative parameterization, not a full cloud microphysics or cloud overlap scheme.
+- cloud fraction
+- shortwave cloud optical depth
+- longwave cloud optical depth
+- liquid and ice water paths
+
+This is still a deliberately simple cloud-radiative model, not a full microphysics package with separate hydrometeor classes and overlap assumptions. The important point is that the default radiation can now respond to internally generated condensate rather than only to prescribed bulk cloud parameters.
 
 ## Differences From CESM2 and GFDL Single-Column Models
 
@@ -211,10 +212,11 @@ python -m scm.run_scm --config scm/configs/default.toml
 
 Two example configs are included:
 
-- `scm/configs/default.toml` - baseline run settings
+- `scm/configs/default.toml` - richer default run settings: multiband radiation, optional trace gases, and microphysics-coupled cloud radiation
+- `scm/configs/simplified_physics.toml` - simplified fallback: semi-gray radiation and no cloud microphysics
 - `scm/configs/trace_gases_example.toml` - example of the optional trace-gas radiation mode
 - `scm/configs/clouds_example.toml` - example of the optional cloud-radiative mode
-- `scm/configs/radiation_calibration.toml` - short-run sweep for tuning the semi-gray radiation baseline
+- `scm/configs/radiation_calibration.toml` - short-run sweep for tuning the semi-gray baseline without the richer cloud path
 
 The config file is the preferred place for persistent run setup. Existing CLI flags still work and act as overrides.
 
@@ -223,8 +225,10 @@ The radiation settings are now structured into sections like:
 - `[radiation]`
 - `[radiation.longwave]`
 - `[radiation.shortwave]`
+- `[radiation.multiband]`
 - `[radiation.trace_gases]`
 - `[radiation.clouds]`
+- `[cloud_microphysics]`
 
 ### Quick component tests
 
@@ -265,6 +269,12 @@ Or the equivalent config-driven path:
 
 ```bash
 python -m scm.run_scm --config scm/configs/default.toml --scheme mf --fixed-params --device cpu --no-plot
+```
+
+If you want the older simpler physics path instead, use:
+
+```bash
+python -m scm.run_scm --config scm/configs/simplified_physics.toml --scheme mf --fixed-params --device cpu --no-plot
 ```
 
 ### Radiation calibration workflow
