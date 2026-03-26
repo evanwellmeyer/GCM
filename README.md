@@ -157,6 +157,9 @@ When the mass-flux plume loses buoyancy and detaches, it deposits air capped at 
 **Explicit subsidence warming term.**
 The heating tendency includes a separate term for compensating environmental subsidence driven by mass-flux divergence at each level. Many simplified schemes lump this into an implicit heating-cooling balance or omit it. Having it as an explicit term makes the vertical heating structure easier to diagnose and modify independently of the detrainment term.
 
+**Condensate-loaded plume buoyancy.**
+The mass-flux plume and the dilute-CAPE closure now carry a simple condensate reservoir, with configurable retention and fallout. Buoyancy is computed from vapor plus condensate loading rather than from vapor alone, so deep plumes lose buoyancy more realistically once they condense heavily.
+
 **Structural ensembles across convection schemes.**
 The ensemble driver can run a mixed ensemble where half the members use Betts-Miller adjustment and half use mass-flux convection, within a single batched experiment. This directly samples structural uncertainty alongside parametric uncertainty. Neither the CESM2 SCM framework nor the GFDL AM4 SCM supports this natively — they fix one scheme per experiment.
 
@@ -303,11 +306,13 @@ Its cloud-microphysics defaults are also intentionally stricter than the earlier
 - `cloud_ls_precip_fraction = 0.90`
 - `cloud_rh_min = 0.90`
 - `cloud_qc_ref = 8.0e-4`
-- `cloud_autoconv_qc_thresh = 3.0e-4`
+- `cloud_autoconv_qc_thresh = 2.0e-4`
 - `cloud_autoconv_power = 2.0`
-- `conv_cloud_efficiency = 0.0015`
+- `conv_cloud_efficiency = 0.0008`
 - `cloud_cf_rh_power = 2.0`
 - `cloud_cf_qc_power = 1.5`
+- `cloud_k_liq_lw = 4.0`
+- `cloud_k_ice_lw = 2.0`
 
 The richer default path also enables a conservative shallow-convection section:
 
@@ -315,6 +320,11 @@ The richer default path also enables a conservative shallow-convection section:
 - `base_sigma = 0.90`
 - `tau = 14400 s`
 - no shallow-convective precipitation by default
+
+And the richer default MF plume keeps a modest amount of condensate loading through `[params]`:
+
+- `mf_condensate_retention = 0.25`
+- `mf_condensate_fallout = 0.45`
 
 Those overrides are there to keep the lowest atmospheric level better coupled to the slab surface under the multiband plus cloud-microphysics configuration.
 

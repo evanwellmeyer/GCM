@@ -524,7 +524,7 @@ def test_convection_mf(device):
     print("=== convection (mass-flux) ===")
     from scm.thermo import (make_grid, pressure_at_full, dp_from_ps,
                             saturation_specific_humidity, cape)
-    from scm.convection_mf import mass_flux_convection
+    from scm.convection_mf import mass_flux_convection, dilute_cape
 
     grid = make_grid(nlevels=20, device=device)
     batch = 4
@@ -536,22 +536,36 @@ def test_convection_mf(device):
     t = 300.0 * sigma ** 0.19
     t = torch.clamp(t, min=200.0)
     qs = saturation_specific_humidity(t, p)
-    q = 0.85 * qs * sigma ** 1.5
+    q = 0.95 * qs * sigma ** 1.0
     q = torch.clamp(q, min=1e-7)
 
     cape_val = cape(t, q, p, grid)
     print(f"CAPE before convection: {cape_val[0].item():.0f} J/kg")
 
     state = {'t': t, 'q': q, 'p': p, 'dp': dp}
-    params = {'dt': 900.0, 'entrainment_rate': 1.5e-4, 'tau_cape': 3600.0,
-              'precip_efficiency': 0.9, 'cape_threshold': 100.0}
+    params = {'dt': 900.0, 'entrainment_rate': 1.0e-5, 'tau_cape': 3600.0,
+              'precip_efficiency': 0.9, 'cape_threshold': 100.0,
+              'mf_condensate_retention': 0.25, 'mf_condensate_fallout': 0.45}
     out = mass_flux_convection(state, grid, params)
+
+    dcape_noload = dilute_cape(t, q, p, params['entrainment_rate'])
+    dcape_load = dilute_cape(
+        t, q, p, params['entrainment_rate'],
+        condensate_retention=params['mf_condensate_retention'],
+        condensate_fallout=params['mf_condensate_fallout'],
+    )
 
     precip = out['precip'][0].item() * 86400
     dt_profile = out['dt'][0] * 86400
 
     print(f"convective precip: {precip:.2f} mm/day")
     print(f"heating profile (K/day): {dt_profile.tolist()[:5]}... (top levels)")
+    print(f"dilute CAPE without loading: {dcape_noload[0].item():.0f} J/kg")
+    print(f"dilute CAPE with loading: {dcape_load[0].item():.0f} J/kg")
+
+    assert dcape_load[0].item() < dcape_noload[0].item(), (
+        "condensate loading should reduce dilute CAPE"
+    )
 
     print("convection (mf): PASS\n")
 

@@ -11,12 +11,18 @@
 
 import torch
 from scm.thermo import (
-    cp, Lv, g, Rd, Rv,
+    cp, Lv, g, Rd, Rv, eps,
     saturation_specific_humidity, virtual_temperature
 )
 
 
-def dilute_cape(t, q, p, entrainment):
+def loaded_virtual_temperature(t, q_vapor, q_condensate):
+    """Virtual temperature including condensate loading."""
+
+    return t * (1.0 + (1.0 / eps - 1.0) * q_vapor.clamp(min=0.0) - q_condensate.clamp(min=0.0))
+
+
+def dilute_cape(t, q, p, entrainment, condensate_retention=0.0, condensate_fallout=1.0):
     """CAPE computed with an entraining parcel. more realistic than
     undilute CAPE because it accounts for how environmental humidity
     affects buoyancy. returns (batch,) in J/kg."""
@@ -27,8 +33,11 @@ def dilute_cape(t, q, p, entrainment):
     t_parcel = t[:, -1].clone()
     q_parcel = q[:, -1].clone()
     p_parcel = p[:, -1].clone()
+    qc_parcel = torch.zeros(batch, device=t.device, dtype=t.dtype)
 
     dcape = torch.zeros(batch, device=t.device)
+    fallout_keep = 1.0 - float(torch.clamp(torch.as_tensor(condensate_fallout), min=0.0, max=1.0).item())
+    cond_retain = float(torch.clamp(torch.as_tensor(condensate_retention), min=0.0, max=1.0).item())
 
     for k in range(nlevels - 2, -1, -1):
         p_target = p[:, k]
@@ -38,6 +47,7 @@ def dilute_cape(t, q, p, entrainment):
         mix = 1.0 - torch.exp(-(entrainment * dp_step).clamp(min=0.0, max=5.0))
         t_parcel = (1.0 - mix) * t_parcel + mix * t[:, k]
         q_parcel = (1.0 - mix) * q_parcel + mix * q[:, k]
+        qc_parcel = (1.0 - mix) * qc_parcel
 
         # adiabatic ascent
         qs_p = saturation_specific_humidity(t_parcel, p_target)
@@ -58,9 +68,10 @@ def dilute_cape(t, q, p, entrainment):
         excess = torch.clamp(q_parcel - qs_new, min=0.0)
         q_parcel = q_parcel - excess
         t_parcel = t_parcel + Lv / cp * excess
+        qc_parcel = fallout_keep * (qc_parcel + cond_retain * excess)
 
         # buoyancy contribution
-        tv_parcel = virtual_temperature(t_parcel, q_parcel)
+        tv_parcel = loaded_virtual_temperature(t_parcel, q_parcel, qc_parcel)
         tv_env = virtual_temperature(t[:, k], q[:, k])
         buoyancy = torch.clamp((tv_parcel - tv_env) / tv_env, min=0.0)
         dlnp = torch.log(p[:, k + 1].clamp(min=1.0) / p[:, k].clamp(min=1.0))
@@ -86,16 +97,25 @@ def mass_flux_convection(state, grid, params):
     bl_export_fraction = params.get('mf_bl_export_fraction', 0.02)
     max_dt_day = params.get('mf_max_dt_day', 10.0)
     max_dq_day = params.get('mf_max_dq_day', 5.0)
+    cond_retain = params.get('mf_condensate_retention', 0.25)
+    cond_fallout = params.get('mf_condensate_fallout', 0.45)
     batch = t.shape[0]
     nlevels = t.shape[1]
 
     # use dilute CAPE for the closure
-    cape_val = dilute_cape(t, q, p, entrainment)
+    cape_val = dilute_cape(
+        t, q, p, entrainment,
+        condensate_retention=cond_retain,
+        condensate_fallout=cond_fallout,
+    )
     cape_excess = torch.clamp(cape_val - cape_threshold, min=0.0)
 
     # march the plume upward
     t_plume = t[:, -1].clone()
     q_plume = q[:, -1].clone()
+    qc_plume = torch.zeros(batch, device=t.device, dtype=t.dtype)
+    fallout_keep = 1.0 - float(torch.clamp(torch.as_tensor(cond_fallout), min=0.0, max=1.0).item())
+    cond_retain = float(torch.clamp(torch.as_tensor(cond_retain), min=0.0, max=1.0).item())
 
     dt_norm = torch.zeros_like(t)
     dq_norm = torch.zeros_like(q)
@@ -117,6 +137,7 @@ def mass_flux_convection(state, grid, params):
         mix = 1.0 - torch.exp(-(entrainment * dp_step).clamp(min=0.0, max=5.0))
         t_plume = (1.0 - mix) * t_plume + mix * t[:, k]
         q_plume = (1.0 - mix) * q_plume + mix * q[:, k]
+        qc_plume = (1.0 - mix) * qc_plume
 
         # mass flux increases from entrainment
         mf_profile = mf_profile * (1.0 + mix)
@@ -138,9 +159,10 @@ def mass_flux_convection(state, grid, params):
         condensate = torch.clamp(q_plume - qs_p, min=0.0)
         q_plume = q_plume - condensate
         t_plume = t_plume + Lv / cp * condensate
+        qc_plume = fallout_keep * (qc_plume + cond_retain * condensate)
 
         # buoyancy
-        tv_plume = virtual_temperature(t_plume, q_plume)
+        tv_plume = loaded_virtual_temperature(t_plume, q_plume, qc_plume)
         tv_env = virtual_temperature(t[:, k], q[:, k])
         buoyant = torch.sigmoid((tv_plume - tv_env) * 5.0)
 
