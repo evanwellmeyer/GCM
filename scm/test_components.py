@@ -229,6 +229,10 @@ def test_cloud_microphysics(device):
     params = {
         'ls_precip_fraction': 0.3,
         'cloud_microphysics_enabled': True,
+        'cloud_autoconv_tau': 1800.0,
+        'cloud_autoconv_qc_thresh': 1.0e-5,
+        'cloud_autoconv_qc_scale': 1.0e-4,
+        'cloud_autoconv_power': 2.0,
         'cloud_ls_precip_fraction': 0.8,
         'dt': 900.0,
     }
@@ -238,13 +242,66 @@ def test_cloud_microphysics(device):
 
     print(f"cloud source = {cond_out['cloud_source'][0].sum().item():.3e} kg/kg")
     print(f"qc column = {cloud_out['qc'][0].sum().item():.3e} kg/kg")
+    print(f"cloud precip = {cloud_out['precip'][0].item() * 86400.0 / params['dt']:.3f} mm/day")
     print(f"cloud cover = {(1.0 - torch.prod(1.0 - cloud_out['cloud_fraction'][0])).item():.2f}")
 
     assert cond_out['cloud_source'].sum().item() > 0.0, "microphysics path should create cloud source"
     assert cloud_out['qc'].sum().item() > 0.0, "cloud condensate should accumulate"
+    assert cloud_out['precip'].sum().item() > 0.0, "autoconversion should produce cloud precipitation"
     assert cloud_out['cloud_sw_tau_layer'].sum().item() > 0.0, "cloud SW optical depth should be positive"
 
     print("cloud microphysics: PASS\n")
+
+
+def test_quadratic_autoconversion(device):
+    """verify thick clouds precipitate more efficiently than thin clouds."""
+    print("=== quadratic autoconversion ===")
+    from scm.thermo import make_grid, pressure_at_full, dp_from_ps, saturation_specific_humidity
+    from scm.cloud_microphysics import initialize_cloud_state, cloud_microphysics_step
+
+    grid = make_grid(nlevels=20, device=device)
+    batch = 2
+    ps = torch.full((batch,), 1e5, device=device)
+    p = pressure_at_full(grid, ps)
+    dp = dp_from_ps(grid, ps)
+
+    sigma = grid['sigma_full'].unsqueeze(0).expand(batch, -1)
+    t = torch.clamp(292.0 * sigma ** 0.18, min=210.0)
+    qs = saturation_specific_humidity(t, p)
+    q = qs.clone()
+
+    state = {'t': t, 'q': q, 'ts': torch.full((batch,), 292.0, device=device), 'p': p, 'dp': dp}
+    state.update(initialize_cloud_state(batch, grid, device=device))
+    state['qc'][0] = 3.0e-4
+    state['qc'][1] = 1.5e-3
+
+    params = {
+        'cloud_microphysics_enabled': True,
+        'cloud_autoconv_tau': 1800.0,
+        'cloud_autoconv_qc_thresh': 2.0e-4,
+        'cloud_autoconv_qc_scale': 4.0e-4,
+        'cloud_autoconv_power': 2.0,
+        'cloud_evap_tau': 1.0e9,
+        'cloud_rh_evap': 0.7,
+        'dt': 900.0,
+    }
+    cond_out = {'cloud_source': torch.zeros_like(q)}
+    conv_out = {'precip': torch.zeros(batch, device=device)}
+    cloud_out = cloud_microphysics_step(state, grid, params, cond_out, conv_out)
+
+    retained_frac_low = cloud_out['qc'][0].sum().item() / state['qc'][0].sum().item()
+    retained_frac_high = cloud_out['qc'][1].sum().item() / state['qc'][1].sum().item()
+    print(f"thin cloud precip = {cloud_out['precip'][0].item() * 86400.0 / params['dt']:.3f} mm/day")
+    print(f"thick cloud precip = {cloud_out['precip'][1].item() * 86400.0 / params['dt']:.3f} mm/day")
+
+    assert cloud_out['precip'][1].item() > cloud_out['precip'][0].item(), (
+        "thicker clouds should autoconvert more condensate"
+    )
+    assert retained_frac_high < retained_frac_low, (
+        "quadratic autoconversion should retain a smaller condensate fraction in thick clouds"
+    )
+
+    print("quadratic autoconversion: PASS\n")
 
 
 def test_calibration_utils():
@@ -608,6 +665,7 @@ def main():
     test_thermo(device)
     test_radiation(device)
     test_cloud_microphysics(device)
+    test_quadratic_autoconversion(device)
     test_calibration_utils()
     test_surface(device)
     test_condensation(device)

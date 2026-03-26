@@ -109,6 +109,9 @@ def extract_param_overrides(config):
         params["cloud_microphysics_enabled"] = bool(cloud_microphysics.get("enabled", False))
         params.update(_non_null_items({
             "cloud_autoconv_tau": cloud_microphysics.get("cloud_autoconv_tau"),
+            "cloud_autoconv_qc_thresh": cloud_microphysics.get("cloud_autoconv_qc_thresh"),
+            "cloud_autoconv_qc_scale": cloud_microphysics.get("cloud_autoconv_qc_scale"),
+            "cloud_autoconv_power": cloud_microphysics.get("cloud_autoconv_power"),
             "cloud_evap_tau": cloud_microphysics.get("cloud_evap_tau"),
             "cloud_ls_precip_fraction": cloud_microphysics.get("cloud_ls_precip_fraction"),
             "cloud_rh_evap": cloud_microphysics.get("cloud_rh_evap"),

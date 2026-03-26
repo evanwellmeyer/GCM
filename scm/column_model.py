@@ -151,8 +151,9 @@ def step(state, grid, params, rad_cache=None):
     # diagnostics
     precip_conv = conv_out.get('precip', torch.zeros_like(state['ts']))
     precip_ls = cond_out.get('precip', torch.zeros_like(state['ts'])) / dt
+    precip_cloud = cloud_out.get('precip', torch.zeros_like(state['ts'])) / dt
     # sanity cap on total precip diagnostic
-    precip_total = (precip_conv + precip_ls).clamp(max=100.0 / 86400.0)
+    precip_total = (precip_conv + precip_ls + precip_cloud).clamp(max=100.0 / 86400.0)
     surface_net_flux = (
         rad_out['sw_absorbed_sfc']
         + rad_out['lw_down_sfc']
@@ -166,6 +167,7 @@ def step(state, grid, params, rad_cache=None):
         'toa_net': rad_out['toa_net'],
         'precip_conv': precip_conv,
         'precip_ls': precip_ls,
+        'precip_cloud': precip_cloud,
         'precip_total': precip_total,
         'shf': sfc_out['shf'],
         'lhf': sfc_out['lhf'],

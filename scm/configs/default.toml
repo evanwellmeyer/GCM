@@ -77,12 +77,15 @@ cloud_bottom_sigma = 0.95
 
 [cloud_microphysics]
 enabled = true
-cloud_autoconv_tau = 10800.0
+cloud_autoconv_tau = 7200.0
+cloud_autoconv_qc_thresh = 3.0e-4
+cloud_autoconv_qc_scale = 6.0e-4
+cloud_autoconv_power = 2.0
 cloud_evap_tau = 3600.0
-cloud_ls_precip_fraction = 0.80
+cloud_ls_precip_fraction = 0.90
 cloud_rh_evap = 0.70
-cloud_rh_min = 0.88
-cloud_qc_ref = 5.0e-4
+cloud_rh_min = 0.90
+cloud_qc_ref = 8.0e-4
 cloud_qc_max = 5.0e-3
 cloud_liquid_temp = 273.15
 cloud_ice_temp = 258.15
@@ -91,8 +94,8 @@ conv_cloud_anvil_center_sigma = 0.45
 conv_cloud_anvil_width_sigma = 0.18
 cloud_k_liq_sw = 15.0
 cloud_k_ice_sw = 8.0
-cloud_k_liq_lw = 8.0
-cloud_k_ice_lw = 4.0
+cloud_k_liq_lw = 6.0
+cloud_k_ice_lw = 3.0
 cloud_sw_scattering_efficiency = 0.04
 cloud_sw_absorption_fraction = 0.05
 

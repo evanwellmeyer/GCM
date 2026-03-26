@@ -138,6 +138,7 @@ The microphysics-coupled path diagnoses:
 - shortwave cloud optical depth
 - longwave cloud optical depth
 - liquid and ice water paths
+- cloud precipitation from thresholded quadratic autoconversion
 
 This is still a deliberately simple cloud-radiative model, not a full microphysics package with separate hydrometeor classes and overlap assumptions. The important point is that the default radiation can now respond to internally generated condensate rather than only to prescribed bulk cloud parameters.
 
@@ -171,7 +172,7 @@ The default `multiband` radiation solver splits the longwave across four spectra
 Across both radiation modes, CO2 forcing enters as `co2_base_tau + co2_log_factor * ln(CO2/CO2_ref)` — a directly inspectable and tunable parameter. This correctly captures the logarithmic saturation physics of CO2 (doubling CO2 adds a fixed optical depth increment) while making the CO2 climate sensitivity an explicit quantity rather than an emergent result of a spectral calculation. In the multiband mode, this logarithmic increment is distributed per-band via `lw_band_co2_log_factor`, giving per-band CO2 forcing control.
 
 **Prognostic cloud condensate coupled to radiation.**
-The `cloud_microphysics.py` module carries a prognostic condensate field `qc` that is fed by large-scale condensation and convective detrainment, and partitioned into liquid and ice fractions by temperature. Shortwave and longwave cloud optical depths are diagnosed from liquid water path (LWP) and ice water path (IWP) using configurable mass-extinction coefficients (`cloud_k_liq_sw`, `cloud_k_ice_lw`, etc.), and cloud fraction is diagnosed jointly from relative humidity and condensate amount. This closes the cloud-radiation-convection feedback loop without requiring prescribed bulk cloud parameters. CESM2 and GFDL SCMs couple radiation to cloud microphysics too, but through much more complex multi-moment schemes; this model provides the same internal coupling at a cost appropriate for a research SCM.
+The `cloud_microphysics.py` module carries a prognostic condensate field `qc` that is fed by large-scale condensation and convective detrainment, and partitioned into liquid and ice fractions by temperature. Shortwave and longwave cloud optical depths are diagnosed from liquid water path (LWP) and ice water path (IWP) using configurable mass-extinction coefficients (`cloud_k_liq_sw`, `cloud_k_ice_lw`, etc.), cloud fraction is diagnosed jointly from relative humidity and condensate amount, and cloud water is removed by thresholded quadratic autoconversion so thick clouds precipitate more efficiently than thin clouds. This closes the cloud-radiation-convection feedback loop without requiring prescribed bulk cloud parameters. CESM2 and GFDL SCMs couple radiation to cloud microphysics too, but through much more complex multi-moment schemes; this model provides the same internal coupling at a cost appropriate for a research SCM.
 
 **Incremental physics complexity via additive extensions.**
 RRTMG and GFDL-RAD require full atmospheric composition profiles (temperature, humidity, O3, CO2, CH4, N2O, aerosols) even for simple runs. This SCM requires only temperature, humidity, and CO2 at minimum. Trace gases (CH4, N2O, O3), clouds, and microphysics are additive extensions that each add one config section without replacing the core solver. This makes it straightforward to isolate individual feedbacks by enabling or disabling components.
@@ -295,6 +296,14 @@ The richer default config also uses a shallower surface-coupling stencil through
 - `boundary_layer_scheme = "richardson"`
 - `surface_heat_levels = 2`
 - `surface_moisture_levels = 1`
+
+Its cloud-microphysics defaults are also intentionally stricter than the earlier prototype:
+
+- `cloud_ls_precip_fraction = 0.90`
+- `cloud_rh_min = 0.90`
+- `cloud_qc_ref = 8.0e-4`
+- `cloud_autoconv_qc_thresh = 3.0e-4`
+- `cloud_autoconv_power = 2.0`
 
 Those overrides are there to keep the lowest atmospheric level better coupled to the slab surface under the multiband plus cloud-microphysics configuration.
 

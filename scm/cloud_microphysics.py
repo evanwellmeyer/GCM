@@ -26,6 +26,32 @@ def _to_col(value, batch, device, dtype):
     raise ValueError(f"cannot broadcast cloud parameter with shape {tuple(t.shape)} to batch={batch}")
 
 
+def _quadratic_autoconversion(qc, dt, params, batch, device, dtype):
+    """Return updated condensate and precipitated condensate from autoconversion.
+
+    The sink only acts on condensate above a threshold and accelerates
+    quadratically with excess condensate. This prevents thin clouds from
+    raining out immediately while making optically thick clouds precipitate
+    efficiently enough to avoid unrealistic long-lived anvils.
+    """
+
+    tau = _to_col(params.get('cloud_autoconv_tau', 7200.0), batch, device, dtype).clamp(min=1.0)
+    qc_thresh = _to_col(
+        params.get('cloud_autoconv_qc_thresh', params.get('cloud_qc_ref', 1.0e-4)),
+        batch, device, dtype
+    ).clamp(min=1.0e-8)
+    qc_scale = _to_col(
+        params.get('cloud_autoconv_qc_scale', params.get('cloud_qc_ref', 1.0e-4)),
+        batch, device, dtype
+    ).clamp(min=1.0e-8)
+    power = max(float(params.get('cloud_autoconv_power', 2.0)), 1.0)
+
+    excess = torch.clamp(qc - qc_thresh, min=0.0)
+    sink = (dt / tau) * excess * torch.pow(excess / qc_scale, power - 1.0)
+    sink = torch.minimum(sink, excess)
+    return qc - sink, sink
+
+
 def cloud_microphysics_step(state, grid, params, cond_out, conv_out):
     """Very simple prognostic cloud condensate and cloud optics.
 
@@ -53,6 +79,7 @@ def cloud_microphysics_step(state, grid, params, cond_out, conv_out):
             'cloud_lw_tau_layer': zeros,
             'lwp': zeros,
             'iwp': zeros,
+            'precip': torch.zeros(batch, device=device, dtype=dtype),
         }
 
     dt = float(params.get('dt', 900.0))
@@ -73,14 +100,14 @@ def cloud_microphysics_step(state, grid, params, cond_out, conv_out):
 
     source = ls_source + conv_source
 
-    autoconv_tau = _to_col(params.get('cloud_autoconv_tau', 7200.0), batch, device, dtype)
     evap_tau = _to_col(params.get('cloud_evap_tau', 3600.0), batch, device, dtype)
     rh_evap = _to_col(params.get('cloud_rh_evap', 0.75), batch, device, dtype).clamp(min=1.0e-3)
 
-    qc = qc_prev * torch.exp(-dt / autoconv_tau.clamp(min=1.0))
+    qc = torch.clamp(qc_prev + source, min=0.0, max=float(params.get('cloud_qc_max', 0.01)))
+    qc, autoconv_sink = _quadratic_autoconversion(qc, dt, params, batch, device, dtype)
     dry_factor = torch.clamp((rh_evap - rh) / rh_evap, min=0.0, max=1.0)
     qc = qc * torch.exp(-(dt / evap_tau.clamp(min=1.0)) * dry_factor)
-    qc = torch.clamp(qc + source, min=0.0, max=float(params.get('cloud_qc_max', 0.01)))
+    qc = torch.clamp(qc, min=0.0, max=float(params.get('cloud_qc_max', 0.01)))
 
     t_liq = float(params.get('cloud_liquid_temp', 273.15))
     t_ice = float(params.get('cloud_ice_temp', 258.15))
@@ -107,6 +134,7 @@ def cloud_microphysics_step(state, grid, params, cond_out, conv_out):
 
     cloud_sw_tau_layer = cloud_fraction * (k_liq_sw * lwp + k_ice_sw * iwp)
     cloud_lw_tau_layer = cloud_fraction * (k_liq_lw * lwp + k_ice_lw * iwp)
+    precip = torch.sum(autoconv_sink * dp / g, dim=1)
 
     return {
         'qc': qc,
@@ -115,4 +143,5 @@ def cloud_microphysics_step(state, grid, params, cond_out, conv_out):
         'cloud_lw_tau_layer': cloud_lw_tau_layer,
         'lwp': lwp,
         'iwp': iwp,
+        'precip': precip,
     }
