@@ -253,10 +253,19 @@ def run(state, grid, params, nsteps, rad_interval=8, diag_interval=100,
 
     diag_history = []
     rad_cache = None
+    effective_rad_interval = max(1, int(rad_interval))
+
+    # When cloud condensate is prognostic, let radiation see the updated
+    # cloud state more frequently than in the clear-sky/semi-gray path.
+    if params.get('cloud_microphysics_enabled', False):
+        effective_rad_interval = min(
+            effective_rad_interval,
+            max(1, int(params.get('rad_interval_microphysics_steps', 1))),
+        )
 
     for n in range(nsteps):
         # recompute radiation on schedule
-        if n % rad_interval == 0:
+        if n % effective_rad_interval == 0:
             state = update_derived(state, grid)
             rad_cache = radiation(state, grid, params)
 

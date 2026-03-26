@@ -233,6 +233,9 @@ def run_radiation_calibration(config, device):
         'co2': float(forcing_cfg.get('co2', 400.0)),
         'co2_ref': float(forcing_cfg.get('co2_ref', 400.0)),
         'use_slab_ocean': not fixed_sst,
+        'rad_interval_microphysics_steps': int(
+            numerics_cfg.get('rad_interval_microphysics_steps', 1)
+        ),
     }
 
     targets = {**DEFAULT_TARGETS, **calibration_cfg.get('targets', {})}

@@ -14,6 +14,7 @@ preserve_ensemble_shape = false
 dt = 900.0
 nlevels = 20
 rad_interval_steps = 8
+rad_interval_microphysics_steps = 1
 diag_interval_days = 10
 
 [initial]
@@ -133,8 +134,9 @@ surface_net_flux = 10.0
 
 [params]
 # non-radiation parameter overrides can go here. the richer default path uses
-# a shallower surface-coupling stencil than the simplified fallback so the
-# lowest model level stays better coupled to the slab surface.
+# a shallower surface-coupling stencil and a Richardson-based boundary layer
+# so the lowest model level stays better coupled to the slab surface.
+boundary_layer_scheme = "richardson"
 surface_heat_levels = 2
 surface_moisture_levels = 1
 #

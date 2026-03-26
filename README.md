@@ -238,6 +238,11 @@ The radiation settings are now structured into sections like:
 - `[cloud_microphysics]`
 - `[params]` for generic physics overrides that do not yet have their own dedicated section
 
+Two config knobs are especially relevant for the richer default path:
+
+- `[numerics].rad_interval_microphysics_steps` reduces the radiation cadence when prognostic cloud condensate is enabled
+- `[params].boundary_layer_scheme` selects either the richer Richardson-based BL mixing or the legacy constant-diffusion mode
+
 ### Quick component tests
 
 ```bash
@@ -287,10 +292,11 @@ python -m scm.run_scm --config scm/configs/simplified_physics.toml --scheme mf -
 
 The richer default config also uses a shallower surface-coupling stencil through `[params]`:
 
+- `boundary_layer_scheme = "richardson"`
 - `surface_heat_levels = 2`
 - `surface_moisture_levels = 1`
 
-Those two overrides are there to keep the lowest atmospheric level better coupled to the slab surface under the multiband plus cloud-microphysics configuration.
+Those overrides are there to keep the lowest atmospheric level better coupled to the slab surface under the multiband plus cloud-microphysics configuration.
 
 ### Radiation calibration workflow
 

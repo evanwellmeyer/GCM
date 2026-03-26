@@ -17,6 +17,11 @@ enabled = false
 [cloud_microphysics]
 enabled = false
 
+[params]
+boundary_layer_scheme = "constant"
+surface_heat_levels = 8
+surface_moisture_levels = 3
+
 [calibration]
 enabled = true
 scheme = "mf"
