@@ -300,6 +300,7 @@ The richer default config also uses a shallower surface-coupling stencil through
 - `boundary_layer_scheme = "richardson"`
 - `surface_heat_levels = 2`
 - `surface_moisture_levels = 1`
+- `include_precip_enthalpy_flux = true`
 
 Its cloud-microphysics defaults are also intentionally stricter than the earlier prototype:
 
@@ -313,6 +314,11 @@ Its cloud-microphysics defaults are also intentionally stricter than the earlier
 - `cloud_cf_qc_power = 1.5`
 - `cloud_k_liq_lw = 4.0`
 - `cloud_k_ice_lw = 2.0`
+- `cloud_sw_scattering_efficiency = 0.05`
+
+And the richer default shortwave settings keep a modestly higher reflective baseline than the simplified path:
+
+- `albedo = 0.32`
 
 The richer default path also enables a conservative shallow-convection section:
 
@@ -383,14 +389,20 @@ Useful driver flags:
 
 ## Diagnostics
 
-The SCM now carries an explicit top-of-atmosphere energy-balance diagnostic:
+The SCM now carries an explicit column energy-budget diagnostic set:
 
 - `ASR` = absorbed shortwave radiation
 - `OLR` = outgoing longwave radiation
 - `TOA net` = `ASR - OLR`
 - `surface net` = net radiative plus turbulent flux into the slab ocean / surface reservoir
+- `precip heat` = sensible enthalpy carried into the surface reservoir by precipitation
+- `surface total` = `surface net + precip heat`
+- `atmos flux convergence` = `TOA net - surface total`
+- `atmos energy tendency` = diagnosed storage tendency of atmospheric moist static energy
+- `column tendency` = atmospheric plus slab storage tendency
+- `column residual` = `TOA net - column tendency`
 
-This is useful for checking whether a control or perturbed run is actually near radiative-convective equilibrium.
+This is useful for separating a true radiative imbalance from missing energy bookkeeping. In the richer default path the precipitation enthalpy term matters enough that `TOA net` alone is no longer the whole story.
 
 ## Output
 

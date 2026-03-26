@@ -424,6 +424,33 @@ def test_surface(device):
     print("surface: PASS\n")
 
 
+def test_energy_budget_diagnostics(device):
+    """verify the timestep reports the extended column energy-budget terms."""
+    print("=== energy budget diagnostics ===")
+    from scm.thermo import make_grid
+    from scm.column_model import initial_state, run
+    from scm.ensemble import default_params
+
+    grid = make_grid(nlevels=20, device=device)
+    params = default_params(device=device)
+    params['convection_scheme'] = 'mass_flux'
+    params['include_precip_enthalpy_flux'] = True
+    state = initial_state(1, grid, params, device=device)
+    state, history = run(state, grid, params, nsteps=16, rad_interval=1, diag_interval=8)
+    diag = history[-1]
+
+    for key in [
+        'precip_heat_flux', 'surface_total_flux', 'atmos_flux_convergence',
+        'atmos_energy_tendency', 'atmos_energy_residual',
+        'slab_energy_tendency', 'column_energy_tendency', 'column_energy_residual',
+    ]:
+        assert key in diag, f"missing diagnostic: {key}"
+        assert torch.isfinite(diag[key]).all(), f"non-finite diagnostic: {key}"
+
+    print(f"column residual = {diag['column_energy_residual'][0].item():+.2f} W/m2")
+    print("energy budget diagnostics: PASS\n")
+
+
 def test_condensation(device):
     """verify saturation adjustment removes supersaturation."""
     print("=== condensation ===")
@@ -729,6 +756,7 @@ def main():
     test_shallow_convection(device)
     test_calibration_utils()
     test_surface(device)
+    test_energy_budget_diagnostics(device)
     test_condensation(device)
     test_convection_bm(device)
     test_convection_mf(device)

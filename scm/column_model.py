@@ -6,10 +6,10 @@
 import torch
 from scm.thermo import (
     make_grid, pressure_at_full, pressure_at_half, dp_from_ps,
-    saturation_specific_humidity, g, cp, Lv, Rd
+    saturation_specific_humidity, geopotential, g, cp, Lv, Rd, c_water
 )
 from scm.radiation import radiation
-from scm.surface import surface_fluxes, slab_ocean_tendency
+from scm.surface import surface_fluxes, slab_ocean_tendency, slab_heat_capacity
 from scm.boundary_layer import boundary_layer_mixing
 from scm.condensation import condensation
 from scm.cloud_microphysics import initialize_cloud_state, cloud_microphysics_step
@@ -61,6 +61,14 @@ def update_derived(state, grid):
     return state
 
 
+def atmospheric_energy_content(state, grid):
+    """Column-integrated atmospheric moist static energy in J/m2."""
+
+    z = geopotential(state['t'], state['q'], state['p'], grid)
+    mse = cp * state['t'] + Lv * state['q'] + g * z
+    return torch.sum(mse * state['dp'] / g, dim=1)
+
+
 def step(state, grid, params, rad_cache=None):
     """advance the column model by one timestep. returns the updated state
     and a diagnostics dict.
@@ -81,6 +89,8 @@ def step(state, grid, params, rad_cache=None):
 
     # make sure derived fields are current
     state = update_derived(state, grid)
+    ts_prev = state['ts'].clone()
+    atm_energy_prev = atmospheric_energy_content(state, grid)
 
     # --- radiation ---
     if rad_cache is None:
@@ -151,21 +161,14 @@ def step(state, grid, params, rad_cache=None):
     state['q'] = torch.clamp(state['q'], min=1e-7, max=0.1)
     state['t'] = torch.clamp(state['t'], min=150.0, max=350.0)
 
-    # --- slab ocean ---
-    if use_slab:
-        dts_dt = slab_ocean_tendency(state, rad_out, sfc_out, params)
-        check_nan('slab dts', dts_dt)
-        dts_dt = torch.nan_to_num(dts_dt, nan=0.0)
-        state['ts'] = state['ts'] + dts_dt * dt
-        state['ts'] = state['ts'].clamp(min=200.0, max=350.0)
-
-    # diagnostics
     precip_shallow = shallow_out.get('precip', torch.zeros_like(state['ts']))
     precip_conv = conv_out.get('precip', torch.zeros_like(state['ts']))
     precip_ls = cond_out.get('precip', torch.zeros_like(state['ts'])) / dt
     precip_cloud = cloud_out.get('precip', torch.zeros_like(state['ts'])) / dt
-    # sanity cap on total precip diagnostic
-    precip_total = (precip_shallow + precip_conv + precip_ls + precip_cloud).clamp(max=100.0 / 86400.0)
+    precip_total = (precip_shallow + precip_conv + precip_ls + precip_cloud).clamp(
+        max=100.0 / 86400.0
+    )
+
     surface_net_flux = (
         rad_out['sw_absorbed_sfc']
         + rad_out['lw_down_sfc']
@@ -173,6 +176,35 @@ def step(state, grid, params, rad_cache=None):
         - sfc_out['shf']
         - sfc_out['lhf']
     )
+
+    if params.get('include_precip_enthalpy_flux', True):
+        precip_temperature = 0.5 * (ts_prev + state['t'][:, -1])
+        precip_heat_flux = c_water * precip_temperature * precip_total
+    else:
+        precip_heat_flux = torch.zeros_like(state['ts'])
+
+    surface_total_flux = surface_net_flux + precip_heat_flux
+
+    # --- slab ocean ---
+    slab_energy_tendency = torch.zeros_like(state['ts'])
+    if use_slab:
+        dts_dt = slab_ocean_tendency(
+            state, rad_out, sfc_out, params, precip_heat_flux=precip_heat_flux
+        )
+        check_nan('slab dts', dts_dt)
+        dts_dt = torch.nan_to_num(dts_dt, nan=0.0)
+        state['ts'] = state['ts'] + dts_dt * dt
+        state['ts'] = state['ts'].clamp(min=200.0, max=350.0)
+        slab_energy_tendency = slab_heat_capacity(params) * (state['ts'] - ts_prev) / dt
+
+    atm_energy_now = atmospheric_energy_content(state, grid)
+    atm_energy_tendency = (atm_energy_now - atm_energy_prev) / dt
+    atmos_flux_convergence = rad_out['toa_net'] - surface_total_flux
+    atmos_energy_residual = atmos_flux_convergence - atm_energy_tendency
+    column_energy_tendency = atm_energy_tendency + slab_energy_tendency
+    column_energy_residual = rad_out['toa_net'] - column_energy_tendency
+
+    # diagnostics
     diag = {
         'olr': rad_out['olr'],
         'asr': rad_out['asr'],
@@ -189,6 +221,14 @@ def step(state, grid, params, rad_cache=None):
         'lw_down_sfc': rad_out['lw_down_sfc'],
         'lw_up_sfc': rad_out['lw_up_sfc'],
         'surface_net_flux': surface_net_flux,
+        'surface_total_flux': surface_total_flux,
+        'precip_heat_flux': precip_heat_flux,
+        'atmos_flux_convergence': atmos_flux_convergence,
+        'atmos_energy_tendency': atm_energy_tendency,
+        'atmos_energy_residual': atmos_energy_residual,
+        'slab_energy_tendency': slab_energy_tendency,
+        'column_energy_tendency': column_energy_tendency,
+        'column_energy_residual': column_energy_residual,
         'cape': conv_out.get('cape', torch.zeros_like(state['ts'])),
         'cloud_cover': 1.0 - torch.prod(
             1.0 - cloud_out['cloud_fraction'].clamp(min=0.0, max=1.0), dim=1

@@ -6,6 +6,11 @@ from scm.thermo import cp, Lv, g, rho_water, c_water, saturation_specific_humidi
 rho_air = 1.2
 
 
+def slab_heat_capacity(params):
+    depth = params.get('ocean_depth', 50.0)
+    return rho_water * c_water * depth
+
+
 def surface_fluxes(state, grid, params):
     """bulk aerodynamic surface fluxes."""
 
@@ -64,9 +69,10 @@ def surface_fluxes(state, grid, params):
     }
 
 
-def slab_ocean_tendency(state, rad_output, sfc_output, params):
-    depth = params.get('ocean_depth', 50.0)
-    heat_capacity = rho_water * c_water * depth
+def slab_ocean_tendency(state, rad_output, sfc_output, params, precip_heat_flux=None):
+    heat_capacity = slab_heat_capacity(params)
+    if precip_heat_flux is None:
+        precip_heat_flux = torch.zeros_like(state['ts'])
 
     net_flux = (
         rad_output['sw_absorbed_sfc']
@@ -74,6 +80,7 @@ def slab_ocean_tendency(state, rad_output, sfc_output, params):
         - rad_output['lw_up_sfc']
         - sfc_output['shf']
         - sfc_output['lhf']
+        + precip_heat_flux
     )
 
     return net_flux / heat_capacity

@@ -39,7 +39,7 @@ co2_base_tau = 1.50
 
 [radiation.shortwave]
 sw_kappa_wv = 0.01
-albedo = 0.28
+albedo = 0.32
 
 [radiation.multiband]
 lw_band_weights = [0.10, 0.25, 0.35, 0.30]
@@ -100,7 +100,7 @@ cloud_k_liq_sw = 15.0
 cloud_k_ice_sw = 8.0
 cloud_k_liq_lw = 4.0
 cloud_k_ice_lw = 2.0
-cloud_sw_scattering_efficiency = 0.04
+cloud_sw_scattering_efficiency = 0.05
 cloud_sw_absorption_fraction = 0.05
 
 [shallow_convection]
@@ -157,6 +157,7 @@ surface_net_flux = 10.0
 boundary_layer_scheme = "richardson"
 surface_heat_levels = 2
 surface_moisture_levels = 1
+include_precip_enthalpy_flux = true
 mf_condensate_retention = 0.25
 mf_condensate_fallout = 0.45
 #

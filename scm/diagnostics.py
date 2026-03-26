@@ -23,6 +23,11 @@ def check_equilibrium(diag_history, window=50, ts_threshold=0.1, toa_threshold=1
     slopes = (recent_ts * x.unsqueeze(1)).sum(dim=0) / (x * x).sum()
     max_trend = slopes.abs().max().item()
 
+    if 'column_energy_tendency' in diag_history[-1]:
+        recent_column = torch.stack([d['column_energy_tendency'] for d in diag_history[-window:]])
+        max_column_imbalance = recent_column.mean(dim=0).abs().max().item()
+        return max_trend < ts_threshold and max_column_imbalance < toa_threshold
+
     if 'toa_net' not in diag_history[-1]:
         return max_trend < ts_threshold
 
@@ -43,8 +48,12 @@ def equilibrium_stats(diag_history, last_n=50):
 
     stats = {}
     for key in ['ts', 'olr', 'asr', 'toa_net', 'precip_total', 'precip_conv',
-                'precip_ls', 'shf', 'lhf', 'sw_absorbed_sfc', 'sw_reflected_toa',
-                'lw_down_sfc', 'lw_up_sfc', 'surface_net_flux',
+                'precip_ls', 'precip_cloud', 'precip_heat_flux',
+                'shf', 'lhf', 'sw_absorbed_sfc', 'sw_reflected_toa',
+                'lw_down_sfc', 'lw_up_sfc', 'surface_net_flux', 'surface_total_flux',
+                'atmos_flux_convergence', 'atmos_energy_tendency',
+                'atmos_energy_residual', 'slab_energy_tendency',
+                'column_energy_tendency', 'column_energy_residual',
                 'cloud_cover', 'lwp', 'iwp']:
         if key in recent[0]:
             vals = torch.stack([d[key] for d in recent])
@@ -102,6 +111,14 @@ def energy_balance(state, diag):
         'shf': diag['shf'],
         'lhf': diag['lhf'],
         'surface_net_flux': diag['surface_net_flux'],
+        'precip_heat_flux': diag.get('precip_heat_flux'),
+        'surface_total_flux': diag.get('surface_total_flux'),
+        'atmos_flux_convergence': diag.get('atmos_flux_convergence'),
+        'atmos_energy_tendency': diag.get('atmos_energy_tendency'),
+        'atmos_energy_residual': diag.get('atmos_energy_residual'),
+        'slab_energy_tendency': diag.get('slab_energy_tendency'),
+        'column_energy_tendency': diag.get('column_energy_tendency'),
+        'column_energy_residual': diag.get('column_energy_residual'),
     }
 
 

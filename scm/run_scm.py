@@ -199,6 +199,14 @@ def main():
     print(f"  OLR = {stats_1x['olr_mean'].mean():.1f} W/m2")
     print(f"  TOA net = {stats_1x['toa_net_mean'].mean():+.2f} W/m2")
     print(f"  surface net = {stats_1x['surface_net_flux_mean'].mean():+.2f} W/m2")
+    if 'precip_heat_flux_mean' in stats_1x:
+        print(f"  precip heat = {stats_1x['precip_heat_flux_mean'].mean():+.2f} W/m2")
+    if 'surface_total_flux_mean' in stats_1x:
+        print(f"  surface total = {stats_1x['surface_total_flux_mean'].mean():+.2f} W/m2")
+    if 'column_energy_tendency_mean' in stats_1x:
+        print(f"  column tendency = {stats_1x['column_energy_tendency_mean'].mean():+.2f} W/m2")
+    if 'column_energy_residual_mean' in stats_1x:
+        print(f"  column residual = {stats_1x['column_energy_residual_mean'].mean():+.2f} W/m2")
     print(f"  precip = {(stats_1x['precip_total_mean'] * 86400).mean():.2f} mm/day")
     print(f"  equilibrium check = {'PASS' if eq_1x else 'NOT CONVERGED'}")
 
@@ -225,6 +233,14 @@ def main():
     print(f"  OLR = {stats_2x['olr_mean'].mean():.1f} W/m2")
     print(f"  TOA net = {stats_2x['toa_net_mean'].mean():+.2f} W/m2")
     print(f"  surface net = {stats_2x['surface_net_flux_mean'].mean():+.2f} W/m2")
+    if 'precip_heat_flux_mean' in stats_2x:
+        print(f"  precip heat = {stats_2x['precip_heat_flux_mean'].mean():+.2f} W/m2")
+    if 'surface_total_flux_mean' in stats_2x:
+        print(f"  surface total = {stats_2x['surface_total_flux_mean'].mean():+.2f} W/m2")
+    if 'column_energy_tendency_mean' in stats_2x:
+        print(f"  column tendency = {stats_2x['column_energy_tendency_mean'].mean():+.2f} W/m2")
+    if 'column_energy_residual_mean' in stats_2x:
+        print(f"  column residual = {stats_2x['column_energy_residual_mean'].mean():+.2f} W/m2")
     print(f"  precip = {(stats_2x['precip_total_mean'] * 86400).mean():.2f} mm/day")
     print(f"  equilibrium check = {'PASS' if eq_2x else 'NOT CONVERGED'}")
 
