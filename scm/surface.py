@@ -23,16 +23,24 @@ def surface_fluxes(state, grid, params):
     lhf = rho_air * Lv * cd * wind * (qs_sfc - q_lowest)
     lhf = torch.clamp(lhf, min=0.0)
 
-    # heat spread across 8 levels, moisture across bottom 3
+    # By default the sensible-heat flux is distributed over the lower
+    # boundary layer and the latent-heat moisture source over the shallowest
+    # surface layers. The layer counts are configurable because the richer
+    # radiation/cloud path can be sensitive to how strongly the lowest model
+    # level is coupled to the slab surface.
     nlevels = state['t'].shape[1]
+    heat_levels = int(params.get('surface_heat_levels', 8))
+    moist_levels = int(params.get('surface_moisture_levels', 3))
+    heat_levels = max(1, min(heat_levels, nlevels))
+    moist_levels = max(1, min(moist_levels, nlevels))
 
     total_mass = torch.zeros_like(t_lowest)
-    for i in range(8):
+    for i in range(heat_levels):
         k = nlevels - 1 - i
         total_mass = total_mass + state['dp'][:, k] / g
 
     moist_mass = torch.zeros_like(t_lowest)
-    for i in range(3):
+    for i in range(moist_levels):
         k = nlevels - 1 - i
         moist_mass = moist_mass + state['dp'][:, k] / g
 
@@ -41,10 +49,10 @@ def surface_fluxes(state, grid, params):
 
     dt = torch.zeros_like(state['t'])
     dq = torch.zeros_like(state['q'])
-    for i in range(8):
+    for i in range(heat_levels):
         k = nlevels - 1 - i
         dt[:, k] = dt_uniform
-    for i in range(3):
+    for i in range(moist_levels):
         k = nlevels - 1 - i
         dq[:, k] = dq_uniform
 

@@ -132,9 +132,11 @@ surface_net_flux = 10.0
 # co2_base_tau = [1.00, 1.50]
 
 [params]
-# non-radiation parameter overrides can go here. by default this section is
-# left empty so sampled runs still use the ensemble parameter ranges defined
-# in scm/ensemble.py.
+# non-radiation parameter overrides can go here. the richer default path uses
+# a shallower surface-coupling stencil than the simplified fallback so the
+# lowest model level stays better coupled to the slab surface.
+surface_heat_levels = 2
+surface_moisture_levels = 1
 #
 # examples:
 # tau_cape = 3600.0

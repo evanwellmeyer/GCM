@@ -236,6 +236,7 @@ The radiation settings are now structured into sections like:
 - `[radiation.trace_gases]`
 - `[radiation.clouds]`
 - `[cloud_microphysics]`
+- `[params]` for generic physics overrides that do not yet have their own dedicated section
 
 ### Quick component tests
 
@@ -283,6 +284,13 @@ If you want the older simpler physics path instead, use:
 ```bash
 python -m scm.run_scm --config scm/configs/simplified_physics.toml --scheme mf --fixed-params --device cpu --no-plot
 ```
+
+The richer default config also uses a shallower surface-coupling stencil through `[params]`:
+
+- `surface_heat_levels = 2`
+- `surface_moisture_levels = 1`
+
+Those two overrides are there to keep the lowest atmospheric level better coupled to the slab surface under the multiband plus cloud-microphysics configuration.
 
 ### Radiation calibration workflow
 
