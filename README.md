@@ -136,6 +136,38 @@ The current cloud hooks are bulk and configurable:
 
 In this form, clouds are still a simplified radiative parameterization, not a full cloud microphysics or cloud overlap scheme.
 
+## Differences From CESM2 and GFDL Single-Column Models
+
+This SCM makes several deliberate design choices that differ from or improve upon the physics in CESM2 (CAM6 SCM) and GFDL (AM4 SCM).
+
+### Convection
+
+**Dilute-CAPE closure instead of undilute CAPE.**
+CESM2's Zhang-McFarlane scheme triggers and scales convection using CAPE computed from an undilute boundary-layer parcel — one that does not mix with environmental air as it rises. This can fire convection even in a dry free troposphere where a real plume would lose buoyancy quickly. This SCM computes CAPE from an entraining parcel that progressively mixes with environmental air layer-by-layer. Convective strength therefore depends on free-tropospheric humidity, which is a known driver of tropical climate sensitivity. GFDL's Donner deep convection scheme also uses a dilute parcel, but through a more complex two-moment plume model; this SCM achieves the same physical behavior more directly and transparently.
+
+**Explicit RH-capped detrainment.**
+When the mass-flux plume loses buoyancy and detaches from its environment, it deposits air that is capped at a configurable fraction of saturation (`mf_detrain_rh`, default 0.70). Standard mass-flux schemes including Zhang-McFarlane detrain plume air at whatever humidity it carries, which can lead to spurious free-tropospheric oversaturation over long integrations. The explicit cap prevents this and makes the free-tropospheric moistening behavior transparent and tunable.
+
+**Explicit subsidence warming term.**
+The heating tendency in the mass-flux scheme includes a separate term for compensating environmental subsidence driven by mass-flux divergence. Many simplified schemes either lump this into an implicit heating-cooling balance or omit it. Having it as an explicit term makes the vertical heating structure easier to diagnose and modify.
+
+**Structural ensembles across convection schemes.**
+The ensemble driver can run a mixed ensemble where half the members use Betts-Miller adjustment and half use mass-flux convection. This directly samples structural uncertainty alongside parametric uncertainty within a single experiment. Neither the CESM2 SCM framework nor the GFDL AM4 SCM supports this natively — they fix one scheme per experiment.
+
+**Betts-Miller with enforced column-drying constraint.**
+The Betts-Miller implementation explicitly checks that total column moistening does not exceed 0.8× the column drying before applying the tendency. This prevents the moisture non-conservation issues that appeared in early BM implementations in GFDL models, where the adjustment could add net moisture to the column under certain humidity profiles.
+
+### Radiation
+
+**Explicit logarithmic CO2 sensitivity.**
+CESM2 and GFDL use full correlated-k or k-distribution spectral solvers (RRTMG has 16 LW + 14 SW spectral bands) where CO2 forcing emerges from band-by-band absorption calculations. This SCM parameterizes CO2 forcing directly as a logarithmic correction to optical depth: `co2_base_tau + co2_log_factor * ln(CO2/CO2_ref)`. This correctly captures the logarithmic saturation physics — doubling CO2 adds a fixed increment to optical depth — while making the CO2 sensitivity a directly inspectable and tunable parameter. For climate sensitivity experiments this is often more useful than having the CO2 forcing emerge implicitly from a spectral calculation.
+
+**Transparent window-fraction separation.**
+The longwave is split into a transparent window band (default 15% of surface emission) and a single absorbing band. This makes the contribution of the 8–12 µm atmospheric window to OLR explicit. Spectral models like RRTMG resolve this across multiple bands but the window contribution is not a single tunable number. Having it as a configurable fraction (`f_window`) makes it easy to study how window-band emission affects equilibrium temperature and climate sensitivity.
+
+**Separation of parametric and spectral complexity.**
+RRTMG and GFDL-RAD require full atmospheric composition profiles (pressure, temperature, humidity, ozone, CO2, CH4, N2O, aerosols) to produce a radiative flux. This SCM requires only temperature, humidity, and a CO2 concentration. The optional trace-gas extension (`[radiation.trace_gases]`) adds bulk optical-depth terms for CH4, N2O, and O3 when needed, but these are additive and do not require replacing the core solver. This makes it possible to incrementally add complexity without restructuring the radiation code.
+
 ## Convection Schemes
 
 The code supports two alternate convective closures:

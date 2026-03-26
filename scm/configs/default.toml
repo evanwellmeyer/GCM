@@ -31,14 +31,14 @@ co2_2x = 800.0
 scheme = "semi_gray"
 
 [radiation.longwave]
-f_window = 0.15
-kappa_wv = 0.15
+f_window = 0.22
+kappa_wv = 0.10
 co2_log_factor = 0.14
-co2_base_tau = 1.50
+co2_base_tau = 0.80
 
 [radiation.shortwave]
 sw_kappa_wv = 0.01
-albedo = 0.28
+albedo = 0.36
 
 [radiation.trace_gases]
 enabled = false
@@ -94,7 +94,7 @@ toa_net = 5.0
 surface_net_flux = 10.0
 
 [calibration.parameter_grid]
-# albedo = [0.28, 0.32]
+# albedo = [0.32, 0.34, 0.36]
 # f_window = [0.15, 0.20]
 # kappa_wv = [0.10, 0.15]
 # co2_base_tau = [1.00, 1.50]
