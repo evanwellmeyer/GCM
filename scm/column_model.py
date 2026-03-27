@@ -28,12 +28,12 @@ def initial_state(batch, grid, params, device='cpu'):
     p = pressure_at_full(grid, ps)
 
     # temperature: start from surface and decrease with a standard lapse rate
-    ts = torch.full((batch,), params.get('ts_init', 290.0), device=device)
+    ts = torch.full((batch,), params.get('ts_init', 290.0), device=device, dtype=torch.float64)
 
     # use a simple analytic profile: T decreases with log-pressure height
     # this gives a roughly realistic tropospheric profile
     sigma = grid['sigma_full'].unsqueeze(0).expand(batch, -1)
-    t = ts.unsqueeze(1) * sigma ** (Rd * 6.5e-3 / g)
+    t = ts.to(dtype=p.dtype).unsqueeze(1) * sigma ** (Rd * 6.5e-3 / g)
     # impose a tropopause: don't let temperature fall below 200K
     t = torch.clamp(t, min=200.0)
 
@@ -48,7 +48,7 @@ def initial_state(batch, grid, params, device='cpu'):
         'q': q,
         'ts': ts,
         'slab_ts_ref': ts.clone(),
-        'slab_energy': torch.zeros_like(ts),
+        'slab_energy': torch.zeros_like(ts, dtype=torch.float64),
         'ps': ps,
     }
     state.update(initialize_cloud_state(batch, grid, device=device))
@@ -105,9 +105,11 @@ def step(state, grid, params, rad_cache=None):
 
     # make sure derived fields are current
     if 'slab_ts_ref' not in state:
-        state['slab_ts_ref'] = state['ts'].clone()
+        state['slab_ts_ref'] = state['ts'].clone().to(torch.float64)
     if 'slab_energy' not in state:
-        state['slab_energy'] = slab_heat_capacity(params) * (state['ts'] - state['slab_ts_ref'])
+        state['slab_energy'] = (
+            slab_heat_capacity(params) * (state['ts'].to(torch.float64) - state['slab_ts_ref'])
+        )
     else:
         state['ts'] = state['slab_ts_ref'] + state['slab_energy'] / slab_heat_capacity(params)
     state = update_derived(state, grid)
@@ -125,9 +127,10 @@ def step(state, grid, params, rad_cache=None):
 
     check_nan('rad dt', rad_out['dt'])
     # guard radiation outputs
-    rad_dt = torch.nan_to_num(rad_out['dt'], nan=0.0)
+    rad_dt = torch.nan_to_num(rad_out['dt'], nan=0.0).to(state['t'].dtype)
+    rad_dq = torch.nan_to_num(rad_out['dq'], nan=0.0).to(state['q'].dtype)
     state['t'] = state['t'] + rad_dt * dt
-    state['q'] = state['q'] + rad_out['dq'] * dt
+    state['q'] = state['q'] + rad_dq * dt
     atm_energy_after_rad = atmospheric_energy_content(state, grid)
 
     # --- surface fluxes ---
@@ -135,8 +138,8 @@ def step(state, grid, params, rad_cache=None):
     sfc_out = surface_fluxes(state, grid, params)
     check_nan('sfc dt', sfc_out['dt'])
     check_nan('sfc dq', sfc_out['dq'])
-    sfc_dt = torch.nan_to_num(sfc_out['dt'], nan=0.0)
-    sfc_dq = torch.nan_to_num(sfc_out['dq'], nan=0.0)
+    sfc_dt = torch.nan_to_num(sfc_out['dt'], nan=0.0).to(state['t'].dtype)
+    sfc_dq = torch.nan_to_num(sfc_out['dq'], nan=0.0).to(state['q'].dtype)
     state['t'] = state['t'] + sfc_dt * dt
     state['q'] = state['q'] + sfc_dq * dt
     atm_energy_after_surface = atmospheric_energy_content(state, grid)
@@ -145,8 +148,8 @@ def step(state, grid, params, rad_cache=None):
     state = update_derived(state, grid)
     bl_out = boundary_layer_mixing(state, grid, params)
     check_nan('bl dt', bl_out['dt'])
-    bl_dt = torch.nan_to_num(bl_out['dt'], nan=0.0)
-    bl_dq = torch.nan_to_num(bl_out['dq'], nan=0.0)
+    bl_dt = torch.nan_to_num(bl_out['dt'], nan=0.0).to(state['t'].dtype)
+    bl_dq = torch.nan_to_num(bl_out['dq'], nan=0.0).to(state['q'].dtype)
     state['t'] = state['t'] + bl_dt * dt
     state['q'] = state['q'] + bl_dq * dt
     atm_energy_after_bl = atmospheric_energy_content(state, grid)
@@ -156,8 +159,8 @@ def step(state, grid, params, rad_cache=None):
     shallow_out = shallow_convection(state, grid, params)
     check_nan('shallow dt', shallow_out['dt'])
     check_nan('shallow dq', shallow_out['dq'])
-    shallow_dt = torch.nan_to_num(shallow_out['dt'], nan=0.0)
-    shallow_dq = torch.nan_to_num(shallow_out['dq'], nan=0.0)
+    shallow_dt = torch.nan_to_num(shallow_out['dt'], nan=0.0).to(state['t'].dtype)
+    shallow_dq = torch.nan_to_num(shallow_out['dq'], nan=0.0).to(state['q'].dtype)
     state['t'] = state['t'] + shallow_dt * dt
     state['q'] = state['q'] + shallow_dq * dt
     atm_energy_after_shallow = atmospheric_energy_content(state, grid)
@@ -167,16 +170,18 @@ def step(state, grid, params, rad_cache=None):
     conv_out = dispatch_convection(state, grid, params)
     check_nan('conv dt', conv_out['dt'])
     check_nan('conv dq', conv_out['dq'])
-    state['t'] = state['t'] + conv_out['dt'] * dt
-    state['q'] = state['q'] + conv_out['dq'] * dt
+    conv_dt = torch.nan_to_num(conv_out['dt'], nan=0.0).to(state['t'].dtype)
+    conv_dq = torch.nan_to_num(conv_out['dq'], nan=0.0).to(state['q'].dtype)
+    state['t'] = state['t'] + conv_dt * dt
+    state['q'] = state['q'] + conv_dq * dt
     atm_energy_after_conv = atmospheric_energy_content(state, grid)
 
     # --- large-scale condensation (instantaneous adjustment) ---
     state = update_derived(state, grid)
     cond_out = condensation(state, grid, params)
     check_nan('cond dt', cond_out['dt'])
-    cond_dt = torch.nan_to_num(cond_out['dt'], nan=0.0)
-    cond_dq = torch.nan_to_num(cond_out['dq'], nan=0.0)
+    cond_dt = torch.nan_to_num(cond_out['dt'], nan=0.0).to(state['t'].dtype)
+    cond_dq = torch.nan_to_num(cond_out['dq'], nan=0.0).to(state['q'].dtype)
     state['t'] = state['t'] + cond_dt
     state['q'] = state['q'] + cond_dq
     atm_energy_after_cond = atmospheric_energy_content(state, grid)
@@ -224,11 +229,12 @@ def step(state, grid, params, rad_cache=None):
         )
         check_nan('slab dts', dts_dt)
         dts_dt = torch.nan_to_num(dts_dt, nan=0.0)
-        heat_capacity = slab_heat_capacity(params)
-        state['slab_energy'] = state['slab_energy'] + heat_capacity * dts_dt * dt
+        heat_capacity = float(slab_heat_capacity(params))
+        state['slab_energy'] = state['slab_energy'] + heat_capacity * dts_dt.to(torch.float64) * dt
+        slab_energy_min = heat_capacity * (200.0 - state['slab_ts_ref'])
+        slab_energy_max = heat_capacity * (350.0 - state['slab_ts_ref'])
+        state['slab_energy'] = torch.clamp(state['slab_energy'], min=slab_energy_min, max=slab_energy_max)
         state['ts'] = state['slab_ts_ref'] + state['slab_energy'] / heat_capacity
-        state['ts'] = state['ts'].clamp(min=200.0, max=350.0)
-        state['slab_energy'] = heat_capacity * (state['ts'] - state['slab_ts_ref'])
         slab_energy_tendency = (state['slab_energy'] - slab_energy_prev) / dt
 
     atm_energy_now = atmospheric_energy_content(state, grid)
