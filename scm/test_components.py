@@ -307,7 +307,7 @@ def test_quadratic_autoconversion(device):
 def test_shallow_convection(device):
     """verify the shallow scheme moistens just above the BL without precipitating."""
     print("=== shallow convection ===")
-    from scm.thermo import make_grid, pressure_at_full, dp_from_ps, saturation_specific_humidity
+    from scm.thermo import make_grid, pressure_at_full, dp_from_ps, saturation_specific_humidity, cp, Lv
     from scm.convection_shallow import shallow_convection
 
     grid = make_grid(nlevels=20, device=device)
@@ -334,6 +334,7 @@ def test_shallow_convection(device):
         'shallow_mse_scale': 1000.0,
         'shallow_max_dt_day': 3.0,
         'shallow_max_dq_day': 3.0,
+        'shallow_enforce_mse_conservation': True,
         'dt': 900.0,
     }
     out = shallow_convection(state, grid, params)
@@ -342,10 +343,13 @@ def test_shallow_convection(device):
     dq_day = out['dq'][0] * 86400.0 * 1000.0
     print(f"upper-layer moistening = {dq_day[up_mask].mean().item():.2f} g/kg/day")
     print(f"subcloud drying = {dq_day[low_mask].mean().item():.2f} g/kg/day")
+    shallow_mse = torch.sum((cp * out['dt'][0] + Lv * out['dq'][0]) * dp[0] / 9.81).item()
+    print(f"shallow mse residual = {shallow_mse:.4e} W/m2")
 
     assert out['precip'][0].item() == 0.0, "shallow convection should not precipitate here"
     assert dq_day[up_mask].mean().item() > 0.0, "shallow convection should moisten above the BL"
     assert dq_day[low_mask].mean().item() < 0.0, "shallow convection should dry the subcloud layer"
+    assert abs(shallow_mse) < 1.0e-2, "shallow correction should keep column moist enthalpy nearly closed"
 
     print("shallow convection: PASS\n")
 
@@ -447,7 +451,7 @@ def test_energy_budget_diagnostics(device):
         'column_mse_tendency', 'column_mse_residual',
         'rad_energy_tendency', 'surface_energy_tendency', 'bl_energy_tendency',
         'shallow_energy_tendency', 'conv_energy_tendency',
-        'condensation_energy_tendency', 'conv_mse_residual',
+        'condensation_energy_tendency', 'conv_mse_residual', 'shallow_mse_residual',
     ]:
         assert key in diag, f"missing diagnostic: {key}"
         assert torch.isfinite(diag[key]).all(), f"non-finite diagnostic: {key}"

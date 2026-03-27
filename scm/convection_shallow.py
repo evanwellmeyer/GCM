@@ -54,6 +54,7 @@ def shallow_convection(state, grid, params):
     cape_suppress = float(params.get('shallow_cape_suppress', 500.0))
     tau = max(float(params.get('shallow_tau', 14400.0)), 1.0)
     dt = float(params.get('dt', 900.0))
+    enforce_mse = bool(params.get('shallow_enforce_mse_conservation', True))
 
     rh_factor = torch.clamp((rh_low - rh_trigger) / max(1.0 - rh_trigger, 1.0e-3), min=0.0, max=1.0)
     q_factor = torch.clamp((q_low - q_up) / q_low.clamp(min=1.0e-7), min=0.0, max=1.0)
@@ -78,14 +79,31 @@ def shallow_convection(state, grid, params):
     dq_step = dq_up_step + dq_low_step
     dh_step = dh_up_step + dh_low_step
 
-    # Keep the scheme weak and bounded; this is a supplement to BL mixing.
+    # Keep the scheme weak and bounded without breaking its column enthalpy
+    # closure. Scale the conservative transport uniformly if either q or T
+    # tendencies would exceed their configured caps.
     max_dq = float(params.get('shallow_max_dq_day', 2.0)) * 1.0e-3 * dt / 86400.0
     max_dt = float(params.get('shallow_max_dt_day', 2.0)) * dt / 86400.0
-    dq_step = dq_step.clamp(min=-max_dq, max=max_dq)
-    dt_step = ((dh_step - Lv * dq_step) / cp).clamp(min=-max_dt, max=max_dt)
+    dt_step_raw = (dh_step - Lv * dq_step) / cp
+    dq_peak = torch.amax(dq_step.abs(), dim=1)
+    dt_peak = torch.amax(dt_step_raw.abs(), dim=1)
+    dq_scale = torch.where(dq_peak > max_dq, max_dq / dq_peak.clamp(min=1.0e-12), torch.ones_like(dq_peak))
+    dt_scale = torch.where(dt_peak > max_dt, max_dt / dt_peak.clamp(min=1.0e-12), torch.ones_like(dt_peak))
+    limiter = torch.minimum(dq_scale, dt_scale).clamp(max=1.0)
+    dq_step = dq_step * limiter.unsqueeze(1)
+    dh_step = dh_step * limiter.unsqueeze(1)
+    dt_step = (dh_step - Lv * dq_step) / cp
+    mse_residual_step = torch.sum((cp * dt_step + Lv * dq_step) * mass, dim=1)
+    if enforce_mse:
+        active_mask = ((dt_step.abs() + dq_step.abs()) > 0.0).to(dtype)
+        active_mass = torch.sum(active_mask * mass, dim=1).clamp(min=1.0e-8)
+        temp_correction = mse_residual_step / (cp * active_mass)
+        dt_step = dt_step - temp_correction.unsqueeze(1) * active_mask
+        mse_residual_step = torch.sum((cp * dt_step + Lv * dq_step) * mass, dim=1)
 
     return {
         'dt': dt_step / dt,
         'dq': dq_step / dt,
         'precip': zeros_s,
+        'mse_residual': mse_residual_step / dt,
     }

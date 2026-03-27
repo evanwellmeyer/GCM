@@ -247,6 +247,7 @@ Two config knobs are especially relevant for the richer default path:
 
 - `[numerics].rad_interval_microphysics_steps` reduces the radiation cadence when prognostic cloud condensate is enabled
 - `[params].boundary_layer_scheme` selects either the richer Richardson-based BL mixing or the legacy constant-diffusion mode
+- `[shallow_convection].enforce_mse_conservation` keeps the capped shallow-convection tendencies energetically closed
 
 ### Quick component tests
 

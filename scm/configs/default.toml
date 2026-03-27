@@ -113,6 +113,7 @@ cape_suppress = 600.0
 mse_scale = 3000.0
 max_dt_day = 1.5
 max_dq_day = 1.5
+enforce_mse_conservation = true
 
 [calibration]
 enabled = false

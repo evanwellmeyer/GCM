@@ -147,6 +147,7 @@ def extract_param_overrides(config):
             "shallow_mse_scale": shallow_convection.get("mse_scale"),
             "shallow_max_dt_day": shallow_convection.get("max_dt_day"),
             "shallow_max_dq_day": shallow_convection.get("max_dq_day"),
+            "shallow_enforce_mse_conservation": shallow_convection.get("enforce_mse_conservation"),
         }))
 
     return params

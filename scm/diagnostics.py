@@ -59,7 +59,7 @@ def equilibrium_stats(diag_history, last_n=50):
                 'atmos_mse_residual', 'slab_energy_tendency',
                 'column_energy_tendency', 'column_energy_residual',
                 'column_mse_tendency', 'column_mse_residual',
-                'conv_mse_residual',
+                'conv_mse_residual', 'shallow_mse_residual',
                 'cloud_cover', 'lwp', 'iwp']:
         if key in recent[0]:
             vals = torch.stack([d[key] for d in recent])
@@ -136,6 +136,7 @@ def energy_balance(state, diag):
         'column_mse_tendency': diag.get('column_mse_tendency'),
         'column_mse_residual': diag.get('column_mse_residual'),
         'conv_mse_residual': diag.get('conv_mse_residual'),
+        'shallow_mse_residual': diag.get('shallow_mse_residual'),
     }
 
 
