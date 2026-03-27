@@ -415,6 +415,10 @@ The mass-flux convection path also applies a column moist-enthalpy correction so
 combined convective `T` and `q` tendencies stay energetically closed after the
 profile caps are applied.
 
+The slab ocean is also carried internally as a heat-content anomaly rather than by
+adding tiny `dTs` increments directly to `Ts`. This avoids the float32 precision floor
+that can otherwise freeze long integrations while nonzero surface fluxes remain.
+
 ## Output
 
 The main driver saves:

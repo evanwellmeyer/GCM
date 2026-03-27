@@ -47,6 +47,8 @@ def initial_state(batch, grid, params, device='cpu'):
         't': t,
         'q': q,
         'ts': ts,
+        'slab_ts_ref': ts.clone(),
+        'slab_energy': torch.zeros_like(ts),
         'ps': ps,
     }
     state.update(initialize_cloud_state(batch, grid, device=device))
@@ -102,8 +104,15 @@ def step(state, grid, params, rad_cache=None):
         return False
 
     # make sure derived fields are current
+    if 'slab_ts_ref' not in state:
+        state['slab_ts_ref'] = state['ts'].clone()
+    if 'slab_energy' not in state:
+        state['slab_energy'] = slab_heat_capacity(params) * (state['ts'] - state['slab_ts_ref'])
+    else:
+        state['ts'] = state['slab_ts_ref'] + state['slab_energy'] / slab_heat_capacity(params)
     state = update_derived(state, grid)
     ts_prev = state['ts'].clone()
+    slab_energy_prev = state['slab_energy'].clone()
     atm_energy_prev = atmospheric_energy_content(state, grid)
     atm_energy_start = atm_energy_prev.clone()
     atm_mse_prev = atmospheric_mse_content(state, grid)
@@ -215,9 +224,12 @@ def step(state, grid, params, rad_cache=None):
         )
         check_nan('slab dts', dts_dt)
         dts_dt = torch.nan_to_num(dts_dt, nan=0.0)
-        state['ts'] = state['ts'] + dts_dt * dt
+        heat_capacity = slab_heat_capacity(params)
+        state['slab_energy'] = state['slab_energy'] + heat_capacity * dts_dt * dt
+        state['ts'] = state['slab_ts_ref'] + state['slab_energy'] / heat_capacity
         state['ts'] = state['ts'].clamp(min=200.0, max=350.0)
-        slab_energy_tendency = slab_heat_capacity(params) * (state['ts'] - ts_prev) / dt
+        state['slab_energy'] = heat_capacity * (state['ts'] - state['slab_ts_ref'])
+        slab_energy_tendency = (state['slab_energy'] - slab_energy_prev) / dt
 
     atm_energy_now = atmospheric_energy_content(state, grid)
     atm_mse_now = atmospheric_mse_content(state, grid)

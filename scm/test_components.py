@@ -428,6 +428,35 @@ def test_surface(device):
     print("surface: PASS\n")
 
 
+def test_slab_energy_accumulator():
+    """verify the slab heat-content accumulator resolves small fluxes that
+    repeated float32 temperature updates would lose."""
+    print("=== slab energy accumulator ===")
+    from scm.surface import slab_heat_capacity
+
+    ts_ref = torch.tensor([290.0], dtype=torch.float32)
+    ts_direct = ts_ref.clone()
+    slab_energy = torch.zeros_like(ts_ref)
+    heat_capacity = slab_heat_capacity({'ocean_depth': 50.0})
+    net_flux = 1.0  # W/m2
+    dt = 900.0
+
+    for _ in range(10 * 96):  # 10 days
+        ts_direct = ts_direct + net_flux / heat_capacity * dt
+        slab_energy = slab_energy + net_flux * dt
+
+    ts_accum = ts_ref + slab_energy / heat_capacity
+    delta_direct = (ts_direct - ts_ref).item()
+    delta_accum = (ts_accum - ts_ref).item()
+    print(f"direct float32 delta Ts = {delta_direct:.6f} K")
+    print(f"energy-accumulator delta Ts = {delta_accum:.6f} K")
+
+    assert delta_accum > 1.0e-3, "energy accumulator should retain the small slab warming signal"
+    assert delta_accum > delta_direct + 1.0e-3, "accumulator should outperform direct float32 Ts stepping"
+
+    print("slab energy accumulator: PASS\n")
+
+
 def test_energy_budget_diagnostics(device):
     """verify the timestep reports the extended column energy-budget terms."""
     print("=== energy budget diagnostics ===")
@@ -768,6 +797,7 @@ def main():
     test_shallow_convection(device)
     test_calibration_utils()
     test_surface(device)
+    test_slab_energy_accumulator()
     test_energy_budget_diagnostics(device)
     test_condensation(device)
     test_convection_bm(device)
