@@ -389,6 +389,38 @@ def test_calibration_utils():
     print("calibration utils: PASS\n")
 
 
+def test_equilibrium_check():
+    """verify the equilibrium check uses late-time trend and flux closure."""
+    print("=== equilibrium check ===")
+    from scm.diagnostics import check_equilibrium, equilibrium_metrics
+
+    good_history = []
+    bad_history = []
+    for i in range(60):
+        good_history.append({
+            'ts': torch.tensor([290.0 + 2.0e-4 * i]),
+            'toa_net': torch.tensor([0.4]),
+            'surface_total_flux': torch.tensor([0.3]),
+            'column_energy_residual': torch.tensor([0.5]),
+        })
+        bad_history.append({
+            'ts': torch.tensor([290.0 + 2.0e-4 * i]),
+            'toa_net': torch.tensor([1.4]),
+            'surface_total_flux': torch.tensor([0.3]),
+            'column_energy_residual': torch.tensor([0.5]),
+        })
+
+    good_metrics = equilibrium_metrics(good_history, window=50)
+    bad_metrics = equilibrium_metrics(bad_history, window=50)
+    print(f"good late |TOA net| = {good_metrics['max_toa_imbalance']:.2f} W/m2")
+    print(f"bad late |TOA net| = {bad_metrics['max_toa_imbalance']:.2f} W/m2")
+
+    assert check_equilibrium(good_history), "small late trend and imbalances should pass"
+    assert not check_equilibrium(bad_history), "large late TOA imbalance should fail"
+
+    print("equilibrium check: PASS\n")
+
+
 def test_surface(device):
     """verify surface fluxes are reasonable."""
     print("=== surface ===")
@@ -796,6 +828,7 @@ def main():
     test_quadratic_autoconversion(device)
     test_shallow_convection(device)
     test_calibration_utils()
+    test_equilibrium_check()
     test_surface(device)
     test_slab_energy_accumulator()
     test_energy_budget_diagnostics(device)

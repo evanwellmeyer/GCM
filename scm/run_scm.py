@@ -24,7 +24,8 @@ from scm.thermo import make_grid
 from scm.column_model import initial_state, run
 from scm.ensemble import make_ensemble_params, make_fixed_ensemble_params
 from scm.diagnostics import (
-    check_equilibrium, equilibrium_stats, climate_sensitivity, summarize_ensemble
+    check_equilibrium, equilibrium_metrics, equilibrium_stats,
+    climate_sensitivity, summarize_ensemble
 )
 
 
@@ -191,6 +192,7 @@ def main():
     print(f"done in {elapsed:.1f} s ({sim_speed:.0f} member-days/s)")
 
     stats_1x = equilibrium_stats(history_1x, last_n=50)
+    eq_metrics_1x = equilibrium_metrics(history_1x)
     eq_1x = check_equilibrium(history_1x)
     print(f"\n1xCO2 equilibrium:")
     print(f"  Ts = {stats_1x['ts_mean'].mean():.2f} +/- "
@@ -218,6 +220,14 @@ def main():
     if 'shallow_mse_residual_mean' in stats_1x:
         print(f"  shallow mse residual = {stats_1x['shallow_mse_residual_mean'].mean():+.2e} W/m2")
     print(f"  precip = {(stats_1x['precip_total_mean'] * 86400).mean():.2f} mm/day")
+    if eq_metrics_1x is not None:
+        print(f"  late Ts drift = {eq_metrics_1x['max_ts_window_drift']:.3f} K/window")
+        if 'max_toa_imbalance' in eq_metrics_1x:
+            print(f"  late |TOA net| = {eq_metrics_1x['max_toa_imbalance']:.2f} W/m2")
+        if 'max_surface_total_imbalance' in eq_metrics_1x:
+            print(f"  late |surface total| = {eq_metrics_1x['max_surface_total_imbalance']:.2f} W/m2")
+        if 'max_column_residual' in eq_metrics_1x:
+            print(f"  late |column residual| = {eq_metrics_1x['max_column_residual']:.2f} W/m2")
     print(f"  equilibrium check = {'PASS' if eq_1x else 'NOT CONVERGED'}")
 
     # --- branch to 2xCO2 ---
@@ -235,6 +245,7 @@ def main():
     print(f"done in {elapsed:.1f} s ({sim_speed:.0f} member-days/s)")
 
     stats_2x = equilibrium_stats(history_2x, last_n=50)
+    eq_metrics_2x = equilibrium_metrics(history_2x)
     eq_2x = check_equilibrium(history_2x)
     print(f"\n2xCO2 equilibrium:")
     print(f"  Ts = {stats_2x['ts_mean'].mean():.2f} +/- "
@@ -262,6 +273,14 @@ def main():
     if 'shallow_mse_residual_mean' in stats_2x:
         print(f"  shallow mse residual = {stats_2x['shallow_mse_residual_mean'].mean():+.2e} W/m2")
     print(f"  precip = {(stats_2x['precip_total_mean'] * 86400).mean():.2f} mm/day")
+    if eq_metrics_2x is not None:
+        print(f"  late Ts drift = {eq_metrics_2x['max_ts_window_drift']:.3f} K/window")
+        if 'max_toa_imbalance' in eq_metrics_2x:
+            print(f"  late |TOA net| = {eq_metrics_2x['max_toa_imbalance']:.2f} W/m2")
+        if 'max_surface_total_imbalance' in eq_metrics_2x:
+            print(f"  late |surface total| = {eq_metrics_2x['max_surface_total_imbalance']:.2f} W/m2")
+        if 'max_column_residual' in eq_metrics_2x:
+            print(f"  late |column residual| = {eq_metrics_2x['max_column_residual']:.2f} W/m2")
     print(f"  equilibrium check = {'PASS' if eq_2x else 'NOT CONVERGED'}")
 
     # --- climate sensitivity ---

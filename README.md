@@ -411,6 +411,12 @@ The old moist-static-energy form is still retained as a secondary diagnostic bec
 is useful thermodynamically, but it is not the right primary closure metric for this
 fixed-mass SCM.
 
+The printed `equilibrium check` now uses the late diagnostic window rather than just
+the broad branch mean. A branch only passes if the late-window surface-temperature
+trend, mean `TOA net`, mean `surface total`, and mean `column residual` are all small.
+This avoids false positives where the slab tendency happens to be small even though the
+column is still drifting or the TOA budget is still open.
+
 The mass-flux convection path also applies a column moist-enthalpy correction so the
 combined convective `T` and `q` tendencies stay energetically closed after the
 profile caps are applied.

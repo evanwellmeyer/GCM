@@ -6,35 +6,71 @@ import torch
 from scm.thermo import Lv, g
 
 
-def check_equilibrium(diag_history, window=50, ts_threshold=0.1, toa_threshold=1.0):
-    """check if the model has reached radiative-convective equilibrium by
-    looking at the trend in surface temperature and TOA net flux over the
-    last `window` diagnostic snapshots. returns True if the surface
-    temperature trend is below ts_threshold K per window length and the
-    mean TOA imbalance is below toa_threshold W/m2 for all ensemble members."""
+def equilibrium_metrics(diag_history, window=50):
+    """summarize late-window equilibrium metrics for all members.
+
+    Returns a dict of scalar worst-member metrics over the last `window`
+    diagnostic snapshots. If there is not enough history yet, returns None.
+    """
 
     if len(diag_history) < window:
-        return False
+        return None
 
-    recent_ts = torch.stack([d['ts'] for d in diag_history[-window:]])  # (window, batch)
-    # linear trend per member
+    recent = diag_history[-window:]
+    recent_ts = torch.stack([d['ts'] for d in recent])  # (window, batch)
     x = torch.arange(window, dtype=recent_ts.dtype, device=recent_ts.device)
     x = x - x.mean()
     slopes = (recent_ts * x.unsqueeze(1)).sum(dim=0) / (x * x).sum()
-    max_trend = slopes.abs().max().item()
+    max_ts_slope = slopes.abs().max().item()
 
-    if 'column_energy_tendency' in diag_history[-1]:
-        recent_column = torch.stack([d['column_energy_tendency'] for d in diag_history[-window:]])
-        max_column_imbalance = recent_column.mean(dim=0).abs().max().item()
-        return max_trend < ts_threshold and max_column_imbalance < toa_threshold
+    metrics = {
+        'max_ts_slope': max_ts_slope,
+        'max_ts_window_drift': max_ts_slope * (window - 1),
+    }
 
-    if 'toa_net' not in diag_history[-1]:
-        return max_trend < ts_threshold
+    def add_mean_abs_metric(source_key, metric_key):
+        if source_key in recent[0]:
+            vals = torch.stack([d[source_key] for d in recent])
+            metrics[metric_key] = vals.mean(dim=0).abs().max().item()
 
-    recent_toa = torch.stack([d['toa_net'] for d in diag_history[-window:]])
-    max_toa_imbalance = recent_toa.mean(dim=0).abs().max().item()
+    add_mean_abs_metric('toa_net', 'max_toa_imbalance')
+    add_mean_abs_metric('surface_total_flux', 'max_surface_total_imbalance')
+    add_mean_abs_metric('column_energy_residual', 'max_column_residual')
+    add_mean_abs_metric('column_mse_residual', 'max_column_mse_residual')
 
-    return max_trend < ts_threshold and max_toa_imbalance < toa_threshold
+    return metrics
+
+
+def check_equilibrium(
+    diag_history,
+    window=50,
+    ts_threshold=0.05,
+    toa_threshold=1.0,
+    surface_threshold=1.0,
+    column_residual_threshold=1.0,
+):
+    """check whether the column is close to radiative-convective equilibrium.
+
+    The late-window surface-temperature trend must be small, and any available
+    column-closure diagnostics must also be small. This is intentionally stricter
+    than the earlier check that only looked at temperature trend and slab/column
+    tendency.
+    """
+
+    metrics = equilibrium_metrics(diag_history, window=window)
+    if metrics is None:
+        return False
+
+    if metrics['max_ts_window_drift'] >= ts_threshold:
+        return False
+    if metrics.get('max_toa_imbalance', 0.0) >= toa_threshold:
+        return False
+    if metrics.get('max_surface_total_imbalance', 0.0) >= surface_threshold:
+        return False
+    if metrics.get('max_column_residual', 0.0) >= column_residual_threshold:
+        return False
+
+    return True
 
 
 def equilibrium_stats(diag_history, last_n=50):
