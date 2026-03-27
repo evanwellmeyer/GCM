@@ -442,7 +442,9 @@ def test_energy_budget_diagnostics(device):
     for key in [
         'precip_heat_flux', 'surface_total_flux', 'atmos_flux_convergence',
         'atmos_energy_tendency', 'atmos_energy_residual',
+        'atmos_mse_tendency', 'atmos_mse_residual',
         'slab_energy_tendency', 'column_energy_tendency', 'column_energy_residual',
+        'column_mse_tendency', 'column_mse_residual',
         'rad_energy_tendency', 'surface_energy_tendency', 'bl_energy_tendency',
         'shallow_energy_tendency', 'conv_energy_tendency',
         'condensation_energy_tendency', 'conv_mse_residual',

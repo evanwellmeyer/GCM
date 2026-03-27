@@ -62,6 +62,20 @@ def update_derived(state, grid):
 
 
 def atmospheric_energy_content(state, grid):
+    """Primary atmospheric storage term for energy closure in J/m2.
+
+    For TOA/surface flux closure we use column moist enthalpy, cp*T + Lv*q.
+    In this fixed-mass hydrostatic column, adding geopotential to the storage
+    term can make conservative vertical redistributions look like spurious
+    energy sources/sinks in the closure diagnostic.
+    """
+
+    del grid
+    mhe = cp * state['t'] + Lv * state['q']
+    return torch.sum(mhe * state['dp'] / g, dim=1)
+
+
+def atmospheric_mse_content(state, grid):
     """Column-integrated atmospheric moist static energy in J/m2."""
 
     z = geopotential(state['t'], state['q'], state['p'], grid)
@@ -92,6 +106,7 @@ def step(state, grid, params, rad_cache=None):
     ts_prev = state['ts'].clone()
     atm_energy_prev = atmospheric_energy_content(state, grid)
     atm_energy_start = atm_energy_prev.clone()
+    atm_mse_prev = atmospheric_mse_content(state, grid)
 
     # --- radiation ---
     if rad_cache is None:
@@ -205,6 +220,7 @@ def step(state, grid, params, rad_cache=None):
         slab_energy_tendency = slab_heat_capacity(params) * (state['ts'] - ts_prev) / dt
 
     atm_energy_now = atmospheric_energy_content(state, grid)
+    atm_mse_now = atmospheric_mse_content(state, grid)
     rad_energy_tendency = (atm_energy_after_rad - atm_energy_start) / dt
     surface_energy_tendency = (atm_energy_after_surface - atm_energy_after_rad) / dt
     bl_energy_tendency = (atm_energy_after_bl - atm_energy_after_surface) / dt
@@ -216,6 +232,10 @@ def step(state, grid, params, rad_cache=None):
     atmos_energy_residual = atmos_flux_convergence - atm_energy_tendency
     column_energy_tendency = atm_energy_tendency + slab_energy_tendency
     column_energy_residual = rad_out['toa_net'] - column_energy_tendency
+    atm_mse_tendency = (atm_mse_now - atm_mse_prev) / dt
+    atmos_mse_residual = atmos_flux_convergence - atm_mse_tendency
+    column_mse_tendency = atm_mse_tendency + slab_energy_tendency
+    column_mse_residual = rad_out['toa_net'] - column_mse_tendency
 
     # diagnostics
     diag = {
@@ -245,9 +265,13 @@ def step(state, grid, params, rad_cache=None):
         'atmos_flux_convergence': atmos_flux_convergence,
         'atmos_energy_tendency': atm_energy_tendency,
         'atmos_energy_residual': atmos_energy_residual,
+        'atmos_mse_tendency': atm_mse_tendency,
+        'atmos_mse_residual': atmos_mse_residual,
         'slab_energy_tendency': slab_energy_tendency,
         'column_energy_tendency': column_energy_tendency,
         'column_energy_residual': column_energy_residual,
+        'column_mse_tendency': column_mse_tendency,
+        'column_mse_residual': column_mse_residual,
         'cape': conv_out.get('cape', torch.zeros_like(state['ts'])),
         'cloud_cover': 1.0 - torch.prod(
             1.0 - cloud_out['cloud_fraction'].clamp(min=0.0, max=1.0), dim=1

@@ -398,11 +398,17 @@ The SCM now carries an explicit column energy-budget diagnostic set:
 - `precip heat` = precipitation enthalpy exchange `c_w P (T_precip - T_s)` at the surface
 - `surface total` = `surface net + precip heat`
 - `atmos flux convergence` = `TOA net - surface total`
-- `atmos energy tendency` = diagnosed storage tendency of atmospheric moist static energy
+- `atmos energy tendency` = diagnosed storage tendency of atmospheric moist enthalpy `cp*T + Lv*q`
 - `column tendency` = atmospheric plus slab storage tendency
 - `column residual` = `TOA net - column tendency`
+- `column mse residual` = the same residual but using moist static energy `cp*T + Lv*q+gz` as a secondary thermodynamic diagnostic
 
 This is useful for separating a true radiative imbalance from missing energy bookkeeping. In the richer default path the precipitation enthalpy term matters enough that `TOA net` alone is no longer the whole story.
+
+The main closure diagnostic now uses moist enthalpy rather than moist static energy.
+The old moist-static-energy form is still retained as a secondary diagnostic because it
+is useful thermodynamically, but it is not the right primary closure metric for this
+fixed-mass SCM.
 
 The mass-flux convection path also applies a column moist-enthalpy correction so the
 combined convective `T` and `q` tendencies stay energetically closed after the

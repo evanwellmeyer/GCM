@@ -55,8 +55,10 @@ def equilibrium_stats(diag_history, last_n=50):
                 'bl_energy_tendency', 'shallow_energy_tendency',
                 'conv_energy_tendency', 'condensation_energy_tendency',
                 'atmos_flux_convergence', 'atmos_energy_tendency',
-                'atmos_energy_residual', 'slab_energy_tendency',
+                'atmos_energy_residual', 'atmos_mse_tendency',
+                'atmos_mse_residual', 'slab_energy_tendency',
                 'column_energy_tendency', 'column_energy_residual',
+                'column_mse_tendency', 'column_mse_residual',
                 'conv_mse_residual',
                 'cloud_cover', 'lwp', 'iwp']:
         if key in recent[0]:
@@ -126,9 +128,13 @@ def energy_balance(state, diag):
         'atmos_flux_convergence': diag.get('atmos_flux_convergence'),
         'atmos_energy_tendency': diag.get('atmos_energy_tendency'),
         'atmos_energy_residual': diag.get('atmos_energy_residual'),
+        'atmos_mse_tendency': diag.get('atmos_mse_tendency'),
+        'atmos_mse_residual': diag.get('atmos_mse_residual'),
         'slab_energy_tendency': diag.get('slab_energy_tendency'),
         'column_energy_tendency': diag.get('column_energy_tendency'),
         'column_energy_residual': diag.get('column_energy_residual'),
+        'column_mse_tendency': diag.get('column_mse_tendency'),
+        'column_mse_residual': diag.get('column_mse_residual'),
         'conv_mse_residual': diag.get('conv_mse_residual'),
     }
 

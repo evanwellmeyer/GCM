@@ -207,6 +207,8 @@ def main():
         print(f"  column tendency = {stats_1x['column_energy_tendency_mean'].mean():+.2f} W/m2")
     if 'column_energy_residual_mean' in stats_1x:
         print(f"  column residual = {stats_1x['column_energy_residual_mean'].mean():+.2f} W/m2")
+    if 'column_mse_residual_mean' in stats_1x:
+        print(f"  column mse residual = {stats_1x['column_mse_residual_mean'].mean():+.2f} W/m2")
     if 'conv_energy_tendency_mean' in stats_1x:
         print(f"  conv energy = {stats_1x['conv_energy_tendency_mean'].mean():+.2f} W/m2")
     if 'conv_mse_residual_mean' in stats_1x:
@@ -245,6 +247,8 @@ def main():
         print(f"  column tendency = {stats_2x['column_energy_tendency_mean'].mean():+.2f} W/m2")
     if 'column_energy_residual_mean' in stats_2x:
         print(f"  column residual = {stats_2x['column_energy_residual_mean'].mean():+.2f} W/m2")
+    if 'column_mse_residual_mean' in stats_2x:
+        print(f"  column mse residual = {stats_2x['column_mse_residual_mean'].mean():+.2f} W/m2")
     if 'conv_energy_tendency_mean' in stats_2x:
         print(f"  conv energy = {stats_2x['conv_energy_tendency_mean'].mean():+.2f} W/m2")
     if 'conv_mse_residual_mean' in stats_2x:
