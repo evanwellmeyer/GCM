@@ -5,4 +5,5 @@ __pycache__/
 
 # generated SCM diagnostics
 scm*_results.pt
+scm*_restart.pt
 scm*_diagnostics.png

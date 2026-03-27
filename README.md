@@ -384,9 +384,25 @@ Useful driver flags:
 - `--fixed-params`: use default parameters instead of sampling
 - `--spinup-days N`: override the 1xCO2 run length
 - `--perturb-days N`: override the 2xCO2 run length
+- `--restart-from PATH`: resume from a saved `1x` or `2x` restart bundle
 - `--fixed-sst`: disable slab-ocean evolution for faster debugging
 - `--device {cpu,cuda,mps}`: choose the execution device
 - `--no-plot`: skip figure generation
+
+The driver now saves restart bundles after both phases by default:
+
+- `..._1x_restart.pt`: spun-up control state plus `1x` diagnostics/history
+- `..._2x_restart.pt`: current `2x` branch state plus the stored `1x` baseline
+
+This lets you continue long runs without rerunning the whole control branch. For example:
+
+```bash
+python -m scm.run_scm --scheme mf --fixed-params --spinup-days 2000 --perturb-days 2000 --device cpu --no-plot
+python -m scm.run_scm --restart-from scm_full_mf_fixed_slabocean_spin2000d_pert2000d_2x_restart.pt --perturb-days 4000 --device cpu --no-plot
+```
+
+The first command produces the restart bundle. The second extends the existing `2xCO2`
+branch by another `4000` days and reuses the saved `1xCO2` control statistics.
 
 ## Diagnostics
 
@@ -430,6 +446,8 @@ that can otherwise freeze long integrations while nonzero surface fluxes remain.
 The main driver saves:
 
 - a results file named like `scm_demo_mf_fixed_slabocean_spin500d_pert500d_results.pt`
+- restart bundles named like `scm_demo_mf_fixed_slabocean_spin500d_pert500d_1x_restart.pt`
+  and `scm_demo_mf_fixed_slabocean_spin500d_pert500d_2x_restart.pt`
 - a diagnostics figure with a matching stem if plotting is available
 
 These contain equilibrium statistics, sensitivity estimates, parameter fields, and history snapshots. The filenames now encode mode, scheme, sampling mode, SST mode, and run lengths so runs do not overwrite each other as easily.

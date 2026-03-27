@@ -9,6 +9,8 @@ plot = true
 device = "auto"
 label = ""
 preserve_ensemble_shape = false
+save_restarts = true
+restart_from = ""
 
 [numerics]
 dt = 900.0

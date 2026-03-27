@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import torch
 
 
@@ -57,3 +59,54 @@ def build_calibration_output_stem(scheme, fixed_sst, spinup_days, ncases, label=
     if label:
         stem = f"{stem}_{label}"
     return stem
+
+
+def move_tensors(obj, device):
+    """Recursively move tensors in nested containers to a device."""
+
+    if isinstance(obj, torch.Tensor):
+        return obj.to(device)
+    if isinstance(obj, dict):
+        return {k: move_tensors(v, device) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [move_tensors(v, device) for v in obj]
+    if isinstance(obj, tuple):
+        return tuple(move_tensors(v, device) for v in obj)
+    return obj
+
+
+def cpu_tensors(obj):
+    """Recursively detach tensors to CPU for serialization."""
+
+    if isinstance(obj, torch.Tensor):
+        return obj.detach().cpu()
+    if isinstance(obj, dict):
+        return {k: cpu_tensors(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [cpu_tensors(v) for v in obj]
+    if isinstance(obj, tuple):
+        return tuple(cpu_tensors(v) for v in obj)
+    return obj
+
+
+def build_restart_path(output_stem, phase):
+    """Return the restart filename for a run phase."""
+
+    if phase not in ('1x', '2x'):
+        raise ValueError(f"restart phase must be '1x' or '2x', got {phase}")
+    return Path(f"{output_stem}_{phase}_restart.pt")
+
+
+def save_restart_bundle(path, bundle):
+    """Save a restart bundle with tensors moved to CPU."""
+
+    save_path = Path(path)
+    torch.save(cpu_tensors(bundle), save_path)
+    return save_path
+
+
+def load_restart_bundle(path, device):
+    """Load a restart bundle and move tensors to the requested device."""
+
+    bundle = torch.load(Path(path), map_location='cpu', weights_only=False)
+    return move_tensors(bundle, device)

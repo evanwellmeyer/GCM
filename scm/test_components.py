@@ -7,6 +7,8 @@
 
 import torch
 import sys
+import tempfile
+from pathlib import Path
 sys.path.insert(0, '/home/claude')
 
 
@@ -387,6 +389,41 @@ def test_calibration_utils():
     assert better_score < worse_score
 
     print("calibration utils: PASS\n")
+
+
+def test_restart_bundle_roundtrip():
+    """verify restart bundles serialize and reload nested tensor state."""
+    print("=== restart bundle ===")
+    from scm.experiment import build_restart_path, load_restart_bundle, save_restart_bundle
+
+    bundle = {
+        'kind': 'scm_restart',
+        'phase': '1x',
+        'state': {
+            'ts': torch.tensor([290.0]),
+            'slab_energy': torch.tensor([123.0], dtype=torch.float64),
+        },
+        'params': {
+            'co2': 400.0,
+            'scheme_mask': torch.tensor([1.0]),
+        },
+        'history_1x': [
+            {'ts': torch.tensor([290.0]), 'toa_net': torch.tensor([0.5])},
+        ],
+    }
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        restart_path = Path(tmpdir) / build_restart_path('scm_test_case', '1x').name
+        save_restart_bundle(restart_path, bundle)
+        loaded = load_restart_bundle(restart_path, device=torch.device('cpu'))
+
+    print(f"restart path = {restart_path.name}")
+    assert loaded['phase'] == '1x'
+    assert loaded['state']['ts'].device.type == 'cpu'
+    assert loaded['state']['slab_energy'].dtype == torch.float64
+    assert loaded['history_1x'][0]['toa_net'].device.type == 'cpu'
+
+    print("restart bundle: PASS\n")
 
 
 def test_equilibrium_check():
@@ -828,6 +865,7 @@ def main():
     test_quadratic_autoconversion(device)
     test_shallow_convection(device)
     test_calibration_utils()
+    test_restart_bundle_roundtrip()
     test_equilibrium_check()
     test_surface(device)
     test_slab_energy_accumulator()
