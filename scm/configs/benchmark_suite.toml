@@ -1,0 +1,22 @@
+[suite]
+label = "mf_baseline_v1"
+base_config = "scm/configs/mf_baseline_v1.toml"
+device = "auto"
+
+[cases.control_1x]
+description = "Slab-ocean 1xCO2 control using the frozen mass-flux baseline."
+spinup_days = 2000
+perturb_days = 0
+fixed_sst = false
+
+[cases.branch_2x]
+description = "Slab-ocean 2xCO2 branch from the same baseline control."
+spinup_days = 2000
+perturb_days = 8000
+fixed_sst = false
+
+[cases.fixed_sst_2x]
+description = "Fixed-SST 2xCO2 fast-adjustment case from the same baseline physics."
+spinup_days = 365
+perturb_days = 365
+fixed_sst = true

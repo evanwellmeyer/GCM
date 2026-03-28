@@ -1,0 +1,171 @@
+[run]
+mode = "full"
+scheme = "mf"
+sampling = "fixed"
+spinup_days = 2000
+perturb_days = 8000
+fixed_sst = false
+plot = false
+device = "auto"
+label = "mf_baseline_v1"
+preserve_ensemble_shape = false
+save_restarts = true
+restart_from = ""
+
+[numerics]
+dt = 900.0
+nlevels = 20
+rad_interval_steps = 8
+rad_interval_microphysics_steps = 1
+diag_interval_days = 10
+
+[initial]
+ps0 = 100000.0
+ts_init = 290.0
+
+[forcing]
+solar_constant = 1360.0
+zenith_factor = 0.25
+co2 = 400.0
+co2_ref = 400.0
+co2_2x = 800.0
+
+[radiation]
+scheme = "multiband"
+
+[radiation.longwave]
+f_window = 0.15
+kappa_wv = 0.15
+co2_log_factor = 0.14
+co2_base_tau = 1.50
+
+[radiation.shortwave]
+sw_kappa_wv = 0.01
+albedo = 0.32
+
+[radiation.multiband]
+lw_band_weights = [0.10, 0.25, 0.35, 0.30]
+lw_band_wv_kappa = [0.00, 0.10, 0.22, 0.40]
+lw_band_co2_base_tau = [0.00, 0.15, 0.65, 0.35]
+lw_band_co2_log_factor = [0.00, 0.01, 0.12, 0.06]
+lw_band_trace_scale = [0.00, 0.20, 0.60, 0.20]
+sw_band_weights = [0.55, 0.30, 0.15]
+sw_band_wv_kappa = [0.00, 0.015, 0.00]
+sw_band_o3_tau = [0.00, 0.02, 0.10]
+sw_band_cloud_abs_scale = [0.10, 0.25, 0.10]
+
+[radiation.trace_gases]
+enabled = true
+ch4 = 1.8
+ch4_ref = 1.8
+ch4_base_tau = 0.02
+ch4_log_factor = 0.01
+n2o = 0.332
+n2o_ref = 0.332
+n2o_base_tau = 0.01
+n2o_log_factor = 0.01
+o3_lw_tau = 0.02
+o3_sw_tau = 0.03
+other_ghg_tau = 0.00
+
+[radiation.clouds]
+enabled = false
+cloud_fraction = 0.0
+cloud_sw_reflectivity = 0.0
+cloud_sw_tau = 0.0
+cloud_lw_tau = 0.0
+cloud_top_sigma = 0.65
+cloud_bottom_sigma = 0.95
+
+[cloud_microphysics]
+enabled = true
+cloud_autoconv_tau = 5400.0
+cloud_autoconv_qc_thresh = 2.0e-4
+cloud_autoconv_qc_scale = 4.0e-4
+cloud_autoconv_power = 2.0
+cloud_evap_tau = 3600.0
+cloud_ls_precip_fraction = 0.95
+cloud_rh_evap = 0.70
+cloud_rh_min = 0.90
+cloud_qc_ref = 8.0e-4
+cloud_cf_qc_min = 2.0e-4
+cloud_cf_rh_power = 2.0
+cloud_cf_qc_power = 1.5
+cloud_cf_max = 0.6
+cloud_qc_max = 4.0e-3
+cloud_liquid_temp = 273.15
+cloud_ice_temp = 258.15
+conv_cloud_efficiency = 0.0008
+conv_cloud_anvil_center_sigma = 0.45
+conv_cloud_anvil_width_sigma = 0.18
+cloud_k_liq_sw = 15.0
+cloud_k_ice_sw = 8.0
+cloud_k_liq_lw = 4.0
+cloud_k_ice_lw = 2.0
+cloud_sw_scattering_efficiency = 0.05
+cloud_sw_absorption_fraction = 0.05
+
+[shallow_convection]
+enabled = true
+tau = 14400.0
+top_sigma = 0.72
+base_sigma = 0.90
+rh_trigger = 0.78
+cape_suppress = 600.0
+mse_scale = 3000.0
+max_dt_day = 1.5
+max_dq_day = 1.5
+enforce_mse_conservation = true
+
+[calibration]
+enabled = false
+scheme = "mf"
+spinup_days = 100
+fixed_sst = false
+batch_candidates = true
+batch_size = 16
+last_n = 10
+equilibrium_window = 10
+diag_interval_days = 10
+rad_interval_steps = 8
+top_n = 5
+ts_threshold = 0.1
+toa_threshold = 1.0
+label = ""
+
+[calibration.targets]
+ts = 300.0
+olr = 240.0
+asr = 240.0
+toa_net = 0.0
+surface_net_flux = 0.0
+
+[calibration.scales]
+ts = 5.0
+olr = 20.0
+asr = 20.0
+toa_net = 5.0
+surface_net_flux = 10.0
+
+[calibration.parameter_grid]
+# albedo = [0.32, 0.34, 0.36]
+# f_window = [0.15, 0.20]
+# kappa_wv = [0.10, 0.15]
+# co2_base_tau = [1.00, 1.50]
+
+[params]
+# non-radiation parameter overrides can go here. the richer default path uses
+# a shallower surface-coupling stencil and a Richardson-based boundary layer
+# so the lowest model level stays better coupled to the slab surface.
+boundary_layer_scheme = "richardson"
+surface_heat_levels = 2
+surface_moisture_levels = 1
+include_precip_enthalpy_flux = true
+mf_condensate_retention = 0.25
+mf_condensate_fallout = 0.45
+mf_enforce_mse_conservation = true
+#
+# examples:
+# tau_cape = 3600.0
+# mf_mb_max = 0.05
+# bm_max_dt_day = 10.0

@@ -7,3 +7,5 @@ __pycache__/
 scm*_results.pt
 scm*_restart.pt
 scm*_diagnostics.png
+scm_benchmark_*_results.pt
+scm_benchmark_*_report.md

@@ -224,10 +224,12 @@ python -m scm.run_scm --config scm/configs/default.toml
 Two example configs are included:
 
 - `scm/configs/default.toml` - richer default run settings: multiband radiation, optional trace gases, and microphysics-coupled cloud radiation
+- `scm/configs/mf_baseline_v1.toml` - frozen mass-flux reference configuration associated with the current stable `2000d/8000d` benchmark
 - `scm/configs/simplified_physics.toml` - simplified fallback: semi-gray radiation and no cloud microphysics
 - `scm/configs/trace_gases_example.toml` - example of the optional trace-gas radiation mode
 - `scm/configs/clouds_example.toml` - example of the optional cloud-radiative mode
 - `scm/configs/radiation_calibration.toml` - short-run sweep for tuning the semi-gray baseline without the richer cloud path
+- `scm/configs/benchmark_suite.toml` - baseline benchmark suite definitions
 
 The config file is the preferred place for persistent run setup. Existing CLI flags still work and act as overrides.
 
@@ -361,6 +363,23 @@ By default, the calibration runner batches candidates into chunks instead of run
 This is the preferred way to make calibration runs use CPU threads or MPS more effectively.
 
 The calibration output prints the top candidates and saves a results file with the ranked sweep summary plus a TOML snippet for the best candidate.
+
+### Benchmark suite
+
+The repository also includes a separate benchmark driver:
+
+```bash
+python -m scm.benchmark --suite scm/configs/benchmark_suite.toml --device cpu
+```
+
+This runs a small set of named experiment cases from a frozen baseline config and writes:
+
+- `scm_benchmark_<label>_results.pt`
+- `scm_benchmark_<label>_report.md`
+
+The committed reference record for the current stable baseline lives in:
+
+- `benchmarks/mf_baseline_v1.md`
 
 For full-mode fixed-parameter debugging runs, the driver now defaults to **one deterministic member** instead of creating 100 identical copies. If you want the old ensemble-shaped output, set:
 
