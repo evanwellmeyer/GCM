@@ -73,6 +73,8 @@ def print_phase_summary(title, stats, eq_metrics, eq):
         print(f"  conv energy = {stats['conv_energy_tendency_mean'].mean():+.2f} W/m2")
     if 'shallow_energy_tendency_mean' in stats:
         print(f"  shallow energy = {stats['shallow_energy_tendency_mean'].mean():+.2f} W/m2")
+    if 'tau_cape_eff_mean' in stats:
+        print(f"  tau_cape eff = {stats['tau_cape_eff_mean'].mean():.0f} s")
     if 'conv_mse_residual_mean' in stats:
         print(f"  conv mse residual = {stats['conv_mse_residual_mean'].mean():+.2e} W/m2")
     if 'shallow_mse_residual_mean' in stats:

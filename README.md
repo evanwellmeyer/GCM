@@ -243,6 +243,7 @@ The radiation settings are now structured into sections like:
 - `[radiation.clouds]`
 - `[cloud_microphysics]`
 - `[shallow_convection]`
+- `[mass_flux]`
 - `[params]` for generic physics overrides that do not yet have their own dedicated section
 
 Two config knobs are especially relevant for the richer default path:
@@ -330,10 +331,24 @@ The richer default path also enables a conservative shallow-convection section:
 - `tau = 14400 s`
 - no shallow-convective precipitation by default
 
-And the richer default MF plume keeps a modest amount of condensate loading through `[params]`:
+And the richer default MF plume keeps a modest amount of condensate loading through `[mass_flux]`:
 
-- `mf_condensate_retention = 0.25`
-- `mf_condensate_fallout = 0.45`
+- `condensate_retention = 0.25`
+- `condensate_fallout = 0.45`
+
+The development default also enables a flow-dependent CAPE closure timescale through `[mass_flux]`:
+
+- `cape_timescale_mode = "flow_dependent"`
+- `tau_cape = 3600 s`
+- `tau_cape_min = 1800 s`
+- `tau_cape_max = 7200 s`
+- `tau_cape_rh_ref = 0.55`
+- `tau_cape_cape_ref = 500 J/kg`
+
+This shortens the deep-convective adjustment time when CAPE excess is large and the
+free troposphere is moist, and lengthens it when the environment is drier or less
+unstable. The frozen benchmark baseline keeps `cape_timescale_mode = "fixed"` so the
+reference benchmark stays stable across future physics development.
 
 Those overrides are there to keep the lowest atmospheric level better coupled to the slab surface under the multiband plus cloud-microphysics configuration.
 
@@ -380,6 +395,12 @@ This runs a small set of named experiment cases from a frozen baseline config an
 The committed reference record for the current stable baseline lives in:
 
 - `benchmarks/mf_baseline_v1.md`
+
+Benchmark cases can also:
+
+- reuse a previously run control spinup via `reuse_spinup_from`
+- start from a saved run restart bundle via `restart_from`
+- enforce pass/fail ranges through per-case `[cases.<name>.thresholds.*]` sections
 
 For full-mode fixed-parameter debugging runs, the driver now defaults to **one deterministic member** instead of creating 100 identical copies. If you want the old ensemble-shaped output, set:
 

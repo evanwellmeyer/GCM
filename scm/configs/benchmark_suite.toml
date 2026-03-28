@@ -9,14 +9,65 @@ spinup_days = 2000
 perturb_days = 0
 fixed_sst = false
 
+[cases.control_1x.thresholds.one_x]
+ts_min = 290.3
+ts_max = 290.9
+late_ts_drift_max = 0.05
+late_toa_abs_max = 1.2
+late_surface_total_abs_max = 0.3
+late_column_residual_abs_max = 1.0
+precip_mm_day_min = 2.3
+precip_mm_day_max = 2.7
+
 [cases.branch_2x]
 description = "Slab-ocean 2xCO2 branch from the same baseline control."
 spinup_days = 2000
 perturb_days = 8000
 fixed_sst = false
+reuse_spinup_from = "control_1x"
+
+[cases.branch_2x.thresholds.one_x]
+late_toa_abs_max = 1.2
+late_surface_total_abs_max = 0.3
+late_column_residual_abs_max = 1.0
+
+[cases.branch_2x.thresholds.two_x]
+equilibrium = true
+ts_min = 293.4
+ts_max = 294.2
+late_ts_drift_max = 0.05
+late_toa_abs_max = 1.1
+late_surface_total_abs_max = 0.2
+late_column_residual_abs_max = 1.0
+precip_mm_day_min = 2.6
+precip_mm_day_max = 2.9
+
+[cases.branch_2x.thresholds.sensitivity]
+ecs_min = 3.0
+ecs_max = 3.5
+delta_precip_min = 0.20
+delta_precip_max = 0.30
+hydro_sensitivity_min = 2.0
+hydro_sensitivity_max = 4.0
 
 [cases.fixed_sst_2x]
 description = "Fixed-SST 2xCO2 fast-adjustment case from the same baseline physics."
 spinup_days = 365
 perturb_days = 365
 fixed_sst = true
+
+[cases.fixed_sst_2x.thresholds.one_x]
+ts_min = 289.9
+ts_max = 290.1
+toa_net_min = 0.7
+toa_net_max = 1.2
+precip_mm_day_min = 2.2
+precip_mm_day_max = 2.6
+
+[cases.fixed_sst_2x.thresholds.two_x]
+ts_min = 289.9
+ts_max = 290.1
+toa_net_min = 3.2
+toa_net_max = 4.1
+precip_mm_day_min = 2.2
+precip_mm_day_max = 2.6

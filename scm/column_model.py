@@ -291,6 +291,7 @@ def step(state, grid, params, rad_cache=None):
         'column_mse_tendency': column_mse_tendency,
         'column_mse_residual': column_mse_residual,
         'cape': conv_out.get('cape', torch.zeros_like(state['ts'])),
+        'tau_cape_eff': conv_out.get('tau_cape_eff', torch.zeros_like(state['ts'])),
         'shallow_mse_residual': shallow_out.get('mse_residual', torch.zeros_like(state['ts'])),
         'cloud_cover': 1.0 - torch.prod(
             1.0 - cloud_out['cloud_fraction'].clamp(min=0.0, max=1.0), dim=1

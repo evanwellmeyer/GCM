@@ -391,6 +391,30 @@ def test_calibration_utils():
     print("calibration utils: PASS\n")
 
 
+def test_benchmark_thresholds():
+    """verify benchmark threshold evaluation catches passes and failures."""
+    print("=== benchmark thresholds ===")
+    from scm.benchmark import evaluate_case_thresholds
+
+    case_result = {
+        'one_x': {'late_toa_abs': 0.8, 'equilibrium': False},
+        'two_x': {'late_toa_abs': 0.9, 'equilibrium': True},
+        'sensitivity': {'ecs': 3.2},
+    }
+    thresholds = {
+        'one_x': {'late_toa_abs_max': 1.0},
+        'two_x': {'equilibrium': True, 'late_toa_abs_max': 1.0},
+        'sensitivity': {'ecs_min': 3.0, 'ecs_max': 3.5},
+    }
+    evaluation = evaluate_case_thresholds(case_result, thresholds)
+    assert evaluation['passed'], "matching thresholds should pass"
+
+    thresholds['sensitivity']['ecs_max'] = 3.0
+    evaluation_fail = evaluate_case_thresholds(case_result, thresholds)
+    assert not evaluation_fail['passed'], "violated thresholds should fail"
+    print("benchmark thresholds: PASS\n")
+
+
 def test_restart_bundle_roundtrip():
     """verify restart bundles serialize and reload nested tensor state."""
     print("=== restart bundle ===")
@@ -681,6 +705,17 @@ def test_convection_mf(device):
               'precip_efficiency': 0.9, 'cape_threshold': 100.0,
               'mf_condensate_retention': 0.25, 'mf_condensate_fallout': 0.45}
     out = mass_flux_convection(state, grid, params)
+    params_flow = dict(params)
+    params_flow.update({
+        'mf_cape_timescale_mode': 'flow_dependent',
+        'mf_tau_cape_min': 1800.0,
+        'mf_tau_cape_max': 7200.0,
+        'mf_tau_cape_rh_ref': 0.55,
+        'mf_tau_cape_rh_sensitivity': 1.0,
+        'mf_tau_cape_cape_ref': 500.0,
+        'mf_tau_cape_cape_sensitivity': 1.0,
+    })
+    out_flow = mass_flux_convection(state, grid, params_flow)
 
     dcape_noload = dilute_cape(t, q, p, params['entrainment_rate'])
     dcape_load = dilute_cape(
@@ -696,11 +731,16 @@ def test_convection_mf(device):
     print(f"heating profile (K/day): {dt_profile.tolist()[:5]}... (top levels)")
     print(f"dilute CAPE without loading: {dcape_noload[0].item():.0f} J/kg")
     print(f"dilute CAPE with loading: {dcape_load[0].item():.0f} J/kg")
+    print(f"fixed tau_cape: {out['tau_cape_eff'][0].item():.0f} s")
+    print(f"flow tau_cape: {out_flow['tau_cape_eff'][0].item():.0f} s")
     conv_mse = torch.sum((cp * out['dt'][0] + Lv * out['dq'][0]) * dp[0] / 9.81).item()
     print(f"convective mse residual: {conv_mse:.4e} W/m2")
 
     assert dcape_load[0].item() < dcape_noload[0].item(), (
         "condensate loading should reduce dilute CAPE"
+    )
+    assert out_flow['tau_cape_eff'][0].item() < out['tau_cape_eff'][0].item(), (
+        "flow-dependent CAPE timescale should shorten in a moist, high-CAPE column"
     )
     assert abs(conv_mse) < 1.0e-2, "MF correction should keep column moist enthalpy nearly closed"
 
@@ -865,6 +905,7 @@ def main():
     test_quadratic_autoconversion(device)
     test_shallow_convection(device)
     test_calibration_utils()
+    test_benchmark_thresholds()
     test_restart_bundle_roundtrip()
     test_equilibrium_check()
     test_surface(device)

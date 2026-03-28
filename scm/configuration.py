@@ -150,4 +150,30 @@ def extract_param_overrides(config):
             "shallow_enforce_mse_conservation": shallow_convection.get("enforce_mse_conservation"),
         }))
 
+    mass_flux = config.get("mass_flux", {})
+    if mass_flux:
+        params.update(_non_null_items({
+            "entrainment_rate": mass_flux.get("entrainment_rate"),
+            "tau_cape": mass_flux.get("tau_cape"),
+            "precip_efficiency": mass_flux.get("precip_efficiency"),
+            "cape_threshold": mass_flux.get("cape_threshold"),
+            "mf_detrain_rh": mass_flux.get("detrain_rh"),
+            "mf_mb_max": mass_flux.get("mb_max"),
+            "mf_bl_export_fraction": mass_flux.get("bl_export_fraction"),
+            "mf_max_dt_day": mass_flux.get("max_dt_day"),
+            "mf_max_dq_day": mass_flux.get("max_dq_day"),
+            "mf_condensate_retention": mass_flux.get("condensate_retention"),
+            "mf_condensate_fallout": mass_flux.get("condensate_fallout"),
+            "mf_enforce_mse_conservation": mass_flux.get("enforce_mse_conservation"),
+            "mf_cape_timescale_mode": mass_flux.get("cape_timescale_mode"),
+            "mf_tau_cape_min": mass_flux.get("tau_cape_min"),
+            "mf_tau_cape_max": mass_flux.get("tau_cape_max"),
+            "mf_tau_cape_rh_ref": mass_flux.get("tau_cape_rh_ref"),
+            "mf_tau_cape_rh_sensitivity": mass_flux.get("tau_cape_rh_sensitivity"),
+            "mf_tau_cape_cape_ref": mass_flux.get("tau_cape_cape_ref"),
+            "mf_tau_cape_cape_sensitivity": mass_flux.get("tau_cape_cape_sensitivity"),
+            "mf_tau_cape_ft_top_sigma": mass_flux.get("tau_cape_ft_top_sigma"),
+            "mf_tau_cape_ft_bottom_sigma": mass_flux.get("tau_cape_ft_bottom_sigma"),
+        }))
+
     return params

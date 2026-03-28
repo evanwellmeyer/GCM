@@ -80,6 +80,22 @@ def dilute_cape(t, q, p, entrainment, condensate_retention=0.0, condensate_fallo
     return dcape
 
 
+def _column_param(params, name, default, ref_tensor, batch):
+    """Return a parameter as a (batch,) tensor."""
+
+    value = params.get(name, default)
+    if isinstance(value, torch.Tensor):
+        value = value.to(device=ref_tensor.device, dtype=ref_tensor.dtype)
+        if value.dim() == 0:
+            return value.expand(batch)
+        if value.dim() == 1:
+            if value.shape[0] != batch:
+                raise ValueError(f"{name} must have shape ({batch},), got {tuple(value.shape)}")
+            return value
+        raise ValueError(f"{name} must be scalar or 1D tensor, got ndim={value.dim()}")
+    return torch.full((batch,), float(value), device=ref_tensor.device, dtype=ref_tensor.dtype)
+
+
 def mass_flux_convection(state, grid, params):
     """simplified mass-flux scheme with detrainment moistening."""
 
@@ -87,9 +103,11 @@ def mass_flux_convection(state, grid, params):
     q = state['q']
     p = state['p']
     dp = state['dp']
+    batch = t.shape[0]
+    nlevels = t.shape[1]
 
     entrainment = params.get('entrainment_rate', 5.0e-6)  # per Pa
-    tau_cape = params.get('tau_cape', 3600.0)
+    tau_cape = _column_param(params, 'tau_cape', 3600.0, t, batch)
     precip_eff = params.get('precip_efficiency', 0.8)
     cape_threshold = params.get('cape_threshold', 50.0)
     detrain_rh = params.get('mf_detrain_rh', 0.7)
@@ -100,8 +118,6 @@ def mass_flux_convection(state, grid, params):
     cond_retain = params.get('mf_condensate_retention', 0.25)
     cond_fallout = params.get('mf_condensate_fallout', 0.45)
     enforce_mse = bool(params.get('mf_enforce_mse_conservation', True))
-    batch = t.shape[0]
-    nlevels = t.shape[1]
 
     # use dilute CAPE for the closure
     cape_val = dilute_cape(
@@ -110,6 +126,31 @@ def mass_flux_convection(state, grid, params):
         condensate_fallout=cond_fallout,
     )
     cape_excess = torch.clamp(cape_val - cape_threshold, min=0.0)
+
+    tau_mode = str(params.get('mf_cape_timescale_mode', 'fixed'))
+    tau_cape_eff = tau_cape
+    if tau_mode == 'flow_dependent':
+        sigma = grid['sigma_full'].to(device=t.device, dtype=t.dtype)
+        ft_top_sigma = float(params.get('mf_tau_cape_ft_top_sigma', 0.30))
+        ft_bottom_sigma = float(params.get('mf_tau_cape_ft_bottom_sigma', 0.80))
+        ft_mask = ((sigma >= ft_top_sigma) & (sigma <= ft_bottom_sigma)).to(t.dtype).unsqueeze(0)
+        ft_mass = torch.sum(ft_mask * dp / g, dim=1).clamp(min=1.0e-8)
+
+        qs_env = saturation_specific_humidity(t, p)
+        rh_env = (q / qs_env.clamp(min=1.0e-8)).clamp(min=0.0, max=1.5)
+        rh_ft = torch.sum(rh_env * ft_mask * dp / g, dim=1) / ft_mass
+
+        rh_ref = _column_param(params, 'mf_tau_cape_rh_ref', 0.55, t, batch)
+        rh_sensitivity = _column_param(params, 'mf_tau_cape_rh_sensitivity', 1.0, t, batch)
+        cape_ref = _column_param(params, 'mf_tau_cape_cape_ref', 500.0, t, batch).clamp(min=1.0)
+        cape_sensitivity = _column_param(params, 'mf_tau_cape_cape_sensitivity', 1.0, t, batch).clamp(min=0.0)
+        tau_min = _column_param(params, 'mf_tau_cape_min', 1800.0, t, batch)
+        tau_max = _column_param(params, 'mf_tau_cape_max', 7200.0, t, batch)
+
+        rh_factor = torch.exp(-rh_sensitivity * (rh_ft - rh_ref))
+        cape_factor = torch.rsqrt(1.0 + cape_sensitivity * cape_excess / cape_ref)
+        tau_cape_eff = tau_cape * rh_factor * cape_factor
+        tau_cape_eff = torch.maximum(torch.minimum(tau_cape_eff, tau_max), tau_min)
 
     # march the plume upward
     t_plume = t[:, -1].clone()
@@ -210,7 +251,7 @@ def mass_flux_convection(state, grid, params):
     col_heating = torch.sum(dt_norm.clamp(min=0.0) * dp / g, dim=1)
     col_mass = dp.sum(dim=1) / g
     col_heating_safe = col_heating.clamp(min=1e-8)
-    mb = cape_excess * col_mass / (cp * col_heating_safe * tau_cape)
+    mb = cape_excess * col_mass / (cp * col_heating_safe * tau_cape_eff)
     mb = mb.clamp(min=0.0)
     if isinstance(mb_max, torch.Tensor):
         mb = torch.minimum(mb, mb_max)
@@ -247,5 +288,6 @@ def mass_flux_convection(state, grid, params):
         'dq': dq_tend,
         'precip': precip,
         'cape': cape_val,
+        'tau_cape_eff': tau_cape_eff,
         'mse_residual': mse_residual,
     }

@@ -117,6 +117,29 @@ max_dt_day = 1.5
 max_dq_day = 1.5
 enforce_mse_conservation = true
 
+[mass_flux]
+entrainment_rate = 5.0e-6
+tau_cape = 3600.0
+precip_efficiency = 0.80
+cape_threshold = 50.0
+detrain_rh = 0.70
+mb_max = 0.05
+bl_export_fraction = 0.02
+max_dt_day = 10.0
+max_dq_day = 5.0
+condensate_retention = 0.25
+condensate_fallout = 0.45
+enforce_mse_conservation = true
+cape_timescale_mode = "flow_dependent"
+tau_cape_min = 1800.0
+tau_cape_max = 7200.0
+tau_cape_rh_ref = 0.55
+tau_cape_rh_sensitivity = 1.0
+tau_cape_cape_ref = 500.0
+tau_cape_cape_sensitivity = 1.0
+tau_cape_ft_top_sigma = 0.30
+tau_cape_ft_bottom_sigma = 0.80
+
 [calibration]
 enabled = false
 scheme = "mf"
@@ -161,9 +184,6 @@ boundary_layer_scheme = "richardson"
 surface_heat_levels = 2
 surface_moisture_levels = 1
 include_precip_enthalpy_flux = true
-mf_condensate_retention = 0.25
-mf_condensate_fallout = 0.45
-mf_enforce_mse_conservation = true
 #
 # examples:
 # tau_cape = 3600.0
