@@ -100,6 +100,8 @@ def _stats_summary(stats, eq_metrics, eq):
         'precip_mm_day': float((stats['precip_total_mean'] * 86400.0).mean().item()),
         'equilibrium': bool(eq),
     }
+    if 'tau_cape_eff_mean' in stats:
+        summary['tau_cape_eff'] = float(stats['tau_cape_eff_mean'].mean().item())
     if eq_metrics is not None:
         summary.update({
             'late_ts_drift': float(eq_metrics.get('max_ts_window_drift', 0.0)),
@@ -111,11 +113,13 @@ def _stats_summary(stats, eq_metrics, eq):
 
 
 def _print_case_summary(case_name, phase_name, summary):
+    tau_str = f"  tau={summary['tau_cape_eff']:.0f} s" if 'tau_cape_eff' in summary else ""
     print(
         f"  {case_name} {phase_name}: "
         f"Ts={summary['ts']:.2f} K  "
         f"TOA={summary['toa_net']:+.2f} W/m2  "
-        f"P={summary['precip_mm_day']:.2f} mm/day  "
+        f"P={summary['precip_mm_day']:.2f} mm/day"
+        f"{tau_str}  "
         f"eq={'PASS' if summary['equilibrium'] else 'NO'}"
     )
 
@@ -353,6 +357,7 @@ def render_markdown_report(label, base_config_path, case_results):
             f"- Surface total: `{case['one_x']['surface_total']:+.2f} W/m2`",
             f"- Column residual: `{case['one_x']['column_residual']:+.2f} W/m2`",
             f"- Precip: `{case['one_x']['precip_mm_day']:.2f} mm/day`",
+            f"- Tau CAPE eff: `{case['one_x'].get('tau_cape_eff', 0.0):.0f} s`" if 'tau_cape_eff' in case['one_x'] else "- Tau CAPE eff: `n/a`",
             f"- Late Ts drift: `{case['one_x'].get('late_ts_drift', 0.0):.3f} K/window`",
             f"- Late |TOA net|: `{case['one_x'].get('late_toa_abs', 0.0):.2f} W/m2`",
             f"- Equilibrium: `{'PASS' if case['one_x']['equilibrium'] else 'NO'}`",
@@ -380,6 +385,7 @@ def render_markdown_report(label, base_config_path, case_results):
                 f"- Surface total: `{case['two_x']['surface_total']:+.2f} W/m2`",
                 f"- Column residual: `{case['two_x']['column_residual']:+.2f} W/m2`",
                 f"- Precip: `{case['two_x']['precip_mm_day']:.2f} mm/day`",
+                f"- Tau CAPE eff: `{case['two_x'].get('tau_cape_eff', 0.0):.0f} s`" if 'tau_cape_eff' in case['two_x'] else "- Tau CAPE eff: `n/a`",
                 f"- Late Ts drift: `{case['two_x'].get('late_ts_drift', 0.0):.3f} K/window`",
                 f"- Late |TOA net|: `{case['two_x'].get('late_toa_abs', 0.0):.2f} W/m2`",
                 f"- Equilibrium: `{'PASS' if case['two_x']['equilibrium'] else 'NO'}`",

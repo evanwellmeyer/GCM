@@ -1,0 +1,75 @@
+label = "mf_flowdev_v1"
+base_config = "mf_flowdev_v1.toml"
+
+[cases.control_1x]
+description = "Development MF control with softened flow-dependent CAPE closure."
+spinup_days = 2000
+perturb_days = 0
+fixed_sst = false
+
+[cases.control_1x.thresholds.one_x]
+ts_min = 290.2
+ts_max = 291.2
+late_ts_drift_max = 0.08
+late_toa_abs_max = 1.5
+late_surface_total_abs_max = 0.4
+late_column_residual_abs_max = 1.0
+precip_mm_day_min = 2.3
+precip_mm_day_max = 2.7
+tau_cape_eff_min = 3000.0
+tau_cape_eff_max = 6000.0
+
+[cases.branch_2x]
+description = "Development slab-ocean 2xCO2 branch using the cached control spinup."
+spinup_days = 2000
+perturb_days = 2000
+fixed_sst = false
+reuse_spinup_from = "control_1x"
+
+[cases.branch_2x.thresholds.one_x]
+late_toa_abs_max = 1.5
+late_surface_total_abs_max = 0.4
+late_column_residual_abs_max = 1.0
+tau_cape_eff_min = 3000.0
+
+[cases.branch_2x.thresholds.two_x]
+ts_min = 291.5
+ts_max = 294.5
+late_ts_drift_max = 0.25
+late_toa_abs_max = 2.5
+late_surface_total_abs_max = 1.5
+late_column_residual_abs_max = 1.0
+precip_mm_day_min = 2.4
+precip_mm_day_max = 2.9
+tau_cape_eff_min = 2800.0
+tau_cape_eff_max = 6500.0
+
+[cases.branch_2x.thresholds.sensitivity]
+ecs_min = 1.5
+ecs_max = 3.5
+delta_precip_min = 0.05
+delta_precip_max = 0.25
+hydro_sensitivity_min = 1.5
+hydro_sensitivity_max = 4.5
+
+[cases.fixed_sst_2x]
+description = "Development fixed-SST 2xCO2 forcing check with the same softened MF closure."
+spinup_days = 365
+perturb_days = 365
+fixed_sst = true
+
+[cases.fixed_sst_2x.thresholds.one_x]
+ts_min = 289.9
+ts_max = 290.1
+toa_net_min = 0.7
+toa_net_max = 1.2
+precip_mm_day_min = 2.2
+precip_mm_day_max = 2.6
+
+[cases.fixed_sst_2x.thresholds.two_x]
+ts_min = 289.9
+ts_max = 290.1
+toa_net_min = 3.1
+toa_net_max = 4.2
+precip_mm_day_min = 2.2
+precip_mm_day_max = 2.6

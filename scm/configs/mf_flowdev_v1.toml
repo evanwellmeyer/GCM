@@ -177,15 +177,7 @@ surface_net_flux = 10.0
 # co2_base_tau = [1.00, 1.50]
 
 [params]
-# non-radiation parameter overrides can go here. the richer default path uses
-# a shallower surface-coupling stencil and a Richardson-based boundary layer
-# so the lowest model level stays better coupled to the slab surface.
 boundary_layer_scheme = "richardson"
 surface_heat_levels = 2
 surface_moisture_levels = 1
 include_precip_enthalpy_flux = true
-#
-# examples:
-# tau_cape = 3600.0
-# mf_mb_max = 0.05
-# bm_max_dt_day = 10.0

@@ -397,13 +397,13 @@ def test_benchmark_thresholds():
     from scm.benchmark import evaluate_case_thresholds
 
     case_result = {
-        'one_x': {'late_toa_abs': 0.8, 'equilibrium': False},
-        'two_x': {'late_toa_abs': 0.9, 'equilibrium': True},
+        'one_x': {'late_toa_abs': 0.8, 'equilibrium': False, 'tau_cape_eff': 3600.0},
+        'two_x': {'late_toa_abs': 0.9, 'equilibrium': True, 'tau_cape_eff': 3400.0},
         'sensitivity': {'ecs': 3.2},
     }
     thresholds = {
-        'one_x': {'late_toa_abs_max': 1.0},
-        'two_x': {'equilibrium': True, 'late_toa_abs_max': 1.0},
+        'one_x': {'late_toa_abs_max': 1.0, 'tau_cape_eff_min': 3000.0},
+        'two_x': {'equilibrium': True, 'late_toa_abs_max': 1.0, 'tau_cape_eff_min': 3000.0},
         'sensitivity': {'ecs_min': 3.0, 'ecs_max': 3.5},
     }
     evaluation = evaluate_case_thresholds(case_result, thresholds)

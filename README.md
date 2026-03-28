@@ -225,11 +225,13 @@ Two example configs are included:
 
 - `scm/configs/default.toml` - richer default run settings: multiband radiation, optional trace gases, and microphysics-coupled cloud radiation
 - `scm/configs/mf_baseline_v1.toml` - frozen mass-flux reference configuration associated with the current stable `2000d/8000d` benchmark
+- `scm/configs/mf_flowdev_v1.toml` - current flow-dependent MF development configuration with softer CAPE-timescale limits
 - `scm/configs/simplified_physics.toml` - simplified fallback: semi-gray radiation and no cloud microphysics
 - `scm/configs/trace_gases_example.toml` - example of the optional trace-gas radiation mode
 - `scm/configs/clouds_example.toml` - example of the optional cloud-radiative mode
 - `scm/configs/radiation_calibration.toml` - short-run sweep for tuning the semi-gray baseline without the richer cloud path
 - `scm/configs/benchmark_suite.toml` - baseline benchmark suite definitions
+- `scm/configs/benchmark_flowdev_v1.toml` - development benchmark suite for the softened flow-dependent MF closure
 
 The config file is the preferred place for persistent run setup. Existing CLI flags still work and act as overrides.
 
@@ -293,6 +295,12 @@ Or the equivalent config-driven path:
 python -m scm.run_scm --config scm/configs/default.toml --scheme mf --fixed-params --device cpu --no-plot
 ```
 
+If you want to work against the current softened flow-dependent MF development track explicitly, use:
+
+```bash
+python -m scm.run_scm --config scm/configs/mf_flowdev_v1.toml --scheme mf --fixed-params --device cpu --no-plot
+```
+
 If you want the older simpler physics path instead, use:
 
 ```bash
@@ -336,19 +344,20 @@ And the richer default MF plume keeps a modest amount of condensate loading thro
 - `condensate_retention = 0.25`
 - `condensate_fallout = 0.45`
 
-The development default also enables a flow-dependent CAPE closure timescale through `[mass_flux]`:
+The development default also enables a softer flow-dependent CAPE closure timescale through `[mass_flux]`:
 
 - `cape_timescale_mode = "flow_dependent"`
-- `tau_cape = 3600 s`
-- `tau_cape_min = 1800 s`
-- `tau_cape_max = 7200 s`
-- `tau_cape_rh_ref = 0.55`
-- `tau_cape_cape_ref = 500 J/kg`
+- `tau_cape = 5400 s`
+- `tau_cape_min = 3000 s`
+- `tau_cape_max = 9000 s`
+- `tau_cape_rh_ref = 0.60`
+- `tau_cape_cape_ref = 750 J/kg`
 
 This shortens the deep-convective adjustment time when CAPE excess is large and the
 free troposphere is moist, and lengthens it when the environment is drier or less
-unstable. The frozen benchmark baseline keeps `cape_timescale_mode = "fixed"` so the
-reference benchmark stays stable across future physics development.
+unstable. The development snapshot in `scm/configs/mf_flowdev_v1.toml` pins the current
+softened values, while the frozen benchmark baseline keeps `cape_timescale_mode = "fixed"`
+so the reference benchmark stays stable across future physics development.
 
 Those overrides are there to keep the lowest atmospheric level better coupled to the slab surface under the multiband plus cloud-microphysics configuration.
 
@@ -401,6 +410,19 @@ Benchmark cases can also:
 - reuse a previously run control spinup via `reuse_spinup_from`
 - start from a saved run restart bundle via `restart_from`
 - enforce pass/fail ranges through per-case `[cases.<name>.thresholds.*]` sections
+- check `tau_cape_eff` directly so the flow-dependent MF closure does not silently pin to its floor
+
+Run the frozen baseline suite with:
+
+```bash
+python -m scm.benchmark --suite scm/configs/benchmark_suite.toml --device cpu
+```
+
+Run the current flow-dependent development suite with:
+
+```bash
+python -m scm.benchmark --suite scm/configs/benchmark_flowdev_v1.toml --device cpu
+```
 
 For full-mode fixed-parameter debugging runs, the driver now defaults to **one deterministic member** instead of creating 100 identical copies. If you want the old ensemble-shaped output, set:
 
