@@ -85,7 +85,10 @@ def test_radiation(device):
     """verify radiation gives reasonable fluxes and responds to CO2."""
     print("=== radiation ===")
     from scm.thermo import make_grid, pressure_at_full, dp_from_ps, saturation_specific_humidity
-    from scm.radiation import radiation
+    from scm.radiation import available_radiation_schemes, radiation
+
+    schemes = available_radiation_schemes()
+    assert schemes == ['multiband', 'semi_gray'], f"unexpected radiation schemes: {schemes}"
 
     grid = make_grid(nlevels=20, device=device)
     batch = 4

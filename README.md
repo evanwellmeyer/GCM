@@ -248,6 +248,12 @@ The radiation settings are now structured into sections like:
 - `[mass_flux]`
 - `[params]` for generic physics overrides that do not yet have their own dedicated section
 
+The radiation driver is now modular behind a scheme registry:
+
+- supported schemes: `semi_gray`, `multiband`
+- public entry point remains `scm.radiation.radiation(...)`
+- per-scheme implementations live under `scm/radiation_schemes/`
+
 Two config knobs are especially relevant for the richer default path:
 
 - `[numerics].rad_interval_microphysics_steps` reduces the radiation cadence when prognostic cloud condensate is enabled
