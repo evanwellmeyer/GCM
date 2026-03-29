@@ -27,28 +27,6 @@ def trace_gases_enabled(params):
     return bool(params.get("trace_gases_enabled", False)) or mode == "semi_gray_plus_trace_gases"
 
 
-def clouds_enabled(params):
-    mode = params.get("radiation_mode", "semi_gray")
-    return bool(params.get("cloud_microphysics_enabled", False)) or bool(
-        params.get("cloud_radiative_effects_enabled", False)
-    ) or (
-        mode == "semi_gray_plus_clouds"
-        or mode == "semi_gray_plus_trace_gases_clouds"
-    )
-
-
-def cloud_layer_weights(grid, batch, device, dtype, params):
-    """Return normalized cloud-layer weights on model full levels."""
-
-    sigma = grid["sigma_full"].to(device=device, dtype=dtype)
-    top = as_batch_tensor(params.get("cloud_top_sigma", 0.65), batch, device, dtype)
-    bottom = as_batch_tensor(params.get("cloud_bottom_sigma", 0.95), batch, device, dtype)
-    sigma_2d = sigma.unsqueeze(0).expand(batch, -1)
-    mask = ((sigma_2d >= top.unsqueeze(1)) & (sigma_2d <= bottom.unsqueeze(1))).to(dtype)
-    counts = mask.sum(dim=1, keepdim=True).clamp(min=1.0)
-    return mask / counts
-
-
 def forward_flux_sweep(transmissivity, source, boundary):
     """Vectorized solution of y[k+1] = y[k] * transmissivity[k] + source[k]."""
 
@@ -68,55 +46,6 @@ def band_vector(values, default, device, dtype):
     if v.dim() != 1:
         raise ValueError(f"band parameters must be 1D, got shape {tuple(v.shape)}")
     return v
-
-
-def cloud_radiative_properties(state, grid, params, batch, dtype):
-    device = state["t"].device
-    nlevels = state["t"].shape[1]
-
-    if params.get("cloud_microphysics_enabled", False):
-        cf = state.get("cloud_fraction", torch.zeros(batch, nlevels, device=device, dtype=dtype))
-        sw_tau_layer = state.get("cloud_sw_tau_layer", torch.zeros(batch, nlevels, device=device, dtype=dtype))
-        lw_tau_layer = state.get("cloud_lw_tau_layer", torch.zeros(batch, nlevels, device=device, dtype=dtype))
-        cf = cf.to(device=device, dtype=dtype).clamp(min=0.0, max=1.0)
-        sw_tau_layer = sw_tau_layer.to(device=device, dtype=dtype)
-        lw_tau_layer = lw_tau_layer.to(device=device, dtype=dtype)
-
-        cloud_cover = 1.0 - torch.prod(1.0 - cf, dim=1)
-        scatter_eff = as_batch_tensor(
-            params.get("cloud_sw_scattering_efficiency", 0.18),
-            batch, device, dtype
-        )
-        reflectivity = cloud_cover * (1.0 - torch.exp(-scatter_eff * sw_tau_layer.sum(dim=1)))
-        abs_frac = as_batch_tensor(
-            params.get("cloud_sw_absorption_fraction", 0.15),
-            batch, device, dtype
-        )
-        return reflectivity.clamp(min=0.0, max=0.95), abs_frac.unsqueeze(1) * sw_tau_layer, lw_tau_layer
-
-    if not clouds_enabled(params):
-        zeros_layer = torch.zeros(batch, nlevels, device=device, dtype=dtype)
-        zeros_col = torch.zeros(batch, device=device, dtype=dtype)
-        return zeros_col, zeros_layer, zeros_layer
-
-    cloud_reflectivity = (
-        as_batch_tensor(params.get("cloud_fraction", 0.0), batch, device, dtype).clamp(min=0.0, max=1.0)
-        * as_batch_tensor(params.get("cloud_sw_reflectivity", 0.0), batch, device, dtype)
-    ).clamp(min=0.0, max=0.95)
-    cloud_sw_tau_total = (
-        as_batch_tensor(params.get("cloud_fraction", 0.0), batch, device, dtype).clamp(min=0.0, max=1.0)
-        * as_batch_tensor(params.get("cloud_sw_tau", 0.0), batch, device, dtype).clamp(min=0.0)
-    )
-    cloud_lw_tau_total = (
-        as_batch_tensor(params.get("cloud_fraction", 0.0), batch, device, dtype).clamp(min=0.0, max=1.0)
-        * as_batch_tensor(params.get("cloud_lw_tau", 0.0), batch, device, dtype).clamp(min=0.0)
-    )
-    weights = cloud_layer_weights(grid, batch, device, dtype, params)
-    return (
-        cloud_reflectivity,
-        cloud_sw_tau_total.unsqueeze(1) * weights,
-        cloud_lw_tau_total.unsqueeze(1) * weights,
-    )
 
 
 def trace_total_tau(batch, device, dtype, params):
@@ -147,8 +76,6 @@ def trace_total_tau(batch, device, dtype, params):
 __all__ = [
     "as_batch_tensor",
     "band_vector",
-    "cloud_radiative_properties",
-    "clouds_enabled",
     "cp",
     "forward_flux_sweep",
     "g",

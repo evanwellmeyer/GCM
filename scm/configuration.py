@@ -91,6 +91,7 @@ def extract_param_overrides(config):
             clouds_enabled = bool(clouds.get("enabled", False))
             params["cloud_radiative_effects_enabled"] = clouds_enabled
             params.update(_non_null_items({
+                "cloud_optics_scheme": clouds.get("optics"),
                 "cloud_fraction": clouds.get("cloud_fraction"),
                 "cloud_sw_reflectivity": clouds.get("cloud_sw_reflectivity"),
                 "cloud_sw_tau": clouds.get("cloud_sw_tau"),
@@ -100,6 +101,12 @@ def extract_param_overrides(config):
             }))
         else:
             clouds_enabled = False
+
+        diagnostics = radiation.get("diagnostics", {})
+        if diagnostics:
+            params["radiation_clear_sky_diagnostics"] = bool(
+                diagnostics.get("clear_sky_fluxes", False)
+            )
 
         if "radiation_mode" not in params:
             params["radiation_mode"] = derive_radiation_mode(trace_enabled, clouds_enabled)

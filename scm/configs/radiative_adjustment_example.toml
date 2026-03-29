@@ -1,0 +1,14 @@
+[run]
+fixed_sst = true
+spinup_days = 365
+perturb_days = 365
+plot = false
+
+[radiation]
+scheme = "multiband_all_sky"
+
+[radiation.clouds]
+optics = "auto"
+
+[radiation.diagnostics]
+clear_sky_fluxes = true

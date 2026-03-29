@@ -86,7 +86,10 @@ def equilibrium_stats(diag_history, last_n=50):
     for key in ['ts', 'olr', 'asr', 'toa_net', 'precip_total', 'precip_conv',
                 'precip_ls', 'precip_cloud', 'precip_heat_flux',
                 'shf', 'lhf', 'sw_absorbed_sfc', 'sw_reflected_toa',
-                'lw_down_sfc', 'lw_up_sfc', 'surface_net_flux', 'surface_total_flux',
+                'lw_down_sfc', 'lw_up_sfc',
+                'clear_sky_olr', 'clear_sky_asr', 'clear_sky_toa_net',
+                'cloud_lw_cre', 'cloud_sw_cre', 'cloud_toa_cre',
+                'surface_net_flux', 'surface_total_flux',
                 'rad_energy_tendency', 'surface_energy_tendency',
                 'bl_energy_tendency', 'shallow_energy_tendency',
                 'conv_energy_tendency', 'condensation_energy_tendency',
@@ -142,6 +145,40 @@ def climate_sensitivity(stats_1x, stats_2x):
     }
 
 
+def forcing_breakdown(stats_1x, stats_2x):
+    """Summarize fixed-SST forcing and cloud-adjustment diagnostics."""
+
+    summary = {
+        'delta_toa_net': float((stats_2x['toa_net_mean'] - stats_1x['toa_net_mean']).mean().item()),
+        'delta_asr': float((stats_2x['asr_mean'] - stats_1x['asr_mean']).mean().item()),
+        'delta_olr': float((stats_2x['olr_mean'] - stats_1x['olr_mean']).mean().item()),
+    }
+
+    if 'clear_sky_toa_net_mean' in stats_1x and 'clear_sky_toa_net_mean' in stats_2x:
+        summary.update({
+            'delta_clear_sky_toa_net': float(
+                (stats_2x['clear_sky_toa_net_mean'] - stats_1x['clear_sky_toa_net_mean']).mean().item()
+            ),
+            'delta_clear_sky_asr': float(
+                (stats_2x['clear_sky_asr_mean'] - stats_1x['clear_sky_asr_mean']).mean().item()
+            ),
+            'delta_clear_sky_olr': float(
+                (stats_2x['clear_sky_olr_mean'] - stats_1x['clear_sky_olr_mean']).mean().item()
+            ),
+            'delta_cloud_toa_cre': float(
+                (stats_2x['cloud_toa_cre_mean'] - stats_1x['cloud_toa_cre_mean']).mean().item()
+            ),
+            'delta_cloud_sw_cre': float(
+                (stats_2x['cloud_sw_cre_mean'] - stats_1x['cloud_sw_cre_mean']).mean().item()
+            ),
+            'delta_cloud_lw_cre': float(
+                (stats_2x['cloud_lw_cre_mean'] - stats_1x['cloud_lw_cre_mean']).mean().item()
+            ),
+        })
+
+    return summary
+
+
 def energy_balance(state, diag):
     """check the top-of-atmosphere and surface energy balance.
     useful for debugging: at equilibrium both should be near zero."""
@@ -150,6 +187,12 @@ def energy_balance(state, diag):
         'asr': diag['asr'],
         'olr': diag['olr'],
         'toa_net': diag['toa_net'],
+        'clear_sky_asr': diag.get('clear_sky_asr'),
+        'clear_sky_olr': diag.get('clear_sky_olr'),
+        'clear_sky_toa_net': diag.get('clear_sky_toa_net'),
+        'cloud_lw_cre': diag.get('cloud_lw_cre'),
+        'cloud_sw_cre': diag.get('cloud_sw_cre'),
+        'cloud_toa_cre': diag.get('cloud_toa_cre'),
         'shf': diag['shf'],
         'lhf': diag['lhf'],
         'surface_net_flux': diag['surface_net_flux'],

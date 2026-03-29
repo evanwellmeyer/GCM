@@ -28,7 +28,7 @@ from scm.column_model import initial_state, run
 from scm.ensemble import make_ensemble_params, make_fixed_ensemble_params
 from scm.diagnostics import (
     check_equilibrium, equilibrium_metrics, equilibrium_stats,
-    climate_sensitivity, summarize_ensemble
+    climate_sensitivity, forcing_breakdown, summarize_ensemble
 )
 
 
@@ -58,6 +58,10 @@ def print_phase_summary(title, stats, eq_metrics, eq):
     print(f"  ASR = {stats['asr_mean'].mean():.1f} W/m2")
     print(f"  OLR = {stats['olr_mean'].mean():.1f} W/m2")
     print(f"  TOA net = {stats['toa_net_mean'].mean():+.2f} W/m2")
+    if 'clear_sky_toa_net_mean' in stats:
+        print(f"  clear-sky TOA = {stats['clear_sky_toa_net_mean'].mean():+.2f} W/m2")
+    if 'cloud_toa_cre_mean' in stats:
+        print(f"  cloud TOA CRE = {stats['cloud_toa_cre_mean'].mean():+.2f} W/m2")
     print(f"  surface net = {stats['surface_net_flux_mean'].mean():+.2f} W/m2")
     if 'precip_heat_flux_mean' in stats:
         print(f"  precip heat = {stats['precip_heat_flux_mean'].mean():+.2f} W/m2")
@@ -89,6 +93,20 @@ def print_phase_summary(title, stats, eq_metrics, eq):
         if 'max_column_residual' in eq_metrics:
             print(f"  late |column residual| = {eq_metrics['max_column_residual']:.2f} W/m2")
     print(f"  equilibrium check = {'PASS' if eq else 'NOT CONVERGED'}")
+
+
+def print_forcing_summary(title, forcing):
+    print(f"\n{title}:")
+    print(f"  dTOA net = {forcing['delta_toa_net']:+.2f} W/m2")
+    print(f"  dASR = {forcing['delta_asr']:+.2f} W/m2")
+    print(f"  dOLR = {forcing['delta_olr']:+.2f} W/m2")
+    if 'delta_clear_sky_toa_net' in forcing:
+        print(f"  dclear-sky TOA = {forcing['delta_clear_sky_toa_net']:+.2f} W/m2")
+        print(f"  dclear-sky ASR = {forcing['delta_clear_sky_asr']:+.2f} W/m2")
+        print(f"  dclear-sky OLR = {forcing['delta_clear_sky_olr']:+.2f} W/m2")
+        print(f"  dcloud TOA CRE = {forcing['delta_cloud_toa_cre']:+.2f} W/m2")
+        print(f"  dcloud SW CRE = {forcing['delta_cloud_sw_cre']:+.2f} W/m2")
+        print(f"  dcloud LW CRE = {forcing['delta_cloud_lw_cre']:+.2f} W/m2")
 
 
 def make_restart_bundle(
@@ -419,6 +437,9 @@ def main():
     print("\n--- climate sensitivity ---")
     results = climate_sensitivity(stats_1x, stats_2x)
     summarize_ensemble(results, scheme_mask=params.get('scheme_mask'))
+    forcing = forcing_breakdown(stats_1x, stats_2x)
+    if fixed_sst or 'delta_clear_sky_toa_net' in forcing:
+        print_forcing_summary("forcing / adjustment", forcing)
 
     if save_restarts:
         restart_path_2x = build_restart_path(output_stem, '2x')

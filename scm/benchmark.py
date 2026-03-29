@@ -7,7 +7,10 @@ import torch
 
 from scm.column_model import initial_state, run
 from scm.configuration import deep_merge, extract_param_overrides, load_run_config
-from scm.diagnostics import check_equilibrium, climate_sensitivity, equilibrium_metrics, equilibrium_stats
+from scm.diagnostics import (
+    check_equilibrium, climate_sensitivity, equilibrium_metrics,
+    equilibrium_stats, forcing_breakdown,
+)
 from scm.ensemble import make_fixed_ensemble_params
 from scm.experiment import (
     apply_param_overrides, cpu_tensors, load_restart_bundle, move_tensors
@@ -78,7 +81,7 @@ def evaluate_case_thresholds(case_result, thresholds_cfg):
 
     sections = {}
     overall = True
-    for section_name in ['one_x', 'two_x', 'sensitivity']:
+    for section_name in ['one_x', 'two_x', 'sensitivity', 'forcing']:
         section_thresholds = thresholds_cfg.get(section_name, {})
         if not section_thresholds or section_name not in case_result:
             continue
@@ -140,6 +143,9 @@ def _print_case_status(case_name, evaluation):
 
 def run_benchmark_case(case_name, case_cfg, base_config, device, suite_path=None, spinup_cache=None):
     config = deep_merge(base_config, {})
+    config_override = case_cfg.get('config_override', {})
+    if config_override:
+        config = deep_merge(config, config_override)
     run_cfg = config.get('run', {})
     numerics_cfg = config.get('numerics', {})
     initial_cfg = config.get('initial', {})
@@ -326,6 +332,7 @@ def run_benchmark_case(case_name, case_cfg, base_config, device, suite_path=None
         'delta_precip': float(sensitivity['delta_precip'].mean().item()),
         'hydro_sensitivity': float(sensitivity['hydro_sensitivity'].mean().item()),
     }
+    case_result['forcing'] = forcing_breakdown(stats_1x, stats_2x)
     case_result['evaluation'] = evaluate_case_thresholds(case_result, thresholds_cfg)
     return case_result
 
@@ -397,6 +404,24 @@ def render_markdown_report(label, base_config_path, case_results):
                 f"- Hydro sensitivity: `{case['sensitivity']['hydro_sensitivity']:.2f} %/K`",
                 "",
             ])
+            if 'forcing' in case:
+                lines.extend([
+                    "### Forcing / Adjustment",
+                    "",
+                    f"- dTOA net: `{case['forcing']['delta_toa_net']:+.2f} W/m2`",
+                    f"- dASR: `{case['forcing']['delta_asr']:+.2f} W/m2`",
+                    f"- dOLR: `{case['forcing']['delta_olr']:+.2f} W/m2`",
+                ])
+                if 'delta_clear_sky_toa_net' in case['forcing']:
+                    lines.extend([
+                        f"- dclear-sky TOA: `{case['forcing']['delta_clear_sky_toa_net']:+.2f} W/m2`",
+                        f"- dclear-sky ASR: `{case['forcing']['delta_clear_sky_asr']:+.2f} W/m2`",
+                        f"- dclear-sky OLR: `{case['forcing']['delta_clear_sky_olr']:+.2f} W/m2`",
+                        f"- dcloud TOA CRE: `{case['forcing']['delta_cloud_toa_cre']:+.2f} W/m2`",
+                        f"- dcloud SW CRE: `{case['forcing']['delta_cloud_sw_cre']:+.2f} W/m2`",
+                        f"- dcloud LW CRE: `{case['forcing']['delta_cloud_lw_cre']:+.2f} W/m2`",
+                    ])
+                lines.append("")
             if case.get('evaluation', {}).get('sections', {}).get('two_x'):
                 lines.extend([
                     "### 2x Threshold Checks",
@@ -415,6 +440,18 @@ def render_markdown_report(label, base_config_path, case_results):
                     "",
                 ])
                 for check in case['evaluation']['sections']['sensitivity']['checks']:
+                    actual = 'missing' if check['actual'] is None else check['actual']
+                    lines.append(
+                        f"- `{'PASS' if check['passed'] else 'FAIL'}` "
+                        f"`{check['metric']}` actual=`{actual}` target=`{check['condition']}`"
+                    )
+                lines.append("")
+            if case.get('evaluation', {}).get('sections', {}).get('forcing'):
+                lines.extend([
+                    "### Forcing Threshold Checks",
+                    "",
+                ])
+                for check in case['evaluation']['sections']['forcing']['checks']:
                     actual = 'missing' if check['actual'] is None else check['actual']
                     lines.append(
                         f"- `{'PASS' if check['passed'] else 'FAIL'}` "

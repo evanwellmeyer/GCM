@@ -229,6 +229,7 @@ Two example configs are included:
 - `scm/configs/simplified_physics.toml` - simplified fallback: semi-gray radiation and no cloud microphysics
 - `scm/configs/trace_gases_example.toml` - example of the optional trace-gas radiation mode
 - `scm/configs/clouds_example.toml` - example of the optional cloud-radiative mode
+- `scm/configs/radiative_adjustment_example.toml` - fixed-SST forcing example with clear-sky adjustment diagnostics enabled
 - `scm/configs/radiation_calibration.toml` - short-run sweep for tuning the semi-gray baseline without the richer cloud path
 - `scm/configs/benchmark_suite.toml` - baseline benchmark suite definitions
 - `scm/configs/benchmark_flowdev_v1.toml` - development benchmark suite for the softened flow-dependent MF closure
@@ -250,15 +251,17 @@ The radiation settings are now structured into sections like:
 
 The radiation driver is now modular behind a scheme registry:
 
-- supported schemes: `semi_gray`, `multiband`
+- supported schemes: `semi_gray`, `semi_gray_all_sky`, `semi_gray_clear_sky`, `multiband`, `multiband_all_sky`, `multiband_clear_sky`
 - public entry point remains `scm.radiation.radiation(...)`
 - per-scheme implementations live under `scm/radiation_schemes/`
+- cloud optical-property logic lives in `scm/cloud_optics.py` so cloud-radiation coupling can evolve independently of the gas-band schemes
 
 Two config knobs are especially relevant for the richer default path:
 
 - `[numerics].rad_interval_microphysics_steps` reduces the radiation cadence when prognostic cloud condensate is enabled
 - `[params].boundary_layer_scheme` selects either the richer Richardson-based BL mixing or the legacy constant-diffusion mode
 - `[shallow_convection].enforce_mse_conservation` keeps the capped shallow-convection tendencies energetically closed
+- `[radiation.diagnostics].clear_sky_fluxes` enables clear-sky companion fluxes and cloud-radiative-effect diagnostics
 
 ### Quick component tests
 
@@ -428,6 +431,12 @@ Run the current flow-dependent development suite with:
 
 ```bash
 python -m scm.benchmark --suite scm/configs/benchmark_flowdev_v1.toml --device cpu
+```
+
+Run a fixed-SST radiative-adjustment experiment with clear-sky diagnostics using:
+
+```bash
+python -m scm.run_scm --config scm/configs/radiative_adjustment_example.toml --scheme mf --fixed-params --device cpu --no-plot
 ```
 
 For full-mode fixed-parameter debugging runs, the driver now defaults to **one deterministic member** instead of creating 100 identical copies. If you want the old ensemble-shaped output, set:

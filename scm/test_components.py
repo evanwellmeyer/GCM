@@ -88,7 +88,14 @@ def test_radiation(device):
     from scm.radiation import available_radiation_schemes, radiation
 
     schemes = available_radiation_schemes()
-    assert schemes == ['multiband', 'semi_gray'], f"unexpected radiation schemes: {schemes}"
+    assert schemes == [
+        'multiband',
+        'multiband_all_sky',
+        'multiband_clear_sky',
+        'semi_gray',
+        'semi_gray_all_sky',
+        'semi_gray_clear_sky',
+    ], f"unexpected radiation schemes: {schemes}"
 
     grid = make_grid(nlevels=20, device=device)
     batch = 4
@@ -205,6 +212,27 @@ def test_radiation(device):
     assert multi_forcing > 0.0, "multiband branch should reduce OLR under 2xCO2"
     assert out_multi_1x['asr'][0].item() < out_1x['asr'][0].item(), (
         "microphysics-coupled clouds should reduce ASR relative to clear sky"
+    )
+
+    params_multi_clear = dict(params_multi_1x)
+    params_multi_clear['radiation_scheme'] = 'multiband_clear_sky'
+    out_multi_clear = radiation(state_micro, grid, params_multi_clear)
+    assert out_multi_clear['olr'][0].item() > out_multi_1x['olr'][0].item(), (
+        "clear-sky multiband should emit more OLR than all-sky multiband"
+    )
+    assert out_multi_clear['asr'][0].item() > out_multi_1x['asr'][0].item(), (
+        "clear-sky multiband should absorb more solar than all-sky multiband"
+    )
+
+    params_multi_diag = dict(params_multi_1x)
+    params_multi_diag['radiation_clear_sky_diagnostics'] = True
+    out_multi_diag = radiation(state_micro, grid, params_multi_diag)
+    assert 'clear_sky_toa_net' in out_multi_diag, "clear-sky diagnostics should be present"
+    assert out_multi_diag['cloud_lw_cre'][0].item() > 0.0, (
+        "cloud LW CRE should be positive when clouds reduce OLR"
+    )
+    assert out_multi_diag['cloud_sw_cre'][0].item() < 0.0, (
+        "cloud SW CRE should be negative when clouds reduce ASR"
     )
 
     print("radiation: PASS\n")

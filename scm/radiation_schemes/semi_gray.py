@@ -1,8 +1,8 @@
 import torch
 
+from scm.cloud_optics import cloud_optical_properties
 from scm.radiation_schemes.common import (
     as_batch_tensor,
-    cloud_radiative_properties,
     cp,
     forward_flux_sweep,
     g,
@@ -12,7 +12,7 @@ from scm.radiation_schemes.common import (
 )
 
 
-def compute_longwave(state, grid, params):
+def compute_longwave(state, grid, params, force_clear_sky=False):
     """Two-band longwave radiation."""
 
     t = state["t"]
@@ -63,7 +63,9 @@ def compute_longwave(state, grid, params):
         other_ghg_tau = to_col(params.get("other_ghg_tau", 0.0))
         tau_trace = (ch4_total_tau + n2o_total_tau + o3_lw_tau + other_ghg_tau) / nlevels
 
-    _, _, tau_cloud = cloud_radiative_properties(state, grid, params, batch, t.dtype)
+    _, _, tau_cloud = cloud_optical_properties(
+        state, grid, params, batch, t.dtype, force_clear_sky=force_clear_sky
+    )
 
     dtau = tau_wv + tau_co2 + tau_trace + tau_cloud
     transmissivity = torch.exp(-dtau * mu_diff)
@@ -99,7 +101,7 @@ def compute_longwave(state, grid, params):
     return heating, lw_down_sfc, olr
 
 
-def compute_shortwave(state, grid, params):
+def compute_shortwave(state, grid, params, force_clear_sky=False):
     """Single-band shortwave with water vapor absorption."""
 
     t = state["t"]
@@ -120,8 +122,8 @@ def compute_shortwave(state, grid, params):
             params.get("o3_sw_tau", 0.0), batch, t.device, t.dtype
         ) / nlevels
 
-    cloud_reflectivity, cloud_sw_layer_tau, _ = cloud_radiative_properties(
-        state, grid, params, batch, t.dtype
+    cloud_reflectivity, cloud_sw_layer_tau, _ = cloud_optical_properties(
+        state, grid, params, batch, t.dtype, force_clear_sky=force_clear_sky
     )
 
     sw_top = toa_insolation * (1.0 - cloud_reflectivity)
@@ -151,10 +153,10 @@ def compute_shortwave(state, grid, params):
     return heating, sw_absorbed_sfc, asr, sw_reflected_toa, toa_insolation
 
 
-def run_scheme(state, grid, params):
-    lw_heating, lw_down_sfc, olr = compute_longwave(state, grid, params)
+def run_scheme(state, grid, params, force_clear_sky=False):
+    lw_heating, lw_down_sfc, olr = compute_longwave(state, grid, params, force_clear_sky=force_clear_sky)
     sw_heating, sw_absorbed_sfc, asr, sw_reflected_toa, toa_insolation = compute_shortwave(
-        state, grid, params
+        state, grid, params, force_clear_sky=force_clear_sky
     )
 
     lw_up_sfc = sigma_sb * state["ts"] ** 4
@@ -172,3 +174,7 @@ def run_scheme(state, grid, params):
         "toa_net": toa_net,
         "olr": olr,
     }
+
+
+def run_clear_sky_scheme(state, grid, params):
+    return run_scheme(state, grid, params, force_clear_sky=True)

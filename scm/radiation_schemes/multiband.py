@@ -1,9 +1,9 @@
 import torch
 
+from scm.cloud_optics import cloud_optical_properties
 from scm.radiation_schemes.common import (
     as_batch_tensor,
     band_vector,
-    cloud_radiative_properties,
     cp,
     forward_flux_sweep,
     g,
@@ -13,7 +13,7 @@ from scm.radiation_schemes.common import (
 )
 
 
-def compute_longwave_multiband(state, grid, params):
+def compute_longwave_multiband(state, grid, params, force_clear_sky=False):
     t = state["t"]
     q = state["q"]
     ts = state["ts"]
@@ -22,7 +22,9 @@ def compute_longwave_multiband(state, grid, params):
 
     device = t.device
     dtype = t.dtype
-    _, _, cloud_lw_tau = cloud_radiative_properties(state, grid, params, batch, dtype)
+    _, _, cloud_lw_tau = cloud_optical_properties(
+        state, grid, params, batch, dtype, force_clear_sky=force_clear_sky
+    )
 
     band_weights = band_vector(
         params.get("lw_band_weights"),
@@ -89,7 +91,7 @@ def compute_longwave_multiband(state, grid, params):
     return heating, lw_down_sfc, olr
 
 
-def compute_shortwave_multiband(state, grid, params):
+def compute_shortwave_multiband(state, grid, params, force_clear_sky=False):
     t = state["t"]
     q = state["q"]
     dp = state["dp"]
@@ -101,8 +103,8 @@ def compute_shortwave_multiband(state, grid, params):
     zenith_factor = params.get("zenith_factor", 0.25)
     albedo = as_batch_tensor(params.get("albedo", 0.1), batch, device, dtype)
     toa_insolation = as_batch_tensor(s0 * zenith_factor, batch, device, dtype)
-    cloud_reflectivity, cloud_sw_tau_layer, _ = cloud_radiative_properties(
-        state, grid, params, batch, dtype
+    cloud_reflectivity, cloud_sw_tau_layer, _ = cloud_optical_properties(
+        state, grid, params, batch, dtype, force_clear_sky=force_clear_sky
     )
 
     band_weights = band_vector(
@@ -162,10 +164,12 @@ def compute_shortwave_multiband(state, grid, params):
     return heating, sw_absorbed_sfc, asr, sw_reflected_toa, toa_insolation
 
 
-def run_scheme(state, grid, params):
-    lw_heating, lw_down_sfc, olr = compute_longwave_multiband(state, grid, params)
+def run_scheme(state, grid, params, force_clear_sky=False):
+    lw_heating, lw_down_sfc, olr = compute_longwave_multiband(
+        state, grid, params, force_clear_sky=force_clear_sky
+    )
     sw_heating, sw_absorbed_sfc, asr, sw_reflected_toa, toa_insolation = (
-        compute_shortwave_multiband(state, grid, params)
+        compute_shortwave_multiband(state, grid, params, force_clear_sky=force_clear_sky)
     )
 
     lw_up_sfc = sigma_sb * state["ts"] ** 4
@@ -183,3 +187,7 @@ def run_scheme(state, grid, params):
         "toa_net": toa_net,
         "olr": olr,
     }
+
+
+def run_clear_sky_scheme(state, grid, params):
+    return run_scheme(state, grid, params, force_clear_sky=True)

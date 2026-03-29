@@ -56,6 +56,9 @@ spinup_days = 365
 perturb_days = 365
 fixed_sst = true
 
+[cases.fixed_sst_2x.config_override.radiation.diagnostics]
+clear_sky_fluxes = true
+
 [cases.fixed_sst_2x.thresholds.one_x]
 ts_min = 289.9
 ts_max = 290.1
