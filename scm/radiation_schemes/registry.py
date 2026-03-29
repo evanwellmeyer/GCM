@@ -8,6 +8,9 @@ RADIATION_SCHEME_REGISTRY = {
     "multiband": multiband.run_scheme,
     "multiband_all_sky": multiband.run_scheme,
     "multiband_clear_sky": multiband.run_clear_sky_scheme,
+    "multiband_ozone_profile": multiband.run_ozone_profile_scheme,
+    "multiband_ozone_profile_all_sky": multiband.run_ozone_profile_scheme,
+    "multiband_ozone_profile_clear_sky": multiband.run_ozone_profile_clear_sky_scheme,
 }
 
 RADIATION_SCHEME_DESCRIPTIONS = {
@@ -17,6 +20,9 @@ RADIATION_SCHEME_DESCRIPTIONS = {
     "multiband": "Multi-band grey-gas radiation with optional trace gases and cloud coupling.",
     "multiband_all_sky": "Explicit all-sky alias for the multi-band grey-gas scheme.",
     "multiband_clear_sky": "Multi-band grey-gas radiation with cloud optics disabled.",
+    "multiband_ozone_profile": "Multi-band grey-gas radiation with ozone concentrated in a stratospheric profile.",
+    "multiband_ozone_profile_all_sky": "Explicit all-sky alias for the profiled-ozone multi-band scheme.",
+    "multiband_ozone_profile_clear_sky": "Profiled-ozone multi-band radiation with cloud optics disabled.",
 }
 
 
@@ -31,6 +37,8 @@ def radiation_scheme_descriptions():
 def clear_sky_partner_scheme(scheme):
     if scheme.startswith("semi_gray"):
         return "semi_gray_clear_sky"
+    if scheme.startswith("multiband_ozone_profile"):
+        return "multiband_ozone_profile_clear_sky"
     if scheme.startswith("multiband"):
         return "multiband_clear_sky"
     valid = ", ".join(available_radiation_schemes())

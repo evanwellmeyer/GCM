@@ -81,6 +81,8 @@ def extract_param_overrides(config):
                 "n2o_log_factor": trace.get("n2o_log_factor"),
                 "o3_lw_tau": trace.get("o3_lw_tau"),
                 "o3_sw_tau": trace.get("o3_sw_tau"),
+                "o3_peak_sigma": trace.get("o3_peak_sigma"),
+                "o3_width_sigma": trace.get("o3_width_sigma"),
                 "other_ghg_tau": trace.get("other_ghg_tau"),
             }))
         else:

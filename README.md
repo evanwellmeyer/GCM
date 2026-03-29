@@ -73,9 +73,10 @@ Each physics package returns tendencies or flux diagnostics, and the column mode
 
 ## Radiation And Greenhouse Gases
 
-The radiation in this SCM now has two selectable modes in [`scm/radiation.py`](scm/radiation.py):
+The radiation in this SCM now has modular selectable schemes in [`scm/radiation.py`](scm/radiation.py):
 
 - **`multiband`**: the current default
+- **`multiband_ozone_profile`**: multiband with ozone concentrated in a fixed stratospheric profile
 - **`semi_gray`**: the simplified fallback
 
 The default `multiband` path is still lightweight compared with a full GCM radiation package, but it is more realistic than the original single-band solver:
@@ -131,6 +132,15 @@ Cloud-radiative effects can now be supplied in two ways:
 
 - **prescribed bulk clouds** through `[radiation.clouds]`
 - **microphysics-coupled clouds** through `[cloud_microphysics]`, where large-scale condensation and convective detrainment feed a prognostic condensate field `qc`
+
+The cloud-optics module in `scm/cloud_optics.py` currently supports:
+
+- `auto`
+- `microphysics`
+- `microphysics_linear`
+- `prescribed`
+- `prescribed_gaussian`
+- `clear_sky`
 
 The microphysics-coupled path diagnoses:
 
@@ -251,10 +261,11 @@ The radiation settings are now structured into sections like:
 
 The radiation driver is now modular behind a scheme registry:
 
-- supported schemes: `semi_gray`, `semi_gray_all_sky`, `semi_gray_clear_sky`, `multiband`, `multiband_all_sky`, `multiband_clear_sky`
+- supported schemes: `semi_gray`, `semi_gray_all_sky`, `semi_gray_clear_sky`, `multiband`, `multiband_all_sky`, `multiband_clear_sky`, `multiband_ozone_profile`, `multiband_ozone_profile_all_sky`, `multiband_ozone_profile_clear_sky`
 - public entry point remains `scm.radiation.radiation(...)`
 - per-scheme implementations live under `scm/radiation_schemes/`
 - cloud optical-property logic lives in `scm/cloud_optics.py` so cloud-radiation coupling can evolve independently of the gas-band schemes
+- fixed-SST benchmark cases now also check forcing diagnostics (`dTOA`, clear-sky `dTOA`, and cloud CRE changes)
 
 Two config knobs are especially relevant for the richer default path:
 

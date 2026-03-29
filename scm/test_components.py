@@ -84,18 +84,31 @@ def test_thermo(device):
 def test_radiation(device):
     """verify radiation gives reasonable fluxes and responds to CO2."""
     print("=== radiation ===")
+    from scm.cloud_optics import available_cloud_optics_schemes, cloud_optical_properties
     from scm.thermo import make_grid, pressure_at_full, dp_from_ps, saturation_specific_humidity
     from scm.radiation import available_radiation_schemes, radiation
+    from scm.radiation_schemes.multiband import compute_shortwave_multiband
 
     schemes = available_radiation_schemes()
     assert schemes == [
         'multiband',
         'multiband_all_sky',
         'multiband_clear_sky',
+        'multiband_ozone_profile',
+        'multiband_ozone_profile_all_sky',
+        'multiband_ozone_profile_clear_sky',
         'semi_gray',
         'semi_gray_all_sky',
         'semi_gray_clear_sky',
     ], f"unexpected radiation schemes: {schemes}"
+    assert available_cloud_optics_schemes() == [
+        'auto',
+        'microphysics',
+        'microphysics_linear',
+        'prescribed',
+        'prescribed_gaussian',
+        'clear_sky',
+    ]
 
     grid = make_grid(nlevels=20, device=device)
     batch = 4
@@ -166,6 +179,7 @@ def test_radiation(device):
         'radiation_scheme': 'semi_gray',
         'radiation_mode': 'semi_gray_plus_clouds',
         'cloud_radiative_effects_enabled': True,
+        'cloud_optics_scheme': 'prescribed',
         'cloud_fraction': 0.5,
         'cloud_sw_reflectivity': 0.4,
         'cloud_sw_tau': 0.1,
@@ -202,6 +216,36 @@ def test_radiation(device):
         'o3_sw_tau': 0.03,
         'cloud_microphysics_enabled': True,
     }
+    micro_refl, _, _ = cloud_optical_properties(
+        state_micro, grid, params_multi_1x, batch, t.dtype
+    )
+    params_multi_linear = dict(params_multi_1x)
+    params_multi_linear['cloud_optics_scheme'] = 'microphysics_linear'
+    linear_refl, _, _ = cloud_optical_properties(
+        state_micro, grid, params_multi_linear, batch, t.dtype
+    )
+    assert not torch.allclose(micro_refl, linear_refl), (
+        "alternate microphysics cloud optics should change SW reflectivity"
+    )
+
+    params_cloudy_gaussian = dict(params_cloudy)
+    params_cloudy_gaussian['cloud_optics_scheme'] = 'prescribed_gaussian'
+    _, sw_tau_uniform, lw_tau_uniform = cloud_optical_properties(
+        state, grid, params_cloudy, batch, t.dtype
+    )
+    _, sw_tau_gaussian, lw_tau_gaussian = cloud_optical_properties(
+        state, grid, params_cloudy_gaussian, batch, t.dtype
+    )
+    assert torch.allclose(sw_tau_uniform.sum(dim=1), sw_tau_gaussian.sum(dim=1), atol=1.0e-6), (
+        "prescribed Gaussian optics should preserve total SW optical depth"
+    )
+    assert torch.allclose(lw_tau_uniform.sum(dim=1), lw_tau_gaussian.sum(dim=1), atol=1.0e-6), (
+        "prescribed Gaussian optics should preserve total LW optical depth"
+    )
+    assert not torch.allclose(sw_tau_uniform, sw_tau_gaussian), (
+        "prescribed Gaussian optics should redistribute cloud optical depth vertically"
+    )
+
     params_multi_2x = dict(params_multi_1x)
     params_multi_2x['co2'] = 800.0
     out_multi_1x = radiation(state_micro, grid, params_multi_1x)
@@ -233,6 +277,27 @@ def test_radiation(device):
     )
     assert out_multi_diag['cloud_sw_cre'][0].item() < 0.0, (
         "cloud SW CRE should be negative when clouds reduce ASR"
+    )
+
+    params_multi_o3_1x = dict(params_multi_1x)
+    params_multi_o3_1x['radiation_scheme'] = 'multiband_ozone_profile'
+    params_multi_o3_1x['o3_peak_sigma'] = 0.18
+    params_multi_o3_1x['o3_width_sigma'] = 0.08
+    params_multi_o3_2x = dict(params_multi_o3_1x)
+    params_multi_o3_2x['co2'] = 800.0
+    out_multi_o3_1x = radiation(state_micro, grid, params_multi_o3_1x)
+    out_multi_o3_2x = radiation(state_micro, grid, params_multi_o3_2x)
+    ozone_profile_forcing = out_multi_o3_1x['olr'][0].item() - out_multi_o3_2x['olr'][0].item()
+    print(f"multiband ozone-profile 2xCO2 forcing = {ozone_profile_forcing:.2f} W/m2 (expect > 0)")
+    assert ozone_profile_forcing > 0.0, (
+        "profiled-ozone multiband branch should reduce OLR under 2xCO2"
+    )
+    sw_uniform, *_ = compute_shortwave_multiband(state_micro, grid, params_multi_1x)
+    sw_profile, *_ = compute_shortwave_multiband(
+        state_micro, grid, params_multi_o3_1x, ozone_profile=True
+    )
+    assert sw_profile[0, :6].sum().item() > sw_uniform[0, :6].sum().item(), (
+        "ozone-profile radiation should shift more shortwave heating into the upper column as a whole"
     )
 
     print("radiation: PASS\n")

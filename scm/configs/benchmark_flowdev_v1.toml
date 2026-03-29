@@ -1,5 +1,7 @@
+[suite]
 label = "mf_flowdev_v1"
 base_config = "mf_flowdev_v1.toml"
+device = "auto"
 
 [cases.control_1x]
 description = "Development MF control with softened flow-dependent CAPE closure."
@@ -76,3 +78,15 @@ toa_net_min = 3.1
 toa_net_max = 4.2
 precip_mm_day_min = 2.2
 precip_mm_day_max = 2.6
+
+[cases.fixed_sst_2x.thresholds.forcing]
+delta_toa_net_min = 2.4
+delta_toa_net_max = 3.0
+delta_clear_sky_toa_net_min = 2.4
+delta_clear_sky_toa_net_max = 3.0
+delta_cloud_toa_cre_min = -0.2
+delta_cloud_toa_cre_max = 0.2
+delta_cloud_sw_cre_min = -0.2
+delta_cloud_sw_cre_max = 0.2
+delta_cloud_lw_cre_min = -0.2
+delta_cloud_lw_cre_max = 0.2

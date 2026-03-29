@@ -66,6 +66,8 @@ n2o_base_tau = 0.01
 n2o_log_factor = 0.01
 o3_lw_tau = 0.02
 o3_sw_tau = 0.03
+o3_peak_sigma = 0.18
+o3_width_sigma = 0.08
 other_ghg_tau = 0.00
 
 [radiation.clouds]

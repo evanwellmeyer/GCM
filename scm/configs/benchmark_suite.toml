@@ -74,3 +74,15 @@ toa_net_min = 3.2
 toa_net_max = 4.1
 precip_mm_day_min = 2.2
 precip_mm_day_max = 2.6
+
+[cases.fixed_sst_2x.thresholds.forcing]
+delta_toa_net_min = 2.5
+delta_toa_net_max = 2.9
+delta_clear_sky_toa_net_min = 2.5
+delta_clear_sky_toa_net_max = 2.9
+delta_cloud_toa_cre_min = -0.1
+delta_cloud_toa_cre_max = 0.1
+delta_cloud_sw_cre_min = -0.1
+delta_cloud_sw_cre_max = 0.1
+delta_cloud_lw_cre_min = -0.1
+delta_cloud_lw_cre_max = 0.1
