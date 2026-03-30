@@ -85,12 +85,19 @@ def atmospheric_mse_content(state, grid):
     return torch.sum(mse * state['dp'] / g, dim=1)
 
 
-def step(state, grid, params, rad_cache=None):
-    """advance the column model by one timestep. returns the updated state
-    and a diagnostics dict.
+def physics_step(state, grid, params, rad_cache=None, ls_forcing=None):
+    """Advance the column physics by one timestep.
 
-    if rad_cache is provided and fresh, reuse it instead of recomputing
-    radiation. this lets us call radiation less frequently."""
+    This is the dycore-facing SCM interface. The caller provides the current
+    column state, optional cached radiation, and optional large-scale forcing
+    tendencies. The function returns the updated state, a diagnostics dict,
+    and the radiation output used for the step.
+
+    Supported large-scale forcing keys:
+    - ``dt``: temperature tendency in K/s with shape (batch, nlevels)
+    - ``dq``: moisture tendency in kg/kg/s with shape (batch, nlevels)
+    - ``dps``: surface-pressure tendency in Pa/s with shape (batch,)
+    """
 
     dt = params.get('dt', 900.0)
     use_slab = params.get('use_slab_ocean', True)
@@ -123,6 +130,27 @@ def step(state, grid, params, rad_cache=None):
     atm_energy_prev = atmospheric_energy_content(state, grid)
     atm_energy_start = atm_energy_prev.clone()
     atm_mse_prev = atmospheric_mse_content(state, grid)
+    atm_energy_after_forcing = atm_energy_start
+    atm_mse_after_forcing = atm_mse_prev
+
+    if ls_forcing is not None:
+        if 'dps' in ls_forcing:
+            dps = torch.as_tensor(ls_forcing['dps'], device=state['ps'].device, dtype=state['ps'].dtype)
+            state['ps'] = state['ps'] + torch.nan_to_num(dps, nan=0.0) * dt
+            state['ps'] = torch.clamp(state['ps'], min=5.0e4, max=1.2e5)
+            state = update_derived(state, grid)
+        if 'dt' in ls_forcing:
+            ls_dt = torch.as_tensor(ls_forcing['dt'], device=state['t'].device, dtype=state['t'].dtype)
+            state['t'] = state['t'] + torch.nan_to_num(ls_dt, nan=0.0) * dt
+        if 'dq' in ls_forcing:
+            ls_dq = torch.as_tensor(ls_forcing['dq'], device=state['q'].device, dtype=state['q'].dtype)
+            state['q'] = state['q'] + torch.nan_to_num(ls_dq, nan=0.0) * dt
+        state['q'] = torch.clamp(state['q'], min=1e-7, max=0.1)
+        state['t'] = torch.clamp(state['t'], min=150.0, max=350.0)
+        state = update_derived(state, grid)
+        atm_energy_after_forcing = atmospheric_energy_content(state, grid)
+        atm_mse_after_forcing = atmospheric_mse_content(state, grid)
+        rad_cache = None
 
     # --- radiation ---
     if rad_cache is None:
@@ -243,7 +271,9 @@ def step(state, grid, params, rad_cache=None):
 
     atm_energy_now = atmospheric_energy_content(state, grid)
     atm_mse_now = atmospheric_mse_content(state, grid)
-    rad_energy_tendency = (atm_energy_after_rad - atm_energy_start) / dt
+    forcing_energy_tendency = (atm_energy_after_forcing - atm_energy_start) / dt
+    forcing_mse_tendency = (atm_mse_after_forcing - atm_mse_prev) / dt
+    rad_energy_tendency = (atm_energy_after_rad - atm_energy_after_forcing) / dt
     surface_energy_tendency = (atm_energy_after_surface - atm_energy_after_rad) / dt
     bl_energy_tendency = (atm_energy_after_bl - atm_energy_after_surface) / dt
     shallow_energy_tendency = (atm_energy_after_shallow - atm_energy_after_bl) / dt
@@ -283,6 +313,8 @@ def step(state, grid, params, rad_cache=None):
         'cloud_toa_cre': rad_out.get('cloud_toa_cre', torch.zeros_like(state['ts'])),
         'surface_net_flux': surface_net_flux,
         'surface_total_flux': surface_total_flux,
+        'forcing_energy_tendency': forcing_energy_tendency,
+        'forcing_mse_tendency': forcing_mse_tendency,
         'precip_heat_flux': precip_heat_flux,
         'rad_energy_tendency': rad_energy_tendency,
         'surface_energy_tendency': surface_energy_tendency,
@@ -312,6 +344,12 @@ def step(state, grid, params, rad_cache=None):
     }
 
     return state, diag, rad_out
+
+
+def step(state, grid, params, rad_cache=None):
+    """Backward-compatible wrapper around ``physics_step``."""
+
+    return physics_step(state, grid, params, rad_cache=rad_cache, ls_forcing=None)
 
 
 def dispatch_convection(state, grid, params):
@@ -373,12 +411,18 @@ def dispatch_convection(state, grid, params):
 
 
 def run(state, grid, params, nsteps, rad_interval=8, diag_interval=100,
-        callback=None):
+        callback=None, ls_forcing=None):
     """run the model for nsteps. radiation is computed every rad_interval
     steps. diagnostics are collected every diag_interval steps.
 
     callback is an optional function called every diag_interval steps
-    with (step_number, state, diag) for monitoring progress."""
+    with (step_number, state, diag) for monitoring progress.
+
+    ls_forcing may be:
+    - None
+    - a constant forcing dict passed to every step
+    - a callable ``f(step, state) -> dict | None``
+    """
 
     diag_history = []
     rad_cache = None
@@ -398,7 +442,11 @@ def run(state, grid, params, nsteps, rad_interval=8, diag_interval=100,
             state = update_derived(state, grid)
             rad_cache = radiation(state, grid, params)
 
-        state, diag, rad_cache_out = step(state, grid, params, rad_cache)
+        step_forcing = ls_forcing(n, state) if callable(ls_forcing) else ls_forcing
+        state, diag, rad_cache_out = physics_step(
+            state, grid, params, rad_cache=rad_cache, ls_forcing=step_forcing
+        )
+        rad_cache = rad_cache_out
 
         if n % diag_interval == 0:
             # snapshot diagnostics

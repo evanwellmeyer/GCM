@@ -71,6 +71,8 @@ state -> radiation -> surface fluxes -> boundary layer -> convection -> condensa
 
 Each physics package returns tendencies or flux diagnostics, and the column model applies them sequentially.
 
+`scm/column_model.py` now exposes a dycore-facing `physics_step(...)` interface in addition to the legacy `step(...)` wrapper. `physics_step(...)` accepts optional large-scale forcing tendencies (`dt`, `dq`, `dps`) so the same physics column can be driven either by the standalone SCM experiment driver or by an external dynamics/forcing client later.
+
 ## Radiation And Greenhouse Gases
 
 The radiation in this SCM now has modular selectable schemes in [`scm/radiation.py`](scm/radiation.py):

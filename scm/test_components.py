@@ -681,6 +681,72 @@ def test_energy_budget_diagnostics(device):
     print("energy budget diagnostics: PASS\n")
 
 
+def test_physics_step_interface(device):
+    """verify the dycore-facing physics interface accepts large-scale forcing."""
+    print("=== physics step interface ===")
+    from scm.thermo import make_grid
+    from scm.column_model import initial_state, physics_step, run, update_derived
+    from scm.radiation import radiation
+    from scm.ensemble import default_params
+
+    if device.type == 'mps':
+        device = torch.device('cpu')
+
+    grid = make_grid(nlevels=20, device=device)
+    params = default_params(device=device)
+    params['convection_scheme'] = 'mass_flux'
+    params['cloud_microphysics_enabled'] = False
+
+    base_state = update_derived(initial_state(1, grid, params, device=device), grid)
+    state_manual = {
+        k: v.clone() if torch.is_tensor(v) else v
+        for k, v in base_state.items()
+    }
+    state_run = {
+        k: v.clone() if torch.is_tensor(v) else v
+        for k, v in base_state.items()
+    }
+
+    forcing = {
+        'dt': torch.full_like(base_state['t'], 1.0e-5),
+        'dq': torch.zeros_like(base_state['q']),
+        'dps': torch.full_like(base_state['ps'], 1.0e-2),
+    }
+
+    rad_cache = radiation(state_manual, grid, params)
+    state_manual, diag0, rad_cache = physics_step(
+        state_manual, grid, params, rad_cache=rad_cache, ls_forcing=forcing
+    )
+    state_manual, diag1, rad_cache = physics_step(
+        state_manual, grid, params, rad_cache=rad_cache, ls_forcing=None
+    )
+
+    state_run, history = run(
+        state_run,
+        grid,
+        params,
+        nsteps=2,
+        rad_interval=4,
+        diag_interval=1,
+        ls_forcing=lambda n, _state: forcing if n == 0 else None,
+    )
+
+    assert 'forcing_energy_tendency' in diag0, "physics_step should expose forcing energy tendency"
+    assert diag0['forcing_energy_tendency'][0].item() > 0.0, "warming forcing should add atmospheric energy"
+    assert state_manual['ps'][0].item() > base_state['ps'][0].item(), "surface pressure forcing should be applied"
+    assert torch.allclose(
+        state_run['t'], state_manual['t'], atol=1.0e-6, rtol=1.0e-6
+    ), "run() should match manual physics_step sequencing with cached radiation"
+    assert torch.allclose(
+        state_run['q'], state_manual['q'], atol=1.0e-8, rtol=1.0e-6
+    ), "run() should preserve moisture under the same forcing sequence"
+    assert history[0]['forcing_energy_tendency'][0].item() > 0.0, "forcing diagnostic should survive run() snapshots"
+    assert torch.isfinite(diag1['toa_net']).all(), "post-forcing timestep should remain finite"
+
+    print(f"forcing energy = {diag0['forcing_energy_tendency'][0].item():+.2f} W/m2")
+    print("physics step interface: PASS\n")
+
+
 def test_condensation(device):
     """verify saturation adjustment removes supersaturation."""
     print("=== condensation ===")
@@ -1010,6 +1076,7 @@ def main():
     test_surface(device)
     test_slab_energy_accumulator()
     test_energy_budget_diagnostics(device)
+    test_physics_step_interface(device)
     test_condensation(device)
     test_convection_bm(device)
     test_convection_mf(device)

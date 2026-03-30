@@ -67,6 +67,8 @@ def print_phase_summary(title, stats, eq_metrics, eq):
         print(f"  precip heat = {stats['precip_heat_flux_mean'].mean():+.2f} W/m2")
     if 'surface_total_flux_mean' in stats:
         print(f"  surface total = {stats['surface_total_flux_mean'].mean():+.2f} W/m2")
+    if 'forcing_energy_tendency_mean' in stats:
+        print(f"  forcing energy = {stats['forcing_energy_tendency_mean'].mean():+.2f} W/m2")
     if 'column_energy_tendency_mean' in stats:
         print(f"  column tendency = {stats['column_energy_tendency_mean'].mean():+.2f} W/m2")
     if 'column_energy_residual_mean' in stats:
