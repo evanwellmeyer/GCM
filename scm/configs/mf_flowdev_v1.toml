@@ -1,13 +1,13 @@
 [run]
 mode = "full"
-scheme = "mixed"
-sampling = "random"
+scheme = "mf"
+sampling = "fixed"
 spinup_days = 2000
 perturb_days = 2000
 fixed_sst = false
-plot = true
+plot = false
 device = "auto"
-label = ""
+label = "mf_flowdev_v1"
 preserve_ensemble_shape = false
 save_restarts = true
 restart_from = ""
