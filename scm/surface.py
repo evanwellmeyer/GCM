@@ -8,6 +8,8 @@ rho_air = 1.2
 
 def slab_heat_capacity(params):
     depth = params.get('ocean_depth', 50.0)
+    if torch.is_tensor(depth):
+        return (rho_water * c_water * depth).to(torch.float64)
     return rho_water * c_water * depth
 
 

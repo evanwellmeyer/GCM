@@ -627,6 +627,7 @@ def test_slab_energy_accumulator():
     ts_direct = ts_ref.clone()
     slab_energy = torch.zeros_like(ts_ref)
     heat_capacity = slab_heat_capacity({'ocean_depth': 50.0})
+    heat_capacity_tensor = slab_heat_capacity({'ocean_depth': torch.tensor([50.0])})
     net_flux = 1.0  # W/m2
     dt = 900.0
 
@@ -640,6 +641,8 @@ def test_slab_energy_accumulator():
     print(f"direct float32 delta Ts = {delta_direct:.6f} K")
     print(f"energy-accumulator delta Ts = {delta_accum:.6f} K")
 
+    assert torch.is_tensor(heat_capacity_tensor), "tensor ocean depth should return tensor heat capacity"
+    assert heat_capacity_tensor.shape == (1,), "batched slab heat capacity should preserve batch shape"
     assert delta_accum > 1.0e-3, "energy accumulator should retain the small slab warming signal"
     assert delta_accum > delta_direct + 1.0e-3, "accumulator should outperform direct float32 Ts stepping"
 

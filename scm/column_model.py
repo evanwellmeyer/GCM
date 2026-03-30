@@ -106,12 +106,17 @@ def step(state, grid, params, rad_cache=None):
     # make sure derived fields are current
     if 'slab_ts_ref' not in state:
         state['slab_ts_ref'] = state['ts'].clone().to(torch.float64)
+    heat_capacity = slab_heat_capacity(params)
+    if torch.is_tensor(heat_capacity):
+        heat_capacity = heat_capacity.to(device=state['ts'].device, dtype=torch.float64)
+    else:
+        heat_capacity = torch.as_tensor(heat_capacity, device=state['ts'].device, dtype=torch.float64)
     if 'slab_energy' not in state:
         state['slab_energy'] = (
-            slab_heat_capacity(params) * (state['ts'].to(torch.float64) - state['slab_ts_ref'])
+            heat_capacity * (state['ts'].to(torch.float64) - state['slab_ts_ref'])
         )
     else:
-        state['ts'] = state['slab_ts_ref'] + state['slab_energy'] / slab_heat_capacity(params)
+        state['ts'] = state['slab_ts_ref'] + state['slab_energy'] / heat_capacity
     state = update_derived(state, grid)
     ts_prev = state['ts'].clone()
     slab_energy_prev = state['slab_energy'].clone()
@@ -229,7 +234,6 @@ def step(state, grid, params, rad_cache=None):
         )
         check_nan('slab dts', dts_dt)
         dts_dt = torch.nan_to_num(dts_dt, nan=0.0)
-        heat_capacity = float(slab_heat_capacity(params))
         state['slab_energy'] = state['slab_energy'] + heat_capacity * dts_dt.to(torch.float64) * dt
         slab_energy_min = heat_capacity * (200.0 - state['slab_ts_ref'])
         slab_energy_max = heat_capacity * (350.0 - state['slab_ts_ref'])
