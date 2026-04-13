@@ -41,27 +41,16 @@ def surface_fluxes(state, grid, params):
     heat_levels = max(1, min(heat_levels, nlevels))
     moist_levels = max(1, min(moist_levels, nlevels))
 
-    total_mass = torch.zeros_like(t_lowest)
-    for i in range(heat_levels):
-        k = nlevels - 1 - i
-        total_mass = total_mass + state['dp'][:, k] / g
-
-    moist_mass = torch.zeros_like(t_lowest)
-    for i in range(moist_levels):
-        k = nlevels - 1 - i
-        moist_mass = moist_mass + state['dp'][:, k] / g
+    total_mass = (state['dp'][:, -heat_levels:] / g).sum(dim=1)
+    moist_mass = (state['dp'][:, -moist_levels:] / g).sum(dim=1)
 
     dt_uniform = shf / (total_mass * cp)
     dq_uniform = lhf / (moist_mass * Lv)
 
     dt = torch.zeros_like(state['t'])
     dq = torch.zeros_like(state['q'])
-    for i in range(heat_levels):
-        k = nlevels - 1 - i
-        dt[:, k] = dt_uniform
-    for i in range(moist_levels):
-        k = nlevels - 1 - i
-        dq[:, k] = dq_uniform
+    dt[:, -heat_levels:] = dt_uniform.unsqueeze(1)
+    dq[:, -moist_levels:] = dq_uniform.unsqueeze(1)
 
     return {
         'dt': dt,
