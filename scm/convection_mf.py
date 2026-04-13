@@ -249,11 +249,10 @@ def mass_flux_convection(state, grid, params):
     # this avoids the previous behavior where the lowest model level was
     # dried aggressively enough to drive unrealistically large surface fluxes.
     export_levels = min(3, nlevels)
-    for i in range(export_levels):
-        k = nlevels - 1 - i
-        dq_norm[:, k] = dq_norm[:, k] - (
-            bl_export_fraction * g / dp[:, k] * q[:, k] / export_levels
-        )
+    export_slice = slice(nlevels - export_levels, nlevels)
+    dq_norm[:, export_slice] = dq_norm[:, export_slice] - (
+        bl_export_fraction.unsqueeze(1) * g / dp[:, export_slice] * q[:, export_slice] / export_levels
+    )
 
     # CAPE closure: only CAPE above threshold can force deep convection.
     col_heating = torch.sum(dt_norm.clamp(min=0.0) * dp / g, dim=1)

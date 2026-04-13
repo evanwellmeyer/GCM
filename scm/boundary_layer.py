@@ -42,15 +42,14 @@ def boundary_layer_mixing(state, grid, params):
     b = torch.ones(batch, nlevels, device=t.device)
     c = torch.zeros(batch, nlevels, device=t.device)
 
-    for k in range(mix_top, nlevels):
-        if k > mix_top:
-            coeff_above = dt * g * d[:, k - 1] / mass[:, k]
-            a[:, k] = -coeff_above
-            b[:, k] = b[:, k] + coeff_above
-        if k < nlevels - 1:
-            coeff_below = dt * g * d[:, k] / mass[:, k]
-            c[:, k] = -coeff_below
-            b[:, k] = b[:, k] + coeff_below
+    if mix_top < nlevels - 1:
+        coeff_below = dt * g * d[:, mix_top:nlevels - 1] / mass[:, mix_top:nlevels - 1]
+        c[:, mix_top:nlevels - 1] = -coeff_below
+        b[:, mix_top:nlevels - 1] = b[:, mix_top:nlevels - 1] + coeff_below
+
+        coeff_above = dt * g * d[:, mix_top:nlevels - 1] / mass[:, mix_top + 1:nlevels]
+        a[:, mix_top + 1:nlevels] = -coeff_above
+        b[:, mix_top + 1:nlevels] = b[:, mix_top + 1:nlevels] + coeff_above
 
     t_new = tridiag_solve(a, b, c, t, mix_top, nlevels)
     q_new = tridiag_solve(a, b, c, q, mix_top, nlevels)
@@ -85,10 +84,12 @@ def constant_diffusivity(state, grid, k_diff, mix_top):
     d = torch.zeros(batch, nlevels, device=t.device, dtype=t.dtype)
     kd = _as_batch_tensor(k_diff, batch, t.device, t.dtype)
 
-    for k in range(mix_top, nlevels - 1):
-        dp_interface = (p[:, k + 1] - p[:, k]).clamp(min=100.0)
-        rho_ref = p[:, k] / (Rd * t[:, k].clamp(min=150.0))
-        d[:, k] = kd * g * rho_ref * rho_ref / dp_interface
+    if mix_top < nlevels - 1:
+        p_upper = p[:, mix_top:nlevels - 1]
+        p_lower = p[:, mix_top + 1:nlevels]
+        dp_interface = (p_lower - p_upper).clamp(min=100.0)
+        rho_ref = p_upper / (Rd * t[:, mix_top:nlevels - 1].clamp(min=150.0))
+        d[:, mix_top:nlevels - 1] = kd.unsqueeze(1) * g * rho_ref * rho_ref / dp_interface
 
     return d
 
@@ -125,32 +126,32 @@ def richardson_diffusivity(state, grid, params, k_diff, mix_top):
     d = torch.zeros(batch, nlevels, device=device, dtype=dtype)
     wind2 = wind * wind + shear_floor * shear_floor
 
-    for k in range(mix_top, nlevels - 1):
-        p_upper = p[:, k].clamp(min=1.0)
-        p_lower = p[:, k + 1].clamp(min=1.0)
+    if mix_top < nlevels - 1:
+        p_upper = p[:, mix_top:nlevels - 1].clamp(min=1.0)
+        p_lower = p[:, mix_top + 1:nlevels].clamp(min=1.0)
         dp_interface = (p_lower - p_upper).clamp(min=100.0)
 
-        tv_mean = 0.5 * (tv[:, k] + tv[:, k + 1]).clamp(min=150.0)
+        tv_mean = 0.5 * (tv[:, mix_top:nlevels - 1] + tv[:, mix_top + 1:nlevels]).clamp(min=150.0)
         dz = (Rd * tv_mean * torch.log((p_lower / p_upper).clamp(min=1.0 + 1.0e-6)) / g).clamp(min=1.0)
 
-        theta_ref = 0.5 * (theta_v[:, k] + theta_v[:, k + 1]).clamp(min=150.0)
-        dtheta_v = theta_v[:, k] - theta_v[:, k + 1]
-        ri = g * dtheta_v * dz / (theta_ref * wind2.clamp(min=1.0))
+        theta_ref = 0.5 * (theta_v[:, mix_top:nlevels - 1] + theta_v[:, mix_top + 1:nlevels]).clamp(min=150.0)
+        dtheta_v = theta_v[:, mix_top:nlevels - 1] - theta_v[:, mix_top + 1:nlevels]
+        ri = g * dtheta_v * dz / (theta_ref * wind2.unsqueeze(1).clamp(min=1.0))
 
-        stable_factor = 1.0 / (1.0 + torch.clamp(ri, min=0.0) / ri_crit.clamp(min=1.0e-3))
-        unstable_factor = 1.0 + unstable_boost * torch.clamp(-ri, min=0.0)
+        stable_factor = 1.0 / (1.0 + torch.clamp(ri, min=0.0) / ri_crit.unsqueeze(1).clamp(min=1.0e-3))
+        unstable_factor = 1.0 + unstable_boost.unsqueeze(1) * torch.clamp(-ri, min=0.0)
         stability_factor = torch.where(ri >= 0.0, stable_factor, unstable_factor)
 
-        sigma_interface = 0.5 * (sigma_full[k] + sigma_full[k + 1])
+        sigma_interface = 0.5 * (sigma_full[mix_top:nlevels - 1] + sigma_full[mix_top + 1:nlevels])
         depth_denominator = (1.0 - sigma_top).clamp(min=1.0e-3)
         depth_factor = ((sigma_interface - sigma_top) / depth_denominator).clamp(min=0.2, max=1.0)
 
-        kd = kd_base * depth_factor * stability_factor
-        kd = torch.maximum(kd, kd_min * depth_factor)
-        kd = torch.minimum(kd, kd_base * kd_cap_factor)
+        kd = kd_base.unsqueeze(1) * depth_factor.unsqueeze(0) * stability_factor
+        kd = torch.maximum(kd, kd_min.unsqueeze(1) * depth_factor.unsqueeze(0))
+        kd = torch.minimum(kd, kd_base.unsqueeze(1) * kd_cap_factor.unsqueeze(1))
 
-        rho_ref = p_upper / (Rd * t[:, k].clamp(min=150.0))
-        d[:, k] = kd * g * rho_ref * rho_ref / dp_interface
+        rho_ref = p_upper / (Rd * t[:, mix_top:nlevels - 1].clamp(min=150.0))
+        d[:, mix_top:nlevels - 1] = kd * g * rho_ref * rho_ref / dp_interface
 
     return d
 
