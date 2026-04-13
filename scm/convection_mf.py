@@ -22,6 +22,27 @@ def loaded_virtual_temperature(t, q_vapor, q_condensate):
     return t * (1.0 + (1.0 / eps - 1.0) * q_vapor.clamp(min=0.0) - q_condensate.clamp(min=0.0))
 
 
+def _as_column_tensor(value, ref_tensor, batch, name):
+    """Return a scalar or 1D value as a (batch,) tensor."""
+
+    if isinstance(value, torch.Tensor):
+        value = value.to(device=ref_tensor.device, dtype=ref_tensor.dtype)
+        if value.dim() == 0:
+            return value.expand(batch)
+        if value.dim() == 1:
+            if value.shape[0] != batch:
+                raise ValueError(f"{name} must have shape ({batch},), got {tuple(value.shape)}")
+            return value
+        raise ValueError(f"{name} must be scalar or 1D tensor, got ndim={value.dim()}")
+    return torch.full((batch,), float(value), device=ref_tensor.device, dtype=ref_tensor.dtype)
+
+
+def _column_param(params, name, default, ref_tensor, batch):
+    """Return a parameter as a (batch,) tensor."""
+
+    return _as_column_tensor(params.get(name, default), ref_tensor, batch, name)
+
+
 def dilute_cape(t, q, p, entrainment, condensate_retention=0.0, condensate_fallout=1.0):
     """CAPE computed with an entraining parcel. more realistic than
     undilute CAPE because it accounts for how environmental humidity
@@ -36,8 +57,13 @@ def dilute_cape(t, q, p, entrainment, condensate_retention=0.0, condensate_fallo
     qc_parcel = torch.zeros(batch, device=t.device, dtype=t.dtype)
 
     dcape = torch.zeros(batch, device=t.device)
-    fallout_keep = 1.0 - float(torch.clamp(torch.as_tensor(condensate_fallout), min=0.0, max=1.0).item())
-    cond_retain = float(torch.clamp(torch.as_tensor(condensate_retention), min=0.0, max=1.0).item())
+    entrainment = _as_column_tensor(entrainment, t, batch, 'entrainment')
+    fallout_keep = 1.0 - _as_column_tensor(
+        condensate_fallout, t, batch, 'condensate_fallout'
+    ).clamp(min=0.0, max=1.0)
+    cond_retain = _as_column_tensor(
+        condensate_retention, t, batch, 'condensate_retention'
+    ).clamp(min=0.0, max=1.0)
 
     for k in range(nlevels - 2, -1, -1):
         p_target = p[:, k]
@@ -80,22 +106,6 @@ def dilute_cape(t, q, p, entrainment, condensate_retention=0.0, condensate_fallo
     return dcape
 
 
-def _column_param(params, name, default, ref_tensor, batch):
-    """Return a parameter as a (batch,) tensor."""
-
-    value = params.get(name, default)
-    if isinstance(value, torch.Tensor):
-        value = value.to(device=ref_tensor.device, dtype=ref_tensor.dtype)
-        if value.dim() == 0:
-            return value.expand(batch)
-        if value.dim() == 1:
-            if value.shape[0] != batch:
-                raise ValueError(f"{name} must have shape ({batch},), got {tuple(value.shape)}")
-            return value
-        raise ValueError(f"{name} must be scalar or 1D tensor, got ndim={value.dim()}")
-    return torch.full((batch,), float(value), device=ref_tensor.device, dtype=ref_tensor.dtype)
-
-
 def mass_flux_convection(state, grid, params):
     """simplified mass-flux scheme with detrainment moistening."""
 
@@ -106,17 +116,17 @@ def mass_flux_convection(state, grid, params):
     batch = t.shape[0]
     nlevels = t.shape[1]
 
-    entrainment = params.get('entrainment_rate', 5.0e-6)  # per Pa
+    entrainment = _column_param(params, 'entrainment_rate', 5.0e-6, t, batch)  # per Pa
     tau_cape = _column_param(params, 'tau_cape', 3600.0, t, batch)
-    precip_eff = params.get('precip_efficiency', 0.8)
-    cape_threshold = params.get('cape_threshold', 50.0)
-    detrain_rh = params.get('mf_detrain_rh', 0.7)
-    mb_max = params.get('mf_mb_max', 0.05)
-    bl_export_fraction = params.get('mf_bl_export_fraction', 0.02)
-    max_dt_day = params.get('mf_max_dt_day', 10.0)
-    max_dq_day = params.get('mf_max_dq_day', 5.0)
-    cond_retain = params.get('mf_condensate_retention', 0.25)
-    cond_fallout = params.get('mf_condensate_fallout', 0.45)
+    precip_eff = _column_param(params, 'precip_efficiency', 0.8, t, batch)
+    cape_threshold = _column_param(params, 'cape_threshold', 50.0, t, batch)
+    detrain_rh = _column_param(params, 'mf_detrain_rh', 0.7, t, batch)
+    mb_max = _column_param(params, 'mf_mb_max', 0.05, t, batch)
+    bl_export_fraction = _column_param(params, 'mf_bl_export_fraction', 0.02, t, batch)
+    max_dt_day = _column_param(params, 'mf_max_dt_day', 10.0, t, batch)
+    max_dq_day = _column_param(params, 'mf_max_dq_day', 5.0, t, batch)
+    cond_retain = _column_param(params, 'mf_condensate_retention', 0.25, t, batch)
+    cond_fallout = _column_param(params, 'mf_condensate_fallout', 0.45, t, batch)
     enforce_mse = bool(params.get('mf_enforce_mse_conservation', True))
 
     # use dilute CAPE for the closure
@@ -131,9 +141,12 @@ def mass_flux_convection(state, grid, params):
     tau_cape_eff = tau_cape
     if tau_mode == 'flow_dependent':
         sigma = grid['sigma_full'].to(device=t.device, dtype=t.dtype)
-        ft_top_sigma = float(params.get('mf_tau_cape_ft_top_sigma', 0.30))
-        ft_bottom_sigma = float(params.get('mf_tau_cape_ft_bottom_sigma', 0.80))
-        ft_mask = ((sigma >= ft_top_sigma) & (sigma <= ft_bottom_sigma)).to(t.dtype).unsqueeze(0)
+        ft_top_sigma = _column_param(params, 'mf_tau_cape_ft_top_sigma', 0.30, t, batch)
+        ft_bottom_sigma = _column_param(params, 'mf_tau_cape_ft_bottom_sigma', 0.80, t, batch)
+        ft_mask = (
+            (sigma.unsqueeze(0) >= ft_top_sigma.unsqueeze(1))
+            & (sigma.unsqueeze(0) <= ft_bottom_sigma.unsqueeze(1))
+        ).to(t.dtype)
         ft_mass = torch.sum(ft_mask * dp / g, dim=1).clamp(min=1.0e-8)
 
         qs_env = saturation_specific_humidity(t, p)
@@ -156,19 +169,14 @@ def mass_flux_convection(state, grid, params):
     t_plume = t[:, -1].clone()
     q_plume = q[:, -1].clone()
     qc_plume = torch.zeros(batch, device=t.device, dtype=t.dtype)
-    fallout_keep = 1.0 - float(torch.clamp(torch.as_tensor(cond_fallout), min=0.0, max=1.0).item())
-    cond_retain = float(torch.clamp(torch.as_tensor(cond_retain), min=0.0, max=1.0).item())
+    fallout_keep = 1.0 - cond_fallout.clamp(min=0.0, max=1.0)
+    cond_retain = cond_retain.clamp(min=0.0, max=1.0)
 
     dt_norm = torch.zeros_like(t)
     dq_norm = torch.zeros_like(q)
     # track the plume mass flux profile normalized by cloud-base mass flux.
     # it grows from entrainment and shrinks from detrainment.
     mf_profile = torch.ones(batch, device=t.device)
-
-    if isinstance(detrain_rh, torch.Tensor) and detrain_rh.dim() == 1:
-        detrain_rh_col = detrain_rh.unsqueeze(1)
-    else:
-        detrain_rh_col = detrain_rh
 
     for k in range(nlevels - 2, -1, -1):
         p_here = p[:, k]
@@ -225,7 +233,7 @@ def mass_flux_convection(state, grid, params):
         # troposphere to saturation. unlike the earlier formulation, this
         # can moisten or dry depending on the local environment.
         qs_env = saturation_specific_humidity(t[:, k], p_here)
-        q_detrain = torch.minimum(q_plume, detrain_rh_col * qs_env)
+        q_detrain = torch.minimum(q_plume, detrain_rh * qs_env)
         dq_norm[:, k] = detrain_rate * (q_detrain - q[:, k])
 
         # compensating subsidence is tied to actual mass-flux divergence,
@@ -253,19 +261,16 @@ def mass_flux_convection(state, grid, params):
     col_heating_safe = col_heating.clamp(min=1e-8)
     mb = cape_excess * col_mass / (cp * col_heating_safe * tau_cape_eff)
     mb = mb.clamp(min=0.0)
-    if isinstance(mb_max, torch.Tensor):
-        mb = torch.minimum(mb, mb_max)
-    else:
-        mb = mb.clamp(max=mb_max)
+    mb = torch.minimum(mb, mb_max)
 
     dt_tend = dt_norm * mb.unsqueeze(1)
     dq_tend = dq_norm * mb.unsqueeze(1)
 
     # limit tendencies
-    max_dt = max_dt_day / 86400.0
-    max_dq = max_dq_day * 1.0e-3 / 86400.0
-    dt_tend = dt_tend.clamp(-max_dt, max_dt)
-    dq_tend = dq_tend.clamp(-max_dq, max_dq)
+    max_dt = (max_dt_day / 86400.0).unsqueeze(1)
+    max_dq = (max_dq_day * 1.0e-3 / 86400.0).unsqueeze(1)
+    dt_tend = torch.maximum(torch.minimum(dt_tend, max_dt), -max_dt)
+    dq_tend = torch.maximum(torch.minimum(dq_tend, max_dq), -max_dq)
 
     # Keep the capped heating and drying tendencies close to column
     # moist-enthalpy conserving so convection does not create energy
@@ -276,7 +281,7 @@ def mass_flux_convection(state, grid, params):
         active_mass = torch.sum(active_mask * dp / g, dim=1).clamp(min=1.0e-8)
         temp_correction = mse_residual / (cp * active_mass)
         dt_tend = dt_tend - temp_correction.unsqueeze(1) * active_mask
-        dt_tend = dt_tend.clamp(-max_dt, max_dt)
+        dt_tend = torch.maximum(torch.minimum(dt_tend, max_dt), -max_dt)
         mse_residual = torch.sum((cp * dt_tend + Lv * dq_tend) * dp / g, dim=1)
 
     # precipitation follows the actual net convective drying tendency.
