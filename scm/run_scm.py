@@ -21,7 +21,8 @@ from scm.configuration import (
 )
 from scm.experiment import (
     apply_param_overrides, build_output_stem, build_restart_path,
-    load_restart_bundle, member_counts, save_restart_bundle,
+    expand_member_params_to_columns, load_restart_bundle, member_counts,
+    save_restart_bundle,
 )
 from scm.thermo import make_grid
 from scm.column_model import initial_state, run
@@ -111,6 +112,57 @@ def print_forcing_summary(title, forcing):
         print(f"  dcloud LW CRE = {forcing['delta_cloud_lw_cre']:+.2f} W/m2")
 
 
+def build_large_scale_forcing(ls_cfg, state, grid):
+    if not ls_cfg or not bool(ls_cfg.get('enabled', False)):
+        return None
+
+    batch = state['t'].shape[0]
+    nlevels = grid['nlevels']
+
+    def expand_field(name, reference, surface=False):
+        if name not in ls_cfg:
+            return None
+
+        value = ls_cfg[name]
+        if value is None:
+            return None
+
+        tensor = torch.as_tensor(value, device=reference.device, dtype=reference.dtype)
+        if tensor.ndim == 0:
+            if surface:
+                return tensor.expand(batch).clone()
+            return tensor.expand(batch, nlevels).clone()
+        if surface:
+            if tensor.shape == (batch,):
+                return tensor.clone()
+        else:
+            if tensor.shape == (nlevels,):
+                return tensor.unsqueeze(0).expand(batch, -1).clone()
+            if tensor.shape == (batch, nlevels):
+                return tensor.clone()
+
+        target = "(batch,)" if surface else f"({nlevels},) or (batch, {nlevels})"
+        raise ValueError(f"large_scale_forcing.{name} must be scalar or {target}, got {tuple(tensor.shape)}")
+
+    forcing = {}
+    dt_force = expand_field('dt', state['t'], surface=False)
+    dq_force = expand_field('dq', state['q'], surface=False)
+    du_force = expand_field('du', state['u'], surface=False) if 'u' in state else None
+    dv_force = expand_field('dv', state['v'], surface=False) if 'v' in state else None
+    dps_force = expand_field('dps', state['ps'], surface=True)
+    if dt_force is not None:
+        forcing['dt'] = dt_force
+    if dq_force is not None:
+        forcing['dq'] = dq_force
+    if du_force is not None:
+        forcing['du'] = du_force
+    if dv_force is not None:
+        forcing['dv'] = dv_force
+    if dps_force is not None:
+        forcing['dps'] = dps_force
+    return forcing or None
+
+
 def make_restart_bundle(
     phase,
     output_stem,
@@ -186,6 +238,7 @@ def main():
     numerics_cfg = config.get('numerics', {})
     initial_cfg = config.get('initial', {})
     forcing_cfg = config.get('forcing', {})
+    ls_forcing_cfg = config.get('large_scale_forcing', {})
     param_overrides = extract_param_overrides(config)
 
     if args.demo is not None:
@@ -223,10 +276,14 @@ def main():
     plot_enabled = bool(run_cfg.get('plot', True))
     spinup_days = int(run_cfg.get('spinup_days', 500 if mode == 'demo' else 2000))
     perturb_days = int(run_cfg.get('perturb_days', 500 if mode == 'demo' else 2000))
+    ncol = int(run_cfg.get('ncol', 1))
     label = run_cfg.get('label', '')
     preserve_ensemble_shape = bool(run_cfg.get('preserve_ensemble_shape', False))
     restart_from = run_cfg.get('restart_from') or None
     save_restarts = bool(run_cfg.get('save_restarts', True))
+
+    if ncol < 1:
+        raise ValueError(f"run.ncol must be >= 1, got {ncol}")
 
     device_name = run_cfg.get('device', 'auto')
     if args.device:
@@ -281,14 +338,25 @@ def main():
         eq_metrics_1x = restart.get('eq_metrics_1x')
         eq_1x = bool(restart.get('eq_1x', False))
         history_2x = restart.get('history_2x', [])
+        ncol = int(state.get('ncol', ncol))
+        nmember = int(state.get('nmember', state['ts'].shape[0]))
         n_total = int(state['ts'].shape[0])
+        ls_forcing = build_large_scale_forcing(ls_forcing_cfg, state, grid)
 
         if mode == 'demo':
-            print(f"demo mode restart: {n_total} members, scheme={scheme}, "
-                  f"{sampling_key} parameters")
+            if ncol == 1:
+                print(f"demo mode restart: {nmember} members, scheme={scheme}, "
+                      f"{sampling_key} parameters")
+            else:
+                print(f"demo mode restart: {ncol} columns x {nmember} members "
+                      f"({n_total} total columns), scheme={scheme}, {sampling_key} parameters")
         else:
-            print(f"full mode restart: {n_total} members, scheme={scheme}, "
-                  f"{sampling_key} parameters")
+            if ncol == 1:
+                print(f"full mode restart: {nmember} members, scheme={scheme}, "
+                      f"{sampling_key} parameters")
+            else:
+                print(f"full mode restart: {ncol} columns x {nmember} members "
+                      f"({n_total} total columns), scheme={scheme}, {sampling_key} parameters")
         print(f"loaded restart from {restart_from} (phase={restart['phase']})")
 
         if stats_1x is None and history_1x:
@@ -325,6 +393,7 @@ def main():
             state, grid, params, perturb_steps,
             rad_interval=rad_every, diag_interval=diag_every,
             callback=progress_callback,
+            ls_forcing=ls_forcing,
         )
         elapsed = time.time() - t0
         sim_speed = perturb_days * n_total / max(elapsed, 1.0e-6)
@@ -336,17 +405,28 @@ def main():
             mode, scheme, fixed_params=fixed_params,
             preserve_ensemble_shape=preserve_ensemble_shape,
         )
+        nmember = n_bm + n_mf
 
         if mode == 'demo':
             sampling = 'fixed parameters' if fixed_params else 'sampled parameters'
-            print(f"demo mode: {n_bm + n_mf} members, scheme={scheme}, "
-                  f"{sampling}, {spinup_days}-day spinup")
+            if ncol == 1:
+                print(f"demo mode: {nmember} members, scheme={scheme}, "
+                      f"{sampling}, {spinup_days}-day spinup")
+            else:
+                print(f"demo mode: {ncol} columns x {nmember} members "
+                      f"({ncol * nmember} total columns), scheme={scheme}, "
+                      f"{sampling}, {spinup_days}-day spinup")
         else:
             sampling = 'fixed parameters' if fixed_params else 'sampled parameters'
-            print(f"full mode: {n_bm + n_mf} members, scheme={scheme}, "
-                  f"{sampling}, {spinup_days}-day spinup")
+            if ncol == 1:
+                print(f"full mode: {nmember} members, scheme={scheme}, "
+                      f"{sampling}, {spinup_days}-day spinup")
+            else:
+                print(f"full mode: {ncol} columns x {nmember} members "
+                      f"({ncol * nmember} total columns), scheme={scheme}, "
+                      f"{sampling}, {spinup_days}-day spinup")
 
-        n_total = n_bm + n_mf
+        n_total = ncol * nmember
         grid = make_grid(nlevels=int(numerics_cfg.get('nlevels', 20)), device=device)
 
         base = {
@@ -366,19 +446,22 @@ def main():
             params = make_fixed_ensemble_params(n_bm, n_mf, base_params=base, device=device)
         else:
             params = make_ensemble_params(n_bm, n_mf, base_params=base, device=device)
-        apply_param_overrides(params, param_overrides, n_total, device)
+        apply_param_overrides(params, param_overrides, nmember, device)
+        params = expand_member_params_to_columns(params, ncol, nmember)
         params['use_slab_ocean'] = not fixed_sst
-        state = initial_state(n_total, grid, params, device=device)
+        state = initial_state(n_total, grid, params, device=device, ncol=ncol, nmember=nmember)
+        ls_forcing = build_large_scale_forcing(ls_forcing_cfg, state, grid)
         output_stem = build_output_stem(
             mode, scheme, sampling_key, fixed_sst, spinup_days, perturb_days, label=label,
         )
 
-        print(f"\nspinup: {n_total} members, {spinup_days} days...")
+        print(f"\nspinup: {n_total} column states, {spinup_days} days...")
         t0 = time.time()
         state, history_1x = run(
             state, grid, params, spinup_steps,
             rad_interval=rad_every, diag_interval=diag_every,
             callback=progress_callback,
+            ls_forcing=ls_forcing,
         )
         elapsed = time.time() - t0
         sim_speed = spinup_days * n_total / elapsed
@@ -424,6 +507,7 @@ def main():
             state, grid, params, perturb_steps,
             rad_interval=rad_every, diag_interval=diag_every,
             callback=progress_callback,
+            ls_forcing=ls_forcing,
         )
         elapsed = time.time() - t0
         sim_speed = perturb_days * n_total / elapsed

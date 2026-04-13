@@ -11,6 +11,7 @@ label = "mf_baseline_v1"
 preserve_ensemble_shape = false
 save_restarts = true
 restart_from = ""
+ncol = 1
 
 [numerics]
 dt = 900.0
@@ -29,6 +30,9 @@ zenith_factor = 0.25
 co2 = 400.0
 co2_ref = 400.0
 co2_2x = 800.0
+
+[large_scale_forcing]
+enabled = false
 
 [radiation]
 scheme = "multiband"

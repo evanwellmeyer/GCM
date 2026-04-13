@@ -18,10 +18,26 @@ from scm.convection_bm import betts_miller
 from scm.convection_mf import mass_flux_convection
 
 
-def initial_state(batch, grid, params, device='cpu'):
+def initial_state(batch, grid, params, device='cpu', ncol=None, nmember=None):
     """create a reasonable initial atmospheric profile for the tropics.
     temperature follows a lapse rate of ~6.5 K/km with a tropopause,
-    moisture is a fraction of saturation that decreases with height."""
+    moisture is a fraction of saturation that decreases with height.
+
+    The public batch contract is now explicit:
+    - if only ``batch`` is given, it is treated as ``nmember`` with ``ncol = 1``
+    - if ``ncol`` and ``nmember`` are given, ``batch`` must equal ``ncol * nmember``
+    The flattened batch layout is column-major: ``(ncol, nmember, nlev)``.
+    """
+
+    if ncol is None and nmember is None:
+        ncol = 1
+        nmember = batch
+    elif ncol is None or nmember is None:
+        raise ValueError("initial_state requires both ncol and nmember when either is set")
+    elif batch != ncol * nmember:
+        raise ValueError(
+            f"batch={batch} must equal ncol*nmember={ncol*nmember}"
+        )
 
     nlevels = grid['nlevels']
     ps = torch.full((batch,), params.get('ps0', 1e5), device=device)
@@ -46,10 +62,15 @@ def initial_state(batch, grid, params, device='cpu'):
     state = {
         't': t,
         'q': q,
+        'u': torch.zeros_like(t),
+        'v': torch.zeros_like(t),
         'ts': ts,
         'slab_ts_ref': ts.clone(),
         'slab_energy': torch.zeros_like(ts, dtype=torch.float64),
         'ps': ps,
+        'ncol': int(ncol),
+        'nmember': int(nmember),
+        'batch_layout': 'column_major',
     }
     state.update(initialize_cloud_state(batch, grid, device=device))
     return state
@@ -97,6 +118,7 @@ def physics_step(state, grid, params, rad_cache=None, ls_forcing=None):
     - ``dt``: temperature tendency in K/s with shape (batch, nlevels)
     - ``dq``: moisture tendency in kg/kg/s with shape (batch, nlevels)
     - ``dps``: surface-pressure tendency in Pa/s with shape (batch,)
+    - ``du`` / ``dv``: momentum tendencies in m/s^2 with shape (batch, nlevels)
     """
 
     dt = params.get('dt', 900.0)
@@ -145,6 +167,12 @@ def physics_step(state, grid, params, rad_cache=None, ls_forcing=None):
         if 'dq' in ls_forcing:
             ls_dq = torch.as_tensor(ls_forcing['dq'], device=state['q'].device, dtype=state['q'].dtype)
             state['q'] = state['q'] + torch.nan_to_num(ls_dq, nan=0.0) * dt
+        if 'du' in ls_forcing:
+            ls_du = torch.as_tensor(ls_forcing['du'], device=state['u'].device, dtype=state['u'].dtype)
+            state['u'] = state['u'] + torch.nan_to_num(ls_du, nan=0.0) * dt
+        if 'dv' in ls_forcing:
+            ls_dv = torch.as_tensor(ls_forcing['dv'], device=state['v'].device, dtype=state['v'].dtype)
+            state['v'] = state['v'] + torch.nan_to_num(ls_dv, nan=0.0) * dt
         state['q'] = torch.clamp(state['q'], min=1e-7, max=0.1)
         state['t'] = torch.clamp(state['t'], min=150.0, max=350.0)
         state = update_derived(state, grid)

@@ -697,6 +697,13 @@ def test_physics_step_interface(device):
     params['convection_scheme'] = 'mass_flux'
     params['cloud_microphysics_enabled'] = False
 
+    multi_state = initial_state(6, grid, params, device=device, ncol=3, nmember=2)
+    assert multi_state['t'].shape[0] == 6, "explicit ncol/nmember should define flattened batch size"
+    assert multi_state['ncol'] == 3 and multi_state['nmember'] == 2, (
+        "state should retain explicit column/member metadata"
+    )
+    assert multi_state['batch_layout'] == 'column_major', "column layout metadata should be explicit"
+
     base_state = update_derived(initial_state(1, grid, params, device=device), grid)
     state_manual = {
         k: v.clone() if torch.is_tensor(v) else v
@@ -710,6 +717,7 @@ def test_physics_step_interface(device):
     forcing = {
         'dt': torch.full_like(base_state['t'], 1.0e-5),
         'dq': torch.zeros_like(base_state['q']),
+        'du': torch.full_like(base_state['u'], 1.0e-6),
         'dps': torch.full_like(base_state['ps'], 1.0e-2),
     }
 
@@ -734,12 +742,16 @@ def test_physics_step_interface(device):
     assert 'forcing_energy_tendency' in diag0, "physics_step should expose forcing energy tendency"
     assert diag0['forcing_energy_tendency'][0].item() > 0.0, "warming forcing should add atmospheric energy"
     assert state_manual['ps'][0].item() > base_state['ps'][0].item(), "surface pressure forcing should be applied"
+    assert state_manual['u'][0, 0].item() > base_state['u'][0, 0].item(), "momentum forcing should be applied"
     assert torch.allclose(
         state_run['t'], state_manual['t'], atol=1.0e-6, rtol=1.0e-6
     ), "run() should match manual physics_step sequencing with cached radiation"
     assert torch.allclose(
         state_run['q'], state_manual['q'], atol=1.0e-8, rtol=1.0e-6
     ), "run() should preserve moisture under the same forcing sequence"
+    assert torch.allclose(
+        state_run['u'], state_manual['u'], atol=1.0e-8, rtol=1.0e-6
+    ), "run() should preserve momentum under the same forcing sequence"
     assert history[0]['forcing_energy_tendency'][0].item() > 0.0, "forcing diagnostic should survive run() snapshots"
     assert torch.isfinite(diag1['toa_net']).all(), "post-forcing timestep should remain finite"
 

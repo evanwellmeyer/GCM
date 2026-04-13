@@ -38,6 +38,25 @@ def apply_param_overrides(params, overrides, n_total, device):
         params[key] = value
 
 
+def expand_member_params_to_columns(params, ncol, nmember):
+    """Repeat per-member 1D parameter tensors across physical columns.
+
+    The flattened batch layout is column-major: (ncol, nmember, ...).
+    A tensor of shape (nmember,) becomes length ncol * nmember via repeat(ncol).
+    """
+
+    if ncol == 1:
+        return params
+
+    n_total = ncol * nmember
+    for key, value in list(params.items()):
+        if isinstance(value, torch.Tensor) and value.ndim == 1 and value.shape[0] == nmember:
+            params[key] = value.repeat(ncol)
+        elif isinstance(value, torch.Tensor) and value.ndim == 1 and value.shape[0] == n_total:
+            continue
+    return params
+
+
 def member_counts(mode, scheme, fixed_params=False, preserve_ensemble_shape=False):
     if mode == 'full' and fixed_params and not preserve_ensemble_shape:
         if scheme == 'mixed':

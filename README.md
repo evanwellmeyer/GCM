@@ -14,7 +14,7 @@ Despite the directory name, the codebase is not yet a full general circulation m
   - convection
   - large-scale condensation
   - optional slab ocean coupling
-- Supports batched execution for ensembles
+- Supports batched execution for ensembles and multi-column physics packs
 - Supports two convection schemes:
   - Betts-Miller adjustment
   - simplified mass-flux convection
@@ -26,9 +26,9 @@ Despite the directory name, the codebase is not yet a full general circulation m
 - Momentum equations
 - Advection
 - A dynamical core
-- Multi-column coupling
+- Internal multi-column transport or pressure-gradient coupling
 
-So, if the future goal is a GCM, this code is currently the **physics column component** rather than the full dynamical system.
+So, if the future goal is a GCM, this code is currently the **physics column component** rather than the full dynamical system. The physics side is now closer to dycore-ready than before, but the SCM still does not provide its own horizontal transport or dynamics.
 
 ## Repository Layout
 
@@ -52,12 +52,18 @@ So, if the future goal is a GCM, this code is currently the **physics column com
 
 ## Model Architecture
 
-The model state is batched, so the first tensor dimension is the ensemble member dimension.
+The model state is batched. For the standalone SCM drivers, that first tensor dimension is usually just the ensemble-member dimension. For coupling-oriented use, the public contract is now:
+
+- `ncol` = number of physical columns
+- `nmember` = number of ensemble members per column
+- flattened batch layout = `(ncol, nmember, nlev)` in **column-major** order
 
 Typical prognostic variables:
 
 - `t`: atmospheric temperature profile
 - `q`: atmospheric specific humidity profile
+- `u`: zonal wind profile placeholder for future coupling
+- `v`: meridional wind profile placeholder for future coupling
 - `ts`: sea surface temperature or slab ocean temperature
 - `ps`: surface pressure
 
@@ -71,7 +77,28 @@ state -> radiation -> surface fluxes -> boundary layer -> convection -> condensa
 
 Each physics package returns tendencies or flux diagnostics, and the column model applies them sequentially.
 
-`scm/column_model.py` now exposes a dycore-facing `physics_step(...)` interface in addition to the legacy `step(...)` wrapper. `physics_step(...)` accepts optional large-scale forcing tendencies (`dt`, `dq`, `dps`) so the same physics column can be driven either by the standalone SCM experiment driver or by an external dynamics/forcing client later.
+`scm/column_model.py` now exposes a dycore-facing `physics_step(...)` interface in addition to the legacy `step(...)` wrapper. `physics_step(...)` accepts optional large-scale forcing tendencies (`dt`, `dq`, `du`, `dv`, `dps`) so the same physics column can be driven either by the standalone SCM experiment driver or by an external dynamics/forcing client later.
+
+## Current Coupling Status
+
+The column physics is now in a reasonable state to couple to an external dycore if you treat the SCM as a **physics package** rather than as a self-contained dynamical model.
+
+What is already ready enough:
+
+- a stable dycore-facing `physics_step(...)` entry point
+- explicit `ncol` / `nmember` batch semantics
+- carried `u` / `v` state fields so a dycore can hand momentum state through the physics package cleanly
+- support for externally imposed large-scale forcing tendencies (`dt`, `dq`, `dps`)
+- a frozen stable benchmark configuration: `scm/configs/mf_baseline_v1.toml`
+
+What is still missing before a full atmospheric core coupling would feel complete:
+
+- horizontal transport
+- momentum tendencies / wind state
+- a dycore-side column pack manager
+- production-level GPU optimization of the deep-convection and boundary-layer kernels
+
+So the code is now **coupling-ready on the physics-interface side**, but not yet a full multi-column dynamical model on its own.
 
 ## Radiation And Greenhouse Gases
 
@@ -236,17 +263,24 @@ python -m scm.run_scm --config scm/configs/default.toml
 Two example configs are included:
 
 - `scm/configs/default.toml` - richer default run settings: multiband radiation, optional trace gases, and microphysics-coupled cloud radiation
-- `scm/configs/mf_baseline_v1.toml` - frozen mass-flux reference configuration associated with the current stable `2000d/8000d` benchmark
+- `scm/configs/mf_baseline_v1.toml` - frozen mass-flux reference configuration associated with the current stable `2000d/8000d` benchmark; this is the current **stable coupling reference**
 - `scm/configs/mf_flowdev_v1.toml` - current flow-dependent MF development configuration with softer CAPE-timescale limits
 - `scm/configs/simplified_physics.toml` - simplified fallback: semi-gray radiation and no cloud microphysics
 - `scm/configs/trace_gases_example.toml` - example of the optional trace-gas radiation mode
 - `scm/configs/clouds_example.toml` - example of the optional cloud-radiative mode
 - `scm/configs/radiative_adjustment_example.toml` - fixed-SST forcing example with clear-sky adjustment diagnostics enabled
+- `scm/configs/large_scale_forcing_example.toml` - example of externally imposed large-scale forcing and multi-column batch packing
 - `scm/configs/radiation_calibration.toml` - short-run sweep for tuning the semi-gray baseline without the richer cloud path
 - `scm/configs/benchmark_suite.toml` - baseline benchmark suite definitions
 - `scm/configs/benchmark_flowdev_v1.toml` - development benchmark suite for the softened flow-dependent MF closure
 
 The config file is the preferred place for persistent run setup. Existing CLI flags still work and act as overrides.
+
+If you need one stable configuration today, use:
+
+- `scm/configs/mf_baseline_v1.toml`
+
+That is the current frozen mass-flux configuration with a passing benchmark suite and the cleanest documented path toward future dycore coupling.
 
 The radiation settings are now structured into sections like:
 
@@ -258,6 +292,19 @@ The radiation settings are now structured into sections like:
 - `[radiation.clouds]`
 - `[cloud_microphysics]`
 - `[shallow_convection]`
+
+Coupling-oriented configs can also use:
+
+- `[run].ncol`
+- `[large_scale_forcing]`
+
+`[large_scale_forcing]` passes directly into `physics_step(...)` / `run(...)` as constant temperature, moisture, and surface-pressure tendencies using the same field names:
+
+- `dt`
+- `dq`
+- `du`
+- `dv`
+- `dps`
 - `[mass_flux]`
 - `[params]` for generic physics overrides that do not yet have their own dedicated section
 

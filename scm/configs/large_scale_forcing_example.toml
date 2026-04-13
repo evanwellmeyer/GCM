@@ -1,0 +1,21 @@
+[run]
+mode = "full"
+scheme = "mf"
+sampling = "fixed"
+spinup_days = 30
+perturb_days = 30
+fixed_sst = false
+plot = false
+device = "auto"
+label = "large_scale_forcing_example"
+ncol = 4
+
+[large_scale_forcing]
+enabled = true
+# Constant cooling applied to every level in every column.
+dt = -1.0e-6
+# No imposed moistening or surface-pressure tendency in this example.
+dq = 0.0
+du = 0.0
+dv = 0.0
+dps = 0.0
