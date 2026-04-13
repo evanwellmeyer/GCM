@@ -142,8 +142,8 @@ def richardson_diffusivity(state, grid, params, k_diff, mix_top):
         stability_factor = torch.where(ri >= 0.0, stable_factor, unstable_factor)
 
         sigma_interface = 0.5 * (sigma_full[k] + sigma_full[k + 1])
-        depth_factor = ((sigma_interface - sigma_top) / max(1.0 - float(sigma_top), 1.0e-3))
-        depth_factor = torch.clamp(torch.as_tensor(depth_factor, device=device, dtype=dtype), min=0.2, max=1.0)
+        depth_denominator = (1.0 - sigma_top).clamp(min=1.0e-3)
+        depth_factor = ((sigma_interface - sigma_top) / depth_denominator).clamp(min=0.2, max=1.0)
 
         kd = kd_base * depth_factor * stability_factor
         kd = torch.maximum(kd, kd_min * depth_factor)

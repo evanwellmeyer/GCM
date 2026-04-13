@@ -681,6 +681,41 @@ def test_energy_budget_diagnostics(device):
     print("energy budget diagnostics: PASS\n")
 
 
+def test_boundary_layer(device):
+    """verify boundary-layer mixing returns finite tendencies in both modes."""
+    print("=== boundary layer ===")
+    from scm.thermo import make_grid, pressure_at_full, dp_from_ps, saturation_specific_humidity
+    from scm.boundary_layer import boundary_layer_mixing
+
+    grid = make_grid(nlevels=20, device=device)
+    batch = 2
+    ps = torch.full((batch,), 1e5, device=device)
+    p = pressure_at_full(grid, ps)
+    dp = dp_from_ps(grid, ps)
+
+    sigma = grid['sigma_full'].unsqueeze(0).expand(batch, -1)
+    t = 300.0 * sigma ** 0.19
+    t[:, -4:] = t[:, -4:] + torch.tensor([0.0, 0.5, 1.0, 1.5], device=device)
+    qs = saturation_specific_humidity(t, p)
+    q = 0.75 * qs * sigma ** 1.5
+
+    state = {'t': t, 'q': q, 'p': p, 'dp': dp}
+    params_const = {'dt': 900.0, 'k_diff': 0.5, 'boundary_layer_scheme': 'constant'}
+    params_ri = dict(params_const)
+    params_ri.update({'boundary_layer_scheme': 'richardson', 'wind_speed': 5.0})
+
+    out_const = boundary_layer_mixing(state, grid, params_const)
+    out_ri = boundary_layer_mixing(state, grid, params_ri)
+
+    for label, out in [('constant', out_const), ('richardson', out_ri)]:
+        assert torch.isfinite(out['dt']).all(), f"{label} BL dt tendency should be finite"
+        assert torch.isfinite(out['dq']).all(), f"{label} BL dq tendency should be finite"
+
+    print(f"constant BL max |dt| = {(out_const['dt'].abs() * 86400.0).max().item():.2f} K/day")
+    print(f"richardson BL max |dt| = {(out_ri['dt'].abs() * 86400.0).max().item():.2f} K/day")
+    print("boundary layer: PASS\n")
+
+
 def test_physics_step_interface(device):
     """verify the dycore-facing physics interface accepts large-scale forcing."""
     print("=== physics step interface ===")
@@ -1088,6 +1123,7 @@ def main():
     test_surface(device)
     test_slab_energy_accumulator()
     test_energy_budget_diagnostics(device)
+    test_boundary_layer(device)
     test_physics_step_interface(device)
     test_condensation(device)
     test_convection_bm(device)
