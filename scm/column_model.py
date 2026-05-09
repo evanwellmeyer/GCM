@@ -18,6 +18,24 @@ from scm.convection_bm import betts_miller
 from scm.convection_mf import mass_flux_convection
 
 
+def _dtype_from_params(params, fallback):
+    dtype = params.get('dtype', None)
+    if isinstance(dtype, torch.dtype):
+        return dtype
+    if isinstance(dtype, str) and hasattr(torch, dtype):
+        candidate = getattr(torch, dtype)
+        if isinstance(candidate, torch.dtype):
+            return candidate
+    return fallback
+
+
+def _slab_dtype(state, params):
+    # External dycores can run float32/MPS; only keep the historical float64
+    # slab accumulator when no caller-requested model dtype is supplied.
+    fallback = torch.float64 if state['ts'].device.type != 'mps' else state['ts'].dtype
+    return _dtype_from_params(params, fallback)
+
+
 def initial_state(batch, grid, params, device='cpu', ncol=None, nmember=None):
     """create a reasonable initial atmospheric profile for the tropics.
     temperature follows a lapse rate of ~6.5 K/km with a tropopause,
@@ -40,11 +58,14 @@ def initial_state(batch, grid, params, device='cpu', ncol=None, nmember=None):
         )
 
     nlevels = grid['nlevels']
-    ps = torch.full((batch,), params.get('ps0', 1e5), device=device)
+    grid_dtype = grid['sigma_full'].dtype
+    model_dtype = _dtype_from_params(params, grid_dtype)
+    slab_dtype = model_dtype if torch.device(device).type == 'mps' else _dtype_from_params(params, torch.float64)
+    ps = torch.full((batch,), params.get('ps0', 1e5), device=device, dtype=model_dtype)
     p = pressure_at_full(grid, ps)
 
     # temperature: start from surface and decrease with a standard lapse rate
-    ts = torch.full((batch,), params.get('ts_init', 290.0), device=device, dtype=torch.float64)
+    ts = torch.full((batch,), params.get('ts_init', 290.0), device=device, dtype=slab_dtype)
 
     # use a simple analytic profile: T decreases with log-pressure height
     # this gives a roughly realistic tropospheric profile
@@ -66,7 +87,7 @@ def initial_state(batch, grid, params, device='cpu', ncol=None, nmember=None):
         'v': torch.zeros_like(t),
         'ts': ts,
         'slab_ts_ref': ts.clone(),
-        'slab_energy': torch.zeros_like(ts, dtype=torch.float64),
+        'slab_energy': torch.zeros_like(ts, dtype=slab_dtype),
         'ps': ps,
         'ncol': int(ncol),
         'nmember': int(nmember),
@@ -133,18 +154,22 @@ def physics_step(state, grid, params, rad_cache=None, ls_forcing=None):
         return False
 
     # make sure derived fields are current
+    slab_dtype = _slab_dtype(state, params)
     if 'slab_ts_ref' not in state:
-        state['slab_ts_ref'] = state['ts'].clone().to(torch.float64)
+        state['slab_ts_ref'] = state['ts'].clone().to(dtype=slab_dtype)
+    else:
+        state['slab_ts_ref'] = state['slab_ts_ref'].to(device=state['ts'].device, dtype=slab_dtype)
     heat_capacity = slab_heat_capacity(params)
     if torch.is_tensor(heat_capacity):
-        heat_capacity = heat_capacity.to(device=state['ts'].device, dtype=torch.float64)
+        heat_capacity = heat_capacity.to(device=state['ts'].device, dtype=slab_dtype)
     else:
-        heat_capacity = torch.as_tensor(heat_capacity, device=state['ts'].device, dtype=torch.float64)
+        heat_capacity = torch.as_tensor(heat_capacity, device=state['ts'].device, dtype=slab_dtype)
     if 'slab_energy' not in state:
         state['slab_energy'] = (
-            heat_capacity * (state['ts'].to(torch.float64) - state['slab_ts_ref'])
+            heat_capacity * (state['ts'].to(dtype=slab_dtype) - state['slab_ts_ref'])
         )
     else:
+        state['slab_energy'] = state['slab_energy'].to(device=state['ts'].device, dtype=slab_dtype)
         state['ts'] = state['slab_ts_ref'] + state['slab_energy'] / heat_capacity
     state = update_derived(state, grid)
     ts_prev = state['ts'].clone()
@@ -290,7 +315,7 @@ def physics_step(state, grid, params, rad_cache=None, ls_forcing=None):
         )
         check_nan('slab dts', dts_dt)
         dts_dt = torch.nan_to_num(dts_dt, nan=0.0)
-        state['slab_energy'] = state['slab_energy'] + heat_capacity * dts_dt.to(torch.float64) * dt
+        state['slab_energy'] = state['slab_energy'] + heat_capacity * dts_dt.to(dtype=slab_dtype) * dt
         slab_energy_min = heat_capacity * (200.0 - state['slab_ts_ref'])
         slab_energy_max = heat_capacity * (350.0 - state['slab_ts_ref'])
         state['slab_energy'] = torch.clamp(state['slab_energy'], min=slab_energy_min, max=slab_energy_max)

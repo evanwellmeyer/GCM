@@ -17,16 +17,40 @@ rho_water = 1000.0
 c_water = 4218.0
 
 
-def make_grid(nlevels=20, device='cpu'):
+def make_grid(nlevels=20, device='cpu', dtype=None):
     """sigma coordinate grid with levels indexed top (0) to bottom (nlevels-1).
     returns half levels (interfaces), full levels (midpoints), and layer thicknesses.
     boundary layer gets extra resolution."""
 
-    sigma_half = torch.tensor([
+    nlevels = int(nlevels)
+    if nlevels <= 0:
+        raise ValueError("nlevels must be positive")
+
+    sigma_half_reference = torch.tensor([
         0.0, 0.02, 0.05, 0.1, 0.15, 0.2, 0.27, 0.34,
         0.42, 0.5, 0.58, 0.65, 0.72, 0.78, 0.84, 0.89,
         0.93, 0.96, 0.98, 0.995, 1.0
-    ], device=device)
+    ], device=device, dtype=dtype)
+
+    if nlevels == sigma_half_reference.numel() - 1:
+        sigma_half = sigma_half_reference
+    else:
+        # Coupled dycores may request their native vertical level count.
+        # Resampling the reference sigma coordinate preserves the existing
+        # 20-level grid exactly while avoiding a hidden hard-coded level count.
+        position = torch.linspace(
+            0.0,
+            float(sigma_half_reference.numel() - 1),
+            nlevels + 1,
+            device=device,
+            dtype=sigma_half_reference.dtype,
+        )
+        index_lo = torch.floor(position).to(torch.long).clamp(0, sigma_half_reference.numel() - 1)
+        index_hi = torch.ceil(position).to(torch.long).clamp(0, sigma_half_reference.numel() - 1)
+        weight = position - index_lo.to(dtype=sigma_half_reference.dtype)
+        sigma_half = (1.0 - weight) * sigma_half_reference[index_lo] + weight * sigma_half_reference[index_hi]
+        sigma_half[0] = 0.0
+        sigma_half[-1] = 1.0
 
     sigma_full = 0.5 * (sigma_half[:-1] + sigma_half[1:])
     dsigma = sigma_half[1:] - sigma_half[:-1]
