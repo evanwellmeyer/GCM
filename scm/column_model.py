@@ -10,6 +10,7 @@ from scm.thermo import (
 )
 from scm.radiation import radiation
 from scm.surface import surface_fluxes, slab_ocean_tendency, slab_heat_capacity
+from scm.land_surface import initialize_land_state, update_soil_bucket
 from scm.boundary_layer import boundary_layer_mixing
 from scm.condensation import condensation
 from scm.cloud_microphysics import initialize_cloud_state, cloud_microphysics_step
@@ -94,6 +95,7 @@ def initial_state(batch, grid, params, device='cpu', ncol=None, nmember=None):
         'batch_layout': 'column_major',
     }
     state.update(initialize_cloud_state(batch, grid, device=device))
+    state.update(initialize_land_state(batch, params, device=device, dtype=model_dtype))
     return state
 
 
@@ -290,6 +292,13 @@ def physics_step(state, grid, params, rad_cache=None, ls_forcing=None):
     precip_total = (precip_shallow + precip_conv + precip_ls + precip_cloud).clamp(
         max=100.0 / 86400.0
     )
+    land_out = update_soil_bucket(
+        state,
+        params,
+        precip_total,
+        sfc_out.get('land_lhf', sfc_out['lhf']),
+        dt,
+    )
 
     surface_net_flux = (
         rad_out['sw_absorbed_sfc']
@@ -354,6 +363,17 @@ def physics_step(state, grid, params, rad_cache=None, ls_forcing=None):
         'precip_total': precip_total,
         'shf': sfc_out['shf'],
         'lhf': sfc_out['lhf'],
+        'lhf_potential': sfc_out.get('lhf_potential', sfc_out['lhf']),
+        'land_lhf': sfc_out.get('land_lhf', sfc_out['lhf']),
+        'ocean_lhf': sfc_out.get('ocean_lhf', sfc_out['lhf']),
+        'land_fraction': land_out['land_fraction'],
+        'soil_evap_beta': sfc_out.get('soil_evap_beta', torch.ones_like(state['ts'])),
+        'soil_moisture': land_out['soil_moisture'],
+        'soil_moisture_fraction': land_out['soil_moisture_fraction'],
+        'soil_precipitation_rate': land_out['soil_precipitation_rate'],
+        'soil_evaporation_rate': land_out['soil_evaporation_rate'],
+        'runoff_rate': land_out['runoff_rate'],
+        'drainage_rate': land_out['drainage_rate'],
         'sw_absorbed_sfc': rad_out['sw_absorbed_sfc'],
         'sw_reflected_toa': rad_out['sw_reflected_toa'],
         'lw_down_sfc': rad_out['lw_down_sfc'],
@@ -509,6 +529,7 @@ def run(state, grid, params, nsteps, rad_interval=8, diag_interval=100,
             snapshot['t'] = state['t'].detach().clone()
             snapshot['q'] = state['q'].detach().clone()
             snapshot['qc'] = state['qc'].detach().clone()
+            snapshot['soil_moisture'] = state['soil_moisture'].detach().clone()
             diag_history.append(snapshot)
 
             if callback is not None:

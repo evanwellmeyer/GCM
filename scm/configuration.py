@@ -159,6 +159,18 @@ def extract_param_overrides(config):
             "shallow_enforce_mse_conservation": shallow_convection.get("enforce_mse_conservation"),
         }))
 
+    land_surface = config.get("land_surface", {})
+    if land_surface:
+        params.update(_non_null_items({
+            "land_fraction": land_surface.get("land_fraction"),
+            "soil_water_capacity": land_surface.get("soil_water_capacity"),
+            "soil_moisture_initial_fraction": land_surface.get("soil_moisture_initial_fraction"),
+            "soil_wilting_fraction": land_surface.get("soil_wilting_fraction"),
+            "soil_evap_critical_fraction": land_surface.get("soil_evap_critical_fraction"),
+            "soil_field_capacity_fraction": land_surface.get("soil_field_capacity_fraction"),
+            "soil_drainage_timescale": land_surface.get("soil_drainage_timescale"),
+        }))
+
     mass_flux = config.get("mass_flux", {})
     if mass_flux:
         params.update(_non_null_items({

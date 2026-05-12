@@ -49,6 +49,49 @@ def test_coupling_grid_and_surface_contract(device):
     assert out['shf'][2] > out['shf'][0]
 
 
+def test_land_surface_bucket(device):
+    """Verify the first land bucket limits evaporation and closes water storage."""
+
+    from scm.land_surface import update_soil_bucket
+    from scm.surface import surface_fluxes
+    from scm.thermo import make_grid
+
+    grid = make_grid(nlevels=4, device=device)
+    state = {
+        't': torch.full((2, 4), 285.0, device=device),
+        'q': torch.full((2, 4), 0.004, device=device),
+        'ts': torch.full((2,), 300.0, device=device),
+        'p': torch.full((2, 4), 9.0e4, device=device),
+        'dp': torch.full((2, 4), 2.0e4, device=device),
+        'soil_moisture': torch.tensor([0.0, 0.15], device=device),
+    }
+    params = {
+        'dt': 3600.0,
+        'land_fraction': 1.0,
+        'soil_water_capacity': 0.15,
+        'soil_wilting_fraction': 0.10,
+        'soil_evap_critical_fraction': 0.50,
+        'wind_speed': 5.0,
+    }
+    sfc = surface_fluxes(state, grid, params)
+    assert sfc['soil_evap_beta'][0].item() == 0.0
+    assert sfc['soil_evap_beta'][1].item() > 0.9
+    assert sfc['land_lhf'][1] > sfc['land_lhf'][0]
+
+    old_wet_soil = state['soil_moisture'][1].clone()
+    land = update_soil_bucket(
+        state,
+        params,
+        precip_rate=torch.tensor([1.0e-4, 0.0], device=device),
+        land_lhf=sfc['land_lhf'],
+        dt=params['dt'],
+    )
+    assert land['runoff_rate'][0].item() == 0.0
+    assert state['soil_moisture'][0].item() > 0.0
+    assert state['soil_moisture'][1] < old_wet_soil
+    assert torch.isfinite(land['soil_moisture_fraction']).all()
+
+
 def test_thermo(device):
     """verify thermodynamic functions give reasonable numbers."""
     print("=== thermo ===")
@@ -1140,6 +1183,8 @@ def main():
     device = pick_device()
     print(f"device: {device}\n")
 
+    test_coupling_grid_and_surface_contract(device)
+    test_land_surface_bucket(device)
     test_thermo(device)
     test_radiation(device)
     test_cloud_microphysics(device)

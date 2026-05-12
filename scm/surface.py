@@ -2,6 +2,7 @@
 
 import torch
 from scm.thermo import cp, Lv, g, rho_water, c_water, saturation_specific_humidity
+from scm.land_surface import land_fraction, land_latent_heat_cap, soil_evaporation_beta
 
 rho_air = 1.2
 
@@ -47,8 +48,14 @@ def surface_fluxes(state, grid, params):
     qs_sfc = saturation_specific_humidity(ts, p_lowest)
 
     shf = rho_air * cp * cd * wind * (ts - t_lowest)
-    lhf = rho_air * Lv * cd * wind * (qs_sfc - q_lowest)
-    lhf = torch.clamp(lhf, min=0.0)
+    potential_lhf = rho_air * Lv * cd * wind * (qs_sfc - q_lowest)
+    potential_lhf = torch.clamp(potential_lhf, min=0.0)
+
+    frac_land = land_fraction(params, ts)
+    beta_land = soil_evaporation_beta(state, params, ts)
+    land_lhf = torch.minimum(potential_lhf * beta_land, land_latent_heat_cap(state, params, ts))
+    ocean_lhf = potential_lhf
+    lhf = (1.0 - frac_land) * ocean_lhf + frac_land * land_lhf
 
     # By default the sensible-heat flux is distributed over the lower
     # boundary layer and the latent-heat moisture source over the shallowest
@@ -77,6 +84,11 @@ def surface_fluxes(state, grid, params):
         'dq': dq,
         'shf': shf,
         'lhf': lhf,
+        'lhf_potential': potential_lhf,
+        'land_lhf': land_lhf,
+        'ocean_lhf': ocean_lhf,
+        'land_fraction': frac_land,
+        'soil_evap_beta': beta_land,
     }
 
 

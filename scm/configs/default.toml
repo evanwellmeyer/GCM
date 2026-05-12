@@ -199,3 +199,14 @@ include_precip_enthalpy_flux = true
 # tau_cape = 3600.0
 # mf_mb_max = 0.05
 # bm_max_dt_day = 10.0
+
+# Optional one-layer land bucket. Defaults in code keep standalone runs
+# ocean-like unless land_fraction is set above zero.
+# [land_surface]
+# land_fraction = 1.0
+# soil_water_capacity = 0.15
+# soil_moisture_initial_fraction = 0.75
+# soil_wilting_fraction = 0.10
+# soil_evap_critical_fraction = 0.50
+# soil_field_capacity_fraction = 0.85
+# soil_drainage_timescale = 2592000.0
