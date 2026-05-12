@@ -67,6 +67,8 @@ def _as_batch_tensor(x, batch, device, dtype):
     t = torch.as_tensor(x, dtype=dtype, device=device)
     if t.dim() == 0:
         return t.expand(batch)
+    if t.dim() == 2 and t.shape[1] == 1:
+        t = t[:, 0]
     if t.dim() == 1:
         if t.shape[0] == 1:
             return t.expand(batch)
@@ -116,7 +118,13 @@ def richardson_diffusivity(state, grid, params, k_diff, mix_top):
     ri_crit = _as_batch_tensor(params.get('ri_crit', 0.25), batch, device, dtype)
     unstable_boost = _as_batch_tensor(params.get('unstable_diffusion_boost', 4.0), batch, device, dtype)
     shear_floor = _as_batch_tensor(params.get('bl_shear_floor', 1.0), batch, device, dtype)
-    wind = _as_batch_tensor(params.get('wind_speed', 5.0), batch, device, dtype)
+    # Coupled clients pass surface relative wind; standalone configurations
+    # still use the historical prescribed wind_speed parameter.
+    wind_value = params.get(
+        'relative_wind_speed_cell',
+        params.get('relative_wind_speed', params.get('surface_wind_speed', params.get('wind_speed', 5.0))),
+    )
+    wind = _as_batch_tensor(wind_value, batch, device, dtype)
 
     tv = virtual_temperature(t, q)
     theta_v = tv * (p0 / p.clamp(min=1.0)) ** kappa

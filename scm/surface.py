@@ -6,6 +6,19 @@ from scm.thermo import cp, Lv, g, rho_water, c_water, saturation_specific_humidi
 rho_air = 1.2
 
 
+def _batch_param(name, value, like):
+    tensor = torch.as_tensor(value, device=like.device, dtype=like.dtype)
+    batch = like.shape[0]
+    if tensor.dim() == 0:
+        return tensor.expand(batch)
+    tensor = tensor.reshape(-1)
+    if tensor.numel() == 1:
+        return tensor.expand(batch)
+    if tensor.numel() == batch:
+        return tensor
+    raise ValueError(f"{name} must be scalar or length batch={batch}, got {tuple(tensor.shape)}")
+
+
 def slab_heat_capacity(params):
     depth = params.get('ocean_depth', 50.0)
     if torch.is_tensor(depth):
@@ -16,13 +29,20 @@ def slab_heat_capacity(params):
 def surface_fluxes(state, grid, params):
     """bulk aerodynamic surface fluxes."""
 
-    cd = params.get('cd', 1.2e-3)
-    wind = params.get('wind_speed', 5.0)
-
     t_lowest = state['t'][:, -1]
     q_lowest = state['q'][:, -1]
     ts = state['ts']
     p_lowest = state['p'][:, -1]
+    cd = _batch_param('cd', params.get('cd', 1.2e-3), ts).clamp(min=0.0)
+    wind_value = params.get(
+        'relative_wind_speed_cell',
+        params.get('relative_wind_speed', params.get('surface_wind_speed', params.get('wind_speed', 5.0))),
+    )
+    # Coupled runs supply air-ocean relative wind per column; standalone SCM
+    # configs keep the legacy prescribed wind_speed path.
+    # Use ts as the dtype reference so the legacy scalar path keeps its
+    # historical promotion behavior when standalone slab temperatures are fp64.
+    wind = _batch_param('wind_speed', wind_value, ts).clamp(min=0.0)
 
     qs_sfc = saturation_specific_humidity(ts, p_lowest)
 

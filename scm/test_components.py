@@ -20,6 +20,35 @@ def pick_device():
     return torch.device('cpu')
 
 
+def test_coupling_grid_and_surface_contract(device):
+    """Small checks for dycore-facing level count and relative-wind inputs."""
+
+    from scm.thermo import make_grid
+    from scm.surface import surface_fluxes
+
+    grid = make_grid(nlevels=8, device=device)
+    assert grid['nlevels'] == 8
+    assert grid['sigma_full'].shape == (8,)
+    assert grid['sigma_half'].shape == (9,)
+    assert torch.all(grid['dsigma'] > 0.0)
+    assert torch.isclose(grid['sigma_half'][0], torch.tensor(0.0, device=device))
+    assert torch.isclose(grid['sigma_half'][-1], torch.tensor(1.0, device=device))
+
+    batch = 3
+    state = {
+        't': torch.full((batch, 8), 285.0, device=device),
+        'q': torch.full((batch, 8), 0.01, device=device),
+        'ts': torch.full((batch,), 290.0, device=device),
+        'p': torch.full((batch, 8), 9.0e4, device=device),
+        'dp': torch.full((batch, 8), 1.0e4, device=device),
+    }
+    relative_wind = torch.tensor([[2.0], [5.0], [8.0]], device=device)
+    out = surface_fluxes(state, grid, {'relative_wind_speed_cell': relative_wind})
+    assert out['shf'].shape == (batch,)
+    assert out['lhf'].shape == (batch,)
+    assert out['shf'][2] > out['shf'][0]
+
+
 def test_thermo(device):
     """verify thermodynamic functions give reasonable numbers."""
     print("=== thermo ===")
