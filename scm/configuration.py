@@ -159,6 +159,63 @@ def extract_param_overrides(config):
             "shallow_enforce_mse_conservation": shallow_convection.get("enforce_mse_conservation"),
         }))
 
+    land_surface = config.get("land_surface", {})
+    if land_surface:
+        params.update(_non_null_items({
+            "land_fraction": land_surface.get("land_fraction"),
+            "soil_water_capacity": land_surface.get("soil_water_capacity"),
+            "soil_moisture_initial_fraction": land_surface.get("soil_moisture_initial_fraction"),
+            "soil_wilting_fraction": land_surface.get("soil_wilting_fraction"),
+            "soil_evap_critical_fraction": land_surface.get("soil_evap_critical_fraction"),
+            "soil_field_capacity_fraction": land_surface.get("soil_field_capacity_fraction"),
+            "soil_drainage_timescale": land_surface.get("soil_drainage_timescale"),
+        }))
+
+    surface_context = deep_merge(config.get("surface", {}), config.get("surface_context", {}))
+    if surface_context:
+        params.update(_non_null_items({
+            "surface_type": surface_context.get("surface_type"),
+            "land_fraction": surface_context.get("land_fraction"),
+            "ocean_fraction": surface_context.get("ocean_fraction"),
+            "sea_ice_fraction": surface_context.get("sea_ice_fraction"),
+            "glacier_fraction": surface_context.get("glacier_fraction"),
+            "land_use_type": surface_context.get("land_use_type"),
+            "soil_type": surface_context.get("soil_type"),
+            "topography": surface_context.get("topography"),
+            "surface_temperature": surface_context.get("surface_temperature"),
+            "soil_moisture": surface_context.get("soil_moisture"),
+            "soil_temperature": surface_context.get("soil_temperature"),
+            "snow_water_equivalent": surface_context.get("snow_water_equivalent"),
+            "sea_ice_thickness": surface_context.get("sea_ice_thickness"),
+            "surface_albedo": surface_context.get("albedo", surface_context.get("surface_albedo")),
+            "roughness_length": surface_context.get("roughness_length"),
+            "exchange_coefficient_heat": surface_context.get("exchange_coefficient_heat"),
+            "exchange_coefficient_moisture": surface_context.get("exchange_coefficient_moisture"),
+            "surface_emissions": surface_context.get("surface_emissions"),
+            "soil_moisture_update_enabled": surface_context.get("soil_moisture_update_enabled"),
+        }))
+
+    composition = config.get("composition", {})
+    if composition:
+        params.update(_non_null_items({
+            "co2": composition.get("co2", composition.get("co2_ppm")),
+            "co2_ref": composition.get("co2_ref", composition.get("co2_ref_ppm")),
+            "ch4": composition.get("ch4", composition.get("ch4_ppm")),
+            "ch4_ref": composition.get("ch4_ref", composition.get("ch4_ref_ppm")),
+            "n2o": composition.get("n2o", composition.get("n2o_ppm")),
+            "n2o_ref": composition.get("n2o_ref", composition.get("n2o_ref_ppm")),
+            "o3_lw_tau": composition.get("o3_lw_tau", composition.get("ozone_lw_tau")),
+            "o3_sw_tau": composition.get("o3_sw_tau", composition.get("ozone_sw_tau")),
+            "o3_peak_sigma": composition.get("o3_peak_sigma"),
+            "o3_width_sigma": composition.get("o3_width_sigma"),
+            "other_ghg_tau": composition.get("other_ghg_tau"),
+            "aerosol_optical_depth": composition.get("aerosol_optical_depth"),
+            "surface_emissions": composition.get("surface_emissions"),
+            "dry_deposition_velocity": composition.get("dry_deposition_velocity"),
+            "wet_deposition_rate": composition.get("wet_deposition_rate"),
+            "trace_gases_enabled": composition.get("trace_gases_enabled"),
+        }))
+
     mass_flux = config.get("mass_flux", {})
     if mass_flux:
         params.update(_non_null_items({

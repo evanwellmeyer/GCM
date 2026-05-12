@@ -2,6 +2,8 @@
 
 import torch
 from scm.thermo import cp, Lv, g, rho_water, c_water, saturation_specific_humidity
+from scm.land_surface import land_fraction, land_latent_heat_cap, soil_evaporation_beta
+from scm.surface_context import exchange_coefficients, surface_fractions, surface_temperature
 
 rho_air = 1.2
 
@@ -31,9 +33,9 @@ def surface_fluxes(state, grid, params):
 
     t_lowest = state['t'][:, -1]
     q_lowest = state['q'][:, -1]
-    ts = state['ts']
+    ts = surface_temperature(state, params)
     p_lowest = state['p'][:, -1]
-    cd = _batch_param('cd', params.get('cd', 1.2e-3), ts).clamp(min=0.0)
+    cd_heat, cd_moist = exchange_coefficients(params, ts)
     wind_value = params.get(
         'relative_wind_speed_cell',
         params.get('relative_wind_speed', params.get('surface_wind_speed', params.get('wind_speed', 5.0))),
@@ -46,9 +48,16 @@ def surface_fluxes(state, grid, params):
 
     qs_sfc = saturation_specific_humidity(ts, p_lowest)
 
-    shf = rho_air * cp * cd * wind * (ts - t_lowest)
-    lhf = rho_air * Lv * cd * wind * (qs_sfc - q_lowest)
-    lhf = torch.clamp(lhf, min=0.0)
+    shf = rho_air * cp * cd_heat * wind * (ts - t_lowest)
+    potential_lhf = rho_air * Lv * cd_moist * wind * (qs_sfc - q_lowest)
+    potential_lhf = torch.clamp(potential_lhf, min=0.0)
+
+    fractions = surface_fractions(params, ts)
+    frac_land = land_fraction(params, ts)
+    beta_land = soil_evaporation_beta(state, params, ts)
+    land_lhf = torch.minimum(potential_lhf * beta_land, land_latent_heat_cap(state, params, ts))
+    ocean_lhf = potential_lhf
+    lhf = (1.0 - frac_land) * ocean_lhf + frac_land * land_lhf
 
     # By default the sensible-heat flux is distributed over the lower
     # boundary layer and the latent-heat moisture source over the shallowest
@@ -77,6 +86,16 @@ def surface_fluxes(state, grid, params):
         'dq': dq,
         'shf': shf,
         'lhf': lhf,
+        'lhf_potential': potential_lhf,
+        'land_lhf': land_lhf,
+        'ocean_lhf': ocean_lhf,
+        'land_fraction': frac_land,
+        'ocean_fraction': fractions['ocean_fraction'],
+        'sea_ice_fraction': fractions['sea_ice_fraction'],
+        'glacier_fraction': fractions['glacier_fraction'],
+        'exchange_coefficient_heat': cd_heat,
+        'exchange_coefficient_moisture': cd_moist,
+        'soil_evap_beta': beta_land,
     }
 
 

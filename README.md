@@ -36,6 +36,9 @@ So, if the future goal is a GCM, this code is currently the **physics column com
 - `scm/thermo.py` - thermodynamics, vertical grid, CAPE, and moist adiabat utilities
 - `scm/radiation.py` - semi-gray and multiband radiation solvers
 - `scm/surface.py` - surface fluxes and slab ocean update
+- `scm/surface_context.py` - dycore-facing surface-type/state/exchange contract helpers
+- `scm/land_surface.py` - one-layer soil moisture bucket and land hydrology diagnostics
+- `scm/composition.py` - composition and chemistry-coupling contract helpers
 - `scm/boundary_layer.py` - implicit boundary layer mixing
 - `scm/condensation.py` - large-scale saturation adjustment
 - `scm/cloud_microphysics.py` - prognostic cloud condensate and cloud-radiative properties
@@ -49,6 +52,7 @@ So, if the future goal is a GCM, this code is currently the **physics column com
 - `scm/plotting.py` - diagnostics figure generation
 - `scm/run_scm.py` - experiment driver for spinup and CO2 perturbation runs
 - `scm/test_components.py` - standalone component checks
+- `docs/surface_system_plan.md` - land, sea-ice, ocean, and surface-coupler roadmap
 
 ## Model Architecture
 
@@ -66,18 +70,64 @@ Typical prognostic variables:
 - `v`: meridional wind profile placeholder for future coupling
 - `ts`: sea surface temperature or slab ocean temperature
 - `ps`: surface pressure
+- `soil_moisture`: one-layer land bucket water storage, in meters of liquid-water equivalent
 
 Derived fields such as `p` and `dp` are recomputed from `ps` as needed.
 
 The core timestep is managed by `scm/column_model.py`. In simplified terms:
 
 ```text
-state -> radiation -> surface fluxes -> boundary layer -> convection -> condensation -> slab ocean
+state -> radiation -> surface fluxes -> boundary layer -> convection -> condensation
+      -> land bucket update -> slab/surface heat reservoir
 ```
 
 Each physics package returns tendencies or flux diagnostics, and the column model applies them sequentially.
 
 `scm/column_model.py` now exposes a dycore-facing `physics_step(...)` interface in addition to the legacy `step(...)` wrapper. `physics_step(...)` accepts optional large-scale forcing tendencies (`dt`, `dq`, `du`, `dv`, `dps`) so the same physics column can be driven either by the standalone SCM experiment driver or by an external dynamics/forcing client later.
+
+## Surface System Roadmap
+
+The surface system is intentionally being split from the atmospheric column
+internals. Static surface identity should come from the host grid or dycore:
+`surface_type`, `land_fraction`, `ocean_fraction`, `sea_ice_fraction`,
+`glacier_fraction`, `land_use_type`, `soil_type`, topography, and bathymetry.
+The SCM-side surface components then decide how those fields affect fluxes,
+water storage, albedo, and later chemistry.
+
+The first implemented step is a minimal one-layer land bucket in
+`scm/land_surface.py`. It:
+
+- stores `soil_moisture` as meters of liquid-water equivalent over land
+- uses `land_fraction` to blend ocean-like and land-limited evaporation
+- throttles land latent heat flux when soil dries out
+- refills from precipitation after the atmospheric physics step
+- diagnoses runoff and optional drainage
+
+The default remains ocean-like because `land_fraction` defaults to `0.0`.
+For the longer surface-model organization, see
+[`docs/surface_system_plan.md`](docs/surface_system_plan.md).
+
+The current dycore-facing surface contract accepts scalar or per-column values
+for:
+
+- static/slow fields: `surface_type`, `land_fraction`, `ocean_fraction`,
+  `sea_ice_fraction`, `glacier_fraction`, `land_use_type`, `soil_type`,
+  `topography`
+- state fields: `surface_temperature`, `soil_moisture`, `soil_temperature`,
+  `snow_water_equivalent`, `sea_ice_thickness`
+- exchange fields: `surface_albedo` / `albedo`, `roughness_length`,
+  `exchange_coefficient_heat`, `exchange_coefficient_moisture`,
+  `surface_emissions`
+
+The composition/chemistry contract currently maps composition fields into the
+radiation parameters where applicable and exposes chemistry placeholders as
+diagnostics:
+
+- radiatively active composition: `co2` / `co2_ppm`, `ch4` / `ch4_ppm`,
+  `n2o` / `n2o_ppm`, `o3_lw_tau` / `ozone_lw_tau`,
+  `o3_sw_tau` / `ozone_sw_tau`, `aerosol_optical_depth`
+- chemistry exchange placeholders: `surface_emissions`,
+  `dry_deposition_velocity`, `wet_deposition_rate`
 
 ## Current Coupling Status
 
