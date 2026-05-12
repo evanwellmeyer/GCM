@@ -4,6 +4,10 @@
 # -> large-scale condensation. state is updated after each component.
 
 import torch
+from scm.composition import (
+    apply_composition_param_aliases,
+    composition_diagnostics,
+)
 from scm.thermo import (
     make_grid, pressure_at_full, pressure_at_half, dp_from_ps,
     saturation_specific_humidity, geopotential, g, cp, Lv, Rd, c_water
@@ -11,6 +15,11 @@ from scm.thermo import (
 from scm.radiation import radiation
 from scm.surface import surface_fluxes, slab_ocean_tendency, slab_heat_capacity
 from scm.land_surface import initialize_land_state, update_soil_bucket
+from scm.surface_context import (
+    apply_surface_param_aliases,
+    apply_surface_state_inputs,
+    surface_context_diagnostics,
+)
 from scm.boundary_layer import boundary_layer_mixing
 from scm.condensation import condensation
 from scm.cloud_microphysics import initialize_cloud_state, cloud_microphysics_step
@@ -96,6 +105,8 @@ def initial_state(batch, grid, params, device='cpu', ncol=None, nmember=None):
     }
     state.update(initialize_cloud_state(batch, grid, device=device))
     state.update(initialize_land_state(batch, params, device=device, dtype=model_dtype))
+    params = apply_surface_param_aliases(apply_composition_param_aliases(params))
+    state = apply_surface_state_inputs(state, params)
     return state
 
 
@@ -144,6 +155,7 @@ def physics_step(state, grid, params, rad_cache=None, ls_forcing=None):
     - ``du`` / ``dv``: momentum tendencies in m/s^2 with shape (batch, nlevels)
     """
 
+    params = apply_surface_param_aliases(apply_composition_param_aliases(params))
     dt = params.get('dt', 900.0)
     use_slab = params.get('use_slab_ocean', True)
     debug_nan = params.get('debug_nan', False)
@@ -173,6 +185,7 @@ def physics_step(state, grid, params, rad_cache=None, ls_forcing=None):
     else:
         state['slab_energy'] = state['slab_energy'].to(device=state['ts'].device, dtype=slab_dtype)
         state['ts'] = state['slab_ts_ref'] + state['slab_energy'] / heat_capacity
+    state = apply_surface_state_inputs(state, params)
     state = update_derived(state, grid)
     ts_prev = state['ts'].clone()
     slab_energy_prev = state['slab_energy'].clone()
@@ -367,6 +380,11 @@ def physics_step(state, grid, params, rad_cache=None, ls_forcing=None):
         'land_lhf': sfc_out.get('land_lhf', sfc_out['lhf']),
         'ocean_lhf': sfc_out.get('ocean_lhf', sfc_out['lhf']),
         'land_fraction': land_out['land_fraction'],
+        'ocean_fraction': sfc_out.get('ocean_fraction', torch.ones_like(state['ts'])),
+        'sea_ice_fraction': sfc_out.get('sea_ice_fraction', torch.zeros_like(state['ts'])),
+        'glacier_fraction': sfc_out.get('glacier_fraction', torch.zeros_like(state['ts'])),
+        'exchange_coefficient_heat': sfc_out.get('exchange_coefficient_heat', torch.zeros_like(state['ts'])),
+        'exchange_coefficient_moisture': sfc_out.get('exchange_coefficient_moisture', torch.zeros_like(state['ts'])),
         'soil_evap_beta': sfc_out.get('soil_evap_beta', torch.ones_like(state['ts'])),
         'soil_moisture': land_out['soil_moisture'],
         'soil_moisture_fraction': land_out['soil_moisture_fraction'],
@@ -415,6 +433,8 @@ def physics_step(state, grid, params, rad_cache=None, ls_forcing=None):
         'iwp': cloud_out['iwp'].sum(dim=1),
         'conv_mse_residual': conv_out.get('mse_residual', torch.zeros_like(state['ts'])),
     }
+    diag.update(surface_context_diagnostics(state, params, state['ts']))
+    diag.update(composition_diagnostics(params, state['ts']))
 
     return state, diag, rad_out
 
@@ -499,6 +519,7 @@ def run(state, grid, params, nsteps, rad_interval=8, diag_interval=100,
 
     diag_history = []
     rad_cache = None
+    params = apply_surface_param_aliases(apply_composition_param_aliases(params))
     effective_rad_interval = max(1, int(rad_interval))
 
     # When cloud condensate is prognostic, let radiation see the updated
@@ -512,6 +533,7 @@ def run(state, grid, params, nsteps, rad_interval=8, diag_interval=100,
     for n in range(nsteps):
         # recompute radiation on schedule
         if n % effective_rad_interval == 0:
+            state = apply_surface_state_inputs(state, params)
             state = update_derived(state, grid)
             rad_cache = radiation(state, grid, params)
 
@@ -530,6 +552,9 @@ def run(state, grid, params, nsteps, rad_interval=8, diag_interval=100,
             snapshot['q'] = state['q'].detach().clone()
             snapshot['qc'] = state['qc'].detach().clone()
             snapshot['soil_moisture'] = state['soil_moisture'].detach().clone()
+            for field in ('soil_temperature', 'snow_water_equivalent', 'sea_ice_thickness'):
+                if field in state:
+                    snapshot[field] = state[field].detach().clone()
             diag_history.append(snapshot)
 
             if callback is not None:

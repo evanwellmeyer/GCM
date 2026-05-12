@@ -210,3 +210,39 @@ include_precip_enthalpy_flux = true
 # soil_evap_critical_fraction = 0.50
 # soil_field_capacity_fraction = 0.85
 # soil_drainage_timescale = 2592000.0
+
+# Optional host/dycore surface-context contract. These can be scalar or
+# per-column vectors in coupled use.
+# [surface_context]
+# surface_type = 1
+# land_fraction = 0.0
+# ocean_fraction = 1.0
+# sea_ice_fraction = 0.0
+# glacier_fraction = 0.0
+# land_use_type = 0
+# soil_type = 0
+# topography = 0.0
+# surface_temperature = 290.0
+# soil_moisture = 0.10
+# soil_temperature = 285.0
+# snow_water_equivalent = 0.0
+# sea_ice_thickness = 0.0
+# surface_albedo = 0.32
+# roughness_length = 0.01
+# exchange_coefficient_heat = 1.2e-3
+# exchange_coefficient_moisture = 1.2e-3
+# surface_emissions = 0.0
+
+# Optional composition/chemistry contract. Radiation already consumes CO2 and
+# simple trace-gas optical-depth fields; emissions/deposition are placeholders
+# for future chemistry coupling diagnostics.
+# [composition]
+# co2_ppm = 400.0
+# ch4_ppm = 1.8
+# n2o_ppm = 0.332
+# ozone_lw_tau = 0.02
+# ozone_sw_tau = 0.03
+# aerosol_optical_depth = 0.0
+# surface_emissions = 0.0
+# dry_deposition_velocity = 0.0
+# wet_deposition_rate = 0.0

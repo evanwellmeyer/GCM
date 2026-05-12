@@ -36,7 +36,9 @@ So, if the future goal is a GCM, this code is currently the **physics column com
 - `scm/thermo.py` - thermodynamics, vertical grid, CAPE, and moist adiabat utilities
 - `scm/radiation.py` - semi-gray and multiband radiation solvers
 - `scm/surface.py` - surface fluxes and slab ocean update
+- `scm/surface_context.py` - dycore-facing surface-type/state/exchange contract helpers
 - `scm/land_surface.py` - one-layer soil moisture bucket and land hydrology diagnostics
+- `scm/composition.py` - composition and chemistry-coupling contract helpers
 - `scm/boundary_layer.py` - implicit boundary layer mixing
 - `scm/condensation.py` - large-scale saturation adjustment
 - `scm/cloud_microphysics.py` - prognostic cloud condensate and cloud-radiative properties
@@ -87,10 +89,10 @@ Each physics package returns tendencies or flux diagnostics, and the column mode
 
 The surface system is intentionally being split from the atmospheric column
 internals. Static surface identity should come from the host grid or dycore:
-`land_fraction`, `ocean_fraction`, `sea_ice_fraction`, `land_use_type`,
-`soil_type`, topography, and bathymetry. The SCM-side surface components then
-decide how those fields affect fluxes, water storage, albedo, and later
-chemistry.
+`surface_type`, `land_fraction`, `ocean_fraction`, `sea_ice_fraction`,
+`glacier_fraction`, `land_use_type`, `soil_type`, topography, and bathymetry.
+The SCM-side surface components then decide how those fields affect fluxes,
+water storage, albedo, and later chemistry.
 
 The first implemented step is a minimal one-layer land bucket in
 `scm/land_surface.py`. It:
@@ -104,6 +106,28 @@ The first implemented step is a minimal one-layer land bucket in
 The default remains ocean-like because `land_fraction` defaults to `0.0`.
 For the longer surface-model organization, see
 [`docs/surface_system_plan.md`](docs/surface_system_plan.md).
+
+The current dycore-facing surface contract accepts scalar or per-column values
+for:
+
+- static/slow fields: `surface_type`, `land_fraction`, `ocean_fraction`,
+  `sea_ice_fraction`, `glacier_fraction`, `land_use_type`, `soil_type`,
+  `topography`
+- state fields: `surface_temperature`, `soil_moisture`, `soil_temperature`,
+  `snow_water_equivalent`, `sea_ice_thickness`
+- exchange fields: `surface_albedo` / `albedo`, `roughness_length`,
+  `exchange_coefficient_heat`, `exchange_coefficient_moisture`,
+  `surface_emissions`
+
+The composition/chemistry contract currently maps composition fields into the
+radiation parameters where applicable and exposes chemistry placeholders as
+diagnostics:
+
+- radiatively active composition: `co2` / `co2_ppm`, `ch4` / `ch4_ppm`,
+  `n2o` / `n2o_ppm`, `o3_lw_tau` / `ozone_lw_tau`,
+  `o3_sw_tau` / `ozone_sw_tau`, `aerosol_optical_depth`
+- chemistry exchange placeholders: `surface_emissions`,
+  `dry_deposition_velocity`, `wet_deposition_rate`
 
 ## Current Coupling Status
 

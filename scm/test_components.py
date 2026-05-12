@@ -92,6 +92,54 @@ def test_land_surface_bucket(device):
     assert torch.isfinite(land['soil_moisture_fraction']).all()
 
 
+def test_surface_context_and_composition_contract(device):
+    """Verify dycore-facing surface and composition fields are accepted."""
+
+    from scm.column_model import initial_state, physics_step
+    from scm.ensemble import default_params
+    from scm.thermo import make_grid
+
+    grid = make_grid(nlevels=8, device=device)
+    params = default_params(device=device)
+    params.update({
+        'dt': 300.0,
+        'use_slab_ocean': False,
+        'surface_temperature': torch.tensor([299.0, 285.0], device=device),
+        'land_fraction': torch.tensor([0.70, 0.20], device=device),
+        'sea_ice_fraction': torch.tensor([0.00, 0.30], device=device),
+        'glacier_fraction': torch.tensor([0.10, 0.00], device=device),
+        'land_use_type': torch.tensor([2.0, 1.0], device=device),
+        'soil_type': torch.tensor([1.0, 3.0], device=device),
+        'topography': torch.tensor([150.0, 5.0], device=device),
+        'soil_moisture': torch.tensor([0.05, 0.12], device=device),
+        'soil_temperature': torch.tensor([291.0, 275.0], device=device),
+        'snow_water_equivalent': torch.tensor([0.00, 0.03], device=device),
+        'sea_ice_thickness': torch.tensor([0.0, 1.2], device=device),
+        'surface_albedo': torch.tensor([0.25, 0.60], device=device),
+        'roughness_length': torch.tensor([0.10, 0.002], device=device),
+        'exchange_coefficient_heat': torch.tensor([1.0e-3, 8.0e-4], device=device),
+        'exchange_coefficient_moisture': torch.tensor([9.0e-4, 6.0e-4], device=device),
+        'co2_ppm': torch.tensor([410.0, 420.0], device=device),
+        'ch4_ppm': torch.tensor([1.9, 2.0], device=device),
+        'n2o_ppm': torch.tensor([0.335, 0.340], device=device),
+        'ozone_lw_tau': torch.tensor([0.02, 0.03], device=device),
+        'ozone_sw_tau': torch.tensor([0.01, 0.02], device=device),
+        'surface_emissions': torch.tensor([1.0e-9, 2.0e-9], device=device),
+        'dry_deposition_velocity': torch.tensor([1.0e-3, 2.0e-3], device=device),
+    })
+    state = initial_state(2, grid, params, device=device)
+    state, diag, _ = physics_step(state, grid, params)
+
+    assert torch.allclose(state['ts'], params['surface_temperature'].to(state['ts'].dtype))
+    assert torch.allclose(diag['surface_albedo'], params['surface_albedo'].to(diag['surface_albedo'].dtype))
+    assert torch.allclose(diag['composition_co2'], params['co2_ppm'].to(diag['composition_co2'].dtype))
+    assert 'chemistry_surface_emissions' in diag
+    assert diag['sea_ice_fraction'][1].item() > 0.0
+    assert diag['glacier_fraction'][0].item() > 0.0
+    assert torch.isfinite(state['t']).all()
+    assert torch.isfinite(state['q']).all()
+
+
 def test_thermo(device):
     """verify thermodynamic functions give reasonable numbers."""
     print("=== thermo ===")
@@ -1185,6 +1233,7 @@ def main():
 
     test_coupling_grid_and_surface_contract(device)
     test_land_surface_bucket(device)
+    test_surface_context_and_composition_contract(device)
     test_thermo(device)
     test_radiation(device)
     test_cloud_microphysics(device)

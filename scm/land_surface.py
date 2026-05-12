@@ -3,25 +3,17 @@
 import torch
 
 from scm.thermo import Lv, rho_water
+from scm.surface_context import batch_param, surface_fractions
 
 
 def _batch_param(name, value, like):
-    tensor = torch.as_tensor(value, device=like.device, dtype=like.dtype)
-    batch = like.shape[0]
-    if tensor.dim() == 0:
-        return tensor.expand(batch)
-    tensor = tensor.reshape(-1)
-    if tensor.numel() == 1:
-        return tensor.expand(batch)
-    if tensor.numel() == batch:
-        return tensor
-    raise ValueError(f"{name} must be scalar or length batch={batch}, got {tuple(tensor.shape)}")
+    return batch_param(name, value, like)
 
 
 def land_fraction(params, like):
     """Return grid-cell land fraction as a batch vector."""
 
-    return _batch_param("land_fraction", params.get("land_fraction", 0.0), like).clamp(0.0, 1.0)
+    return surface_fractions(params, like)["land_fraction"]
 
 
 def soil_water_capacity(params, like):
@@ -107,7 +99,9 @@ def update_soil_bucket(state, params, precip_rate, land_lhf, dt):
         * capacity
     )
 
-    if "soil_moisture" not in state:
+    if "soil_moisture" in params:
+        state["soil_moisture"] = _batch_param("soil_moisture", params["soil_moisture"], ref)
+    elif "soil_moisture" not in state:
         state.update(initialize_land_state(ref.shape[0], params, device=ref.device, dtype=ref.dtype))
 
     soil = torch.as_tensor(state["soil_moisture"], device=ref.device, dtype=ref.dtype).reshape(-1)
@@ -133,7 +127,9 @@ def update_soil_bucket(state, params, precip_rate, land_lhf, dt):
 
     updated = (after_runoff - drainage_depth).clamp_min(0.0)
     land_mask = frac > 0.0
-    state["soil_moisture"] = torch.where(land_mask, updated, soil).to(dtype=ref.dtype)
+    update_enabled = params.get("soil_moisture_update_enabled", "soil_moisture" not in params)
+    if update_enabled:
+        state["soil_moisture"] = torch.where(land_mask, updated, soil).to(dtype=ref.dtype)
 
     return {
         "land_fraction": frac,
