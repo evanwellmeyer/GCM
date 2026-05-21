@@ -10,7 +10,8 @@ from scm.composition import (
 )
 from scm.thermo import (
     make_grid, pressure_at_full, pressure_at_half, dp_from_ps,
-    saturation_specific_humidity, geopotential, g, cp, Lv, Rd, c_water
+    saturation_specific_humidity, geopotential, full_level_coordinate,
+    g, cp, Lv, Rd, c_water
 )
 from scm.radiation import radiation
 from scm.surface import surface_fluxes, slab_ocean_tendency, slab_heat_capacity
@@ -79,7 +80,7 @@ def initial_state(batch, grid, params, device='cpu', ncol=None, nmember=None):
 
     # use a simple analytic profile: T decreases with log-pressure height
     # this gives a roughly realistic tropospheric profile
-    sigma = grid['sigma_full'].unsqueeze(0).expand(batch, -1)
+    sigma = full_level_coordinate(grid, ps=ps, batch=batch, device=device, dtype=p.dtype)
     t = ts.to(dtype=p.dtype).unsqueeze(1) * sigma ** (Rd * 6.5e-3 / g)
     # impose a tropopause: don't let temperature fall below 200K
     t = torch.clamp(t, min=200.0)

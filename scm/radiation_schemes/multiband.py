@@ -1,6 +1,7 @@
 import torch
 
 from scm.cloud_optics import cloud_optical_properties
+from scm.thermo import full_level_coordinate
 from scm.radiation_schemes.common import (
     as_batch_tensor,
     band_vector,
@@ -14,11 +15,10 @@ from scm.radiation_schemes.common import (
 
 
 def ozone_layer_profile(grid, batch, device, dtype, params):
-    sigma = grid["sigma_full"].to(device=device, dtype=dtype)
+    sigma = full_level_coordinate(grid, batch=batch, device=device, dtype=dtype)
     peak = as_batch_tensor(params.get("o3_peak_sigma", 0.18), batch, device, dtype)
     width = as_batch_tensor(params.get("o3_width_sigma", 0.08), batch, device, dtype).clamp(min=0.03)
-    sigma_2d = sigma.unsqueeze(0).expand(batch, -1)
-    weights = torch.exp(-0.5 * ((sigma_2d - peak.unsqueeze(1)) / width.unsqueeze(1)) ** 2)
+    weights = torch.exp(-0.5 * ((sigma - peak.unsqueeze(1)) / width.unsqueeze(1)) ** 2)
     return weights / weights.sum(dim=1, keepdim=True).clamp(min=1.0e-8)
 
 

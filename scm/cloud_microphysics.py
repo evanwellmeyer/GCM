@@ -1,6 +1,6 @@
 import torch
 
-from scm.thermo import g, saturation_specific_humidity
+from scm.thermo import g, saturation_specific_humidity, full_level_coordinate
 
 
 def initialize_cloud_state(batch, grid, device='cpu'):
@@ -88,15 +88,15 @@ def cloud_microphysics_step(state, grid, params, cond_out, conv_out):
 
     ls_source = cond_out.get('cloud_source', zeros)
 
-    sigma = grid['sigma_full'].to(device=device, dtype=dtype)
+    sigma = full_level_coordinate(grid, state=state, device=device, dtype=dtype)
     anvil_center = float(params.get('conv_cloud_anvil_center_sigma', 0.45))
     anvil_width = float(params.get('conv_cloud_anvil_width_sigma', 0.18))
     anvil_profile = torch.exp(-((sigma - anvil_center) / max(anvil_width, 1.0e-3)) ** 2)
-    anvil_profile = anvil_profile / anvil_profile.sum().clamp(min=1.0e-8)
+    anvil_profile = anvil_profile / anvil_profile.sum(dim=1, keepdim=True).clamp(min=1.0e-8)
 
     conv_cloud_eff = _to_col(params.get('conv_cloud_efficiency', 0.03), batch, device, dtype)
     conv_precip = conv_out.get('precip', torch.zeros(batch, device=device, dtype=dtype)).unsqueeze(1)
-    conv_source = conv_cloud_eff * conv_precip * dt * g / dp.clamp(min=1.0) * anvil_profile.unsqueeze(0)
+    conv_source = conv_cloud_eff * conv_precip * dt * g / dp.clamp(min=1.0) * anvil_profile
 
     source = ls_source + conv_source
 

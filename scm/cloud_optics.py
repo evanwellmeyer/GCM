@@ -1,5 +1,7 @@
 import torch
 
+from scm.thermo import full_level_coordinate
+
 
 def as_batch_tensor(x, batch, device, dtype):
     """Broadcast scalar or batch-like input to shape (batch,)."""
@@ -39,10 +41,9 @@ def clouds_enabled(params):
 def cloud_layer_weights(grid, batch, device, dtype, params):
     """Return normalized cloud-layer weights on model full levels."""
 
-    sigma = grid["sigma_full"].to(device=device, dtype=dtype)
+    sigma_2d = full_level_coordinate(grid, batch=batch, device=device, dtype=dtype)
     top = as_batch_tensor(params.get("cloud_top_sigma", 0.65), batch, device, dtype)
     bottom = as_batch_tensor(params.get("cloud_bottom_sigma", 0.95), batch, device, dtype)
-    sigma_2d = sigma.unsqueeze(0).expand(batch, -1)
     mask = ((sigma_2d >= top.unsqueeze(1)) & (sigma_2d <= bottom.unsqueeze(1))).to(dtype)
     counts = mask.sum(dim=1, keepdim=True).clamp(min=1.0)
     return mask / counts
@@ -91,12 +92,11 @@ def _prescribed_cloud_optics(grid, params, batch, dtype, gaussian=False):
         * as_batch_tensor(params.get("cloud_lw_tau", 0.0), batch, device, dtype).clamp(min=0.0)
     )
     if gaussian:
-        sigma = grid["sigma_full"].to(device=device, dtype=dtype)
+        sigma_2d = full_level_coordinate(grid, batch=batch, device=device, dtype=dtype)
         top = as_batch_tensor(params.get("cloud_top_sigma", 0.65), batch, device, dtype)
         bottom = as_batch_tensor(params.get("cloud_bottom_sigma", 0.95), batch, device, dtype)
         center = 0.5 * (top + bottom)
         width = (0.35 * (bottom - top)).clamp(min=0.03)
-        sigma_2d = sigma.unsqueeze(0).expand(batch, -1)
         mask = ((sigma_2d >= top.unsqueeze(1)) & (sigma_2d <= bottom.unsqueeze(1))).to(dtype)
         weights = torch.exp(-0.5 * ((sigma_2d - center.unsqueeze(1)) / width.unsqueeze(1)) ** 2) * mask
         fallback = weights.sum(dim=1, keepdim=True) <= 0.0

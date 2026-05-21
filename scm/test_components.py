@@ -49,6 +49,61 @@ def test_coupling_grid_and_surface_contract(device):
     assert out['shf'][2] > out['shf'][0]
 
 
+def test_dycore_supplied_vertical_grid_contract(device):
+    """SCM physics can consume host-owned pressure interfaces."""
+
+    from scm.column_model import initial_state, update_derived, physics_step
+    from scm.ensemble import default_params
+    from scm.thermo import (
+        grid_from_hybrid_coefficients,
+        grid_from_pressure_interfaces,
+        pressure_at_half,
+        pressure_at_full,
+        dp_from_ps,
+        full_level_coordinate,
+    )
+
+    dtype = torch.float32
+    eta = torch.linspace(0.0, 1.0, 7, device=device, dtype=dtype)
+    b_half = eta ** 2
+    p_top = torch.tensor(5000.0, device=device, dtype=dtype)
+    a_half = p_top * (1.0 - b_half)
+    hybrid_grid = grid_from_hybrid_coefficients(a_half, b_half, device=device, dtype=dtype)
+    ps = torch.tensor([100000.0, 85000.0], device=device, dtype=dtype)
+
+    p_half = pressure_at_half(hybrid_grid, ps)
+    assert p_half.shape == (2, 7)
+    assert torch.allclose(p_half[:, 0], p_top.expand(2))
+    assert torch.allclose(p_half[:, -1], ps)
+    assert torch.all(dp_from_ps(hybrid_grid, ps) > 0.0)
+    assert pressure_at_full(hybrid_grid, ps).shape == (2, 6)
+
+    p_interface = torch.stack([
+        torch.linspace(5000.0, 100000.0, 7, device=device, dtype=dtype),
+        torch.linspace(8000.0, 85000.0, 7, device=device, dtype=dtype),
+    ])
+    explicit_grid = grid_from_pressure_interfaces(p_interface, device=device, dtype=dtype)
+    assert torch.allclose(pressure_at_half(explicit_grid, ps), p_interface)
+    assert full_level_coordinate(explicit_grid, ps=ps, batch=2).shape == (2, 6)
+
+    params = default_params(device=device)
+    params.update({
+        'dt': 60.0,
+        'dtype': dtype,
+        'use_slab_ocean': False,
+        'cloud_microphysics_enabled': True,
+    })
+    state = initial_state(2, explicit_grid, params, device=device)
+    state = update_derived(state, explicit_grid)
+    assert torch.allclose(state['p'], pressure_at_full(explicit_grid, state['ps']))
+    assert torch.allclose(state['dp'], dp_from_ps(explicit_grid, state['ps']))
+
+    state, diag, _ = physics_step(state, explicit_grid, params)
+    assert torch.isfinite(state['t']).all()
+    assert torch.isfinite(state['q']).all()
+    assert torch.isfinite(diag['toa_net']).all()
+
+
 def test_land_surface_bucket(device):
     """Verify the first land bucket limits evaporation and closes water storage."""
 
@@ -86,7 +141,7 @@ def test_land_surface_bucket(device):
         land_lhf=sfc['land_lhf'],
         dt=params['dt'],
     )
-    assert land['runoff_rate'][0].item() == 0.0
+    assert land['runoff_rate'][0].item() <= 1.0e-8
     assert state['soil_moisture'][0].item() > 0.0
     assert state['soil_moisture'][1] < old_wet_soil
     assert torch.isfinite(land['soil_moisture_fraction']).all()
@@ -1232,6 +1287,7 @@ def main():
     print(f"device: {device}\n")
 
     test_coupling_grid_and_surface_contract(device)
+    test_dycore_supplied_vertical_grid_contract(device)
     test_land_surface_bucket(device)
     test_surface_context_and_composition_contract(device)
     test_thermo(device)

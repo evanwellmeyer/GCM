@@ -17,10 +17,19 @@ rho_water = 1000.0
 c_water = 4218.0
 
 
-def make_grid(nlevels=20, device='cpu', dtype=None):
-    """sigma coordinate grid with levels indexed top (0) to bottom (nlevels-1).
-    returns half levels (interfaces), full levels (midpoints), and layer thicknesses.
-    boundary layer gets extra resolution."""
+def make_grid(nlevels=20, device='cpu', dtype=None, p_top=0.0):
+    """Build the standalone SCM vertical grid.
+
+    Levels are indexed top (0) to bottom (nlevels-1).  The historical grid is
+    a pure sigma grid with ``p_top=0``.  Supplying ``p_top`` turns the same
+    level distribution into a simple hybrid-pressure grid:
+
+        p_interface = p_top * (1 - sigma_half) + sigma_half * ps
+
+    Coupled dycores should normally use ``grid_from_hybrid_coefficients`` or
+    ``grid_from_pressure_interfaces`` instead of asking the SCM to invent the
+    vertical coordinate.
+    """
 
     nlevels = int(nlevels)
     if nlevels <= 0:
@@ -52,30 +61,169 @@ def make_grid(nlevels=20, device='cpu', dtype=None):
         sigma_half[0] = 0.0
         sigma_half[-1] = 1.0
 
-    sigma_full = 0.5 * (sigma_half[:-1] + sigma_half[1:])
-    dsigma = sigma_half[1:] - sigma_half[:-1]
+    p_top_tensor = torch.as_tensor(float(p_top), device=device, dtype=sigma_half.dtype)
+    a_half = p_top_tensor * (1.0 - sigma_half)
+    b_half = sigma_half
+    grid = grid_from_hybrid_coefficients(a_half, b_half, device=device, dtype=sigma_half.dtype)
+    grid['p_top'] = p_top_tensor
+    return grid
 
+
+def grid_from_hybrid_coefficients(a_half, b_half, device='cpu', dtype=None):
+    """Build a dycore-supplied hybrid grid.
+
+    Interface pressure is defined as ``p_interface = A + B * ps``.  ``A`` and
+    ``B`` may be 1-D arrays shared by all columns, or 2-D arrays with a leading
+    batch/column dimension.  The returned dict keeps ``sigma_half`` and
+    ``sigma_full`` as the dimensionless B coordinate so older parameterizations
+    can still use level masks while pressure and layer mass come from the
+    dycore-owned vertical coordinate.
+    """
+
+    a_half = torch.as_tensor(a_half, device=device, dtype=dtype)
+    b_half = torch.as_tensor(b_half, device=device, dtype=dtype)
+    if a_half.shape != b_half.shape:
+        raise ValueError("hybrid A and B coefficients must have the same shape")
+    if a_half.ndim not in (1, 2):
+        raise ValueError("hybrid coefficients must be 1-D or 2-D")
+    if a_half.shape[-1] < 2:
+        raise ValueError("hybrid coefficients need at least two interfaces")
+
+    a_full = 0.5 * (a_half[..., :-1] + a_half[..., 1:])
+    b_full = 0.5 * (b_half[..., :-1] + b_half[..., 1:])
+    dsigma = b_half[..., 1:] - b_half[..., :-1]
     return {
+        'hybrid_a_half': a_half,
+        'hybrid_b_half': b_half,
+        'hybrid_a_full': a_full,
+        'hybrid_b_full': b_full,
+        'sigma_half': b_half,
+        'sigma_full': b_full,
+        'dsigma': dsigma,
+        'nlevels': int(a_half.shape[-1] - 1),
+    }
+
+
+def grid_from_pressure_interfaces(p_interface, device='cpu', dtype=None):
+    """Build a grid from externally supplied pressure interfaces.
+
+    This is useful when the host model already knows the pressure at every
+    interface for each column.  ``p_interface`` may be shape ``(nlevels + 1,)``
+    or ``(batch, nlevels + 1)`` and must be ordered top to bottom.
+    """
+
+    p_half = torch.as_tensor(p_interface, device=device, dtype=dtype)
+    if p_half.ndim not in (1, 2):
+        raise ValueError("pressure interfaces must be 1-D or 2-D")
+    if p_half.shape[-1] < 2:
+        raise ValueError("pressure interfaces need at least two levels")
+
+    p_full = 0.5 * (p_half[..., :-1] + p_half[..., 1:])
+    dp = p_half[..., 1:] - p_half[..., :-1]
+    span = (p_half[..., -1:] - p_half[..., :1]).clamp(min=torch.finfo(p_half.dtype).tiny)
+    sigma_half = (p_half - p_half[..., :1]) / span
+    sigma_full = 0.5 * (sigma_half[..., :-1] + sigma_half[..., 1:])
+    return {
+        'p_interface': p_half,
+        'p_full': p_full,
+        'dp': dp,
         'sigma_half': sigma_half,
         'sigma_full': sigma_full,
-        'dsigma': dsigma,
-        'nlevels': nlevels,
+        'dsigma': sigma_half[..., 1:] - sigma_half[..., :-1],
+        'nlevels': int(p_half.shape[-1] - 1),
     }
+
+
+def _batch_size_from_ps(ps):
+    if ps is None:
+        return None
+    return int(ps.reshape(-1).shape[0])
+
+
+def _grid_tensor(value, *, ps=None, batch=None, device=None, dtype=None, name='grid tensor'):
+    tensor = torch.as_tensor(value, device=device, dtype=dtype)
+    if ps is not None:
+        ps = ps.reshape(-1)
+        batch = _batch_size_from_ps(ps)
+        device = ps.device
+        dtype = ps.dtype
+        tensor = tensor.to(device=device, dtype=dtype)
+    elif device is not None or dtype is not None:
+        tensor = tensor.to(device=device or tensor.device, dtype=dtype or tensor.dtype)
+
+    if tensor.ndim == 1:
+        return tensor if batch is None else tensor.unsqueeze(0).expand(batch, -1)
+    if tensor.ndim == 2:
+        if batch is None:
+            return tensor
+        if tensor.shape[0] == batch:
+            return tensor
+        if tensor.shape[0] == 1:
+            return tensor.expand(batch, -1)
+    raise ValueError(f"{name} with shape {tuple(tensor.shape)} cannot broadcast to batch={batch}")
 
 
 def pressure_at_full(grid, ps):
     """pressure at full levels. ps is (batch,), returns (batch, nlevels)."""
-    return grid['sigma_full'].unsqueeze(0) * ps.unsqueeze(1)
+    if 'p_full' in grid:
+        return _grid_tensor(grid['p_full'], ps=ps, name='p_full')
+    if 'hybrid_a_full' in grid and 'hybrid_b_full' in grid:
+        a = _grid_tensor(grid['hybrid_a_full'], ps=ps, name='hybrid_a_full')
+        b = _grid_tensor(grid['hybrid_b_full'], ps=ps, name='hybrid_b_full')
+        return a + b * ps.reshape(-1, 1)
+    half = pressure_at_half(grid, ps)
+    return 0.5 * (half[:, :-1] + half[:, 1:])
 
 
 def pressure_at_half(grid, ps):
     """pressure at half levels (interfaces). returns (batch, nlevels+1)."""
-    return grid['sigma_half'].unsqueeze(0) * ps.unsqueeze(1)
+    if 'p_interface' in grid:
+        return _grid_tensor(grid['p_interface'], ps=ps, name='p_interface')
+    if 'hybrid_a_half' in grid and 'hybrid_b_half' in grid:
+        a = _grid_tensor(grid['hybrid_a_half'], ps=ps, name='hybrid_a_half')
+        b = _grid_tensor(grid['hybrid_b_half'], ps=ps, name='hybrid_b_half')
+        return a + b * ps.reshape(-1, 1)
+    sigma_half = _grid_tensor(grid['sigma_half'], ps=ps, name='sigma_half')
+    return sigma_half * ps.reshape(-1, 1)
 
 
 def dp_from_ps(grid, ps):
     """pressure thickness of each layer. returns (batch, nlevels)."""
-    return grid['dsigma'].unsqueeze(0) * ps.unsqueeze(1)
+    if 'dp' in grid:
+        return _grid_tensor(grid['dp'], ps=ps, name='dp')
+    half = pressure_at_half(grid, ps)
+    return half[:, 1:] - half[:, :-1]
+
+
+def full_level_coordinate(grid, *, state=None, ps=None, batch=None, device=None, dtype=None):
+    """Return the dimensionless full-level coordinate as ``(batch, nlevels)``.
+
+    Older physics closures use sigma-like level masks.  This helper keeps those
+    masks working for standalone sigma grids, hybrid dycore grids, and explicit
+    pressure-interface grids.
+    """
+
+    if state is not None:
+        ref = state['t']
+        batch = int(ref.shape[0])
+        device = ref.device
+        dtype = ref.dtype
+        if ps is None and 'ps' in state:
+            ps = state['ps']
+    return _grid_tensor(grid['sigma_full'], ps=ps, batch=batch, device=device, dtype=dtype, name='sigma_full')
+
+
+def half_level_coordinate(grid, *, state=None, ps=None, batch=None, device=None, dtype=None):
+    """Return the dimensionless interface coordinate as ``(batch, nlevels + 1)``."""
+
+    if state is not None:
+        ref = state['t']
+        batch = int(ref.shape[0])
+        device = ref.device
+        dtype = ref.dtype
+        if ps is None and 'ps' in state:
+            ps = state['ps']
+    return _grid_tensor(grid['sigma_half'], ps=ps, batch=batch, device=device, dtype=dtype, name='sigma_half')
 
 
 def saturation_vapor_pressure(t):

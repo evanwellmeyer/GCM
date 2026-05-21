@@ -1,6 +1,6 @@
 import torch
 
-from scm.thermo import Lv, cp, cape, relative_humidity
+from scm.thermo import Lv, cp, cape, relative_humidity, full_level_coordinate
 
 
 def shallow_convection(state, grid, params):
@@ -25,17 +25,17 @@ def shallow_convection(state, grid, params):
     if not params.get('shallow_convection_enabled', False):
         return {'dt': zeros_t, 'dq': zeros_t, 'precip': zeros_s}
 
-    sigma = grid['sigma_full'].to(device=device, dtype=dtype)
+    sigma = full_level_coordinate(grid, state=state, device=device, dtype=dtype)
     top_sigma = float(params.get('shallow_top_sigma', 0.75))
     base_sigma = float(params.get('shallow_base_sigma', 0.90))
-    low_mask_1d = (sigma >= base_sigma)
-    up_mask_1d = (sigma >= top_sigma) & (sigma < base_sigma)
+    low_mask_2d = (sigma >= base_sigma)
+    up_mask_2d = (sigma >= top_sigma) & (sigma < base_sigma)
 
-    if not low_mask_1d.any() or not up_mask_1d.any():
+    if not low_mask_2d.any() or not up_mask_2d.any():
         return {'dt': zeros_t, 'dq': zeros_t, 'precip': zeros_s}
 
-    low_mask = low_mask_1d.unsqueeze(0).to(dtype)
-    up_mask = up_mask_1d.unsqueeze(0).to(dtype)
+    low_mask = low_mask_2d.to(dtype)
+    up_mask = up_mask_2d.to(dtype)
     mass = dp / 9.81
     low_mass = (low_mask * mass).sum(dim=1).clamp(min=1.0e-8)
     up_mass = (up_mask * mass).sum(dim=1).clamp(min=1.0e-8)
