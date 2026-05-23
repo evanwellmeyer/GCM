@@ -16,15 +16,13 @@ from scm.thermo import (
 from scm.radiation import radiation
 from scm.surface import surface_fluxes, slab_ocean_tendency, slab_heat_capacity
 from scm.land_surface import initialize_land_state, update_soil_bucket
+from scm.physics_suites import apply_physics_suite_defaults, run_physics_scheme
 from scm.surface_context import (
     apply_surface_param_aliases,
     apply_surface_state_inputs,
     surface_context_diagnostics,
 )
-from scm.boundary_layer import boundary_layer_mixing
-from scm.condensation import condensation
 from scm.cloud_microphysics import initialize_cloud_state, cloud_microphysics_step
-from scm.convection_shallow import shallow_convection
 from scm.convection_bm import betts_miller
 from scm.convection_mf import mass_flux_convection
 
@@ -68,6 +66,8 @@ def initial_state(batch, grid, params, device='cpu', ncol=None, nmember=None):
             f"batch={batch} must equal ncol*nmember={ncol*nmember}"
         )
 
+    params = apply_physics_suite_defaults(apply_surface_param_aliases(apply_composition_param_aliases(params)))
+
     nlevels = grid['nlevels']
     grid_dtype = grid['sigma_full'].dtype
     model_dtype = _dtype_from_params(params, grid_dtype)
@@ -106,7 +106,6 @@ def initial_state(batch, grid, params, device='cpu', ncol=None, nmember=None):
     }
     state.update(initialize_cloud_state(batch, grid, device=device))
     state.update(initialize_land_state(batch, params, device=device, dtype=model_dtype))
-    params = apply_surface_param_aliases(apply_composition_param_aliases(params))
     state = apply_surface_state_inputs(state, params)
     return state
 
@@ -156,7 +155,7 @@ def physics_step(state, grid, params, rad_cache=None, ls_forcing=None):
     - ``du`` / ``dv``: momentum tendencies in m/s^2 with shape (batch, nlevels)
     """
 
-    params = apply_surface_param_aliases(apply_composition_param_aliases(params))
+    params = apply_physics_suite_defaults(apply_surface_param_aliases(apply_composition_param_aliases(params)))
     dt = params.get('dt', 900.0)
     use_slab = params.get('use_slab_ocean', True)
     debug_nan = params.get('debug_nan', False)
@@ -248,7 +247,9 @@ def physics_step(state, grid, params, rad_cache=None, ls_forcing=None):
 
     # --- boundary layer mixing ---
     state = update_derived(state, grid)
-    bl_out = boundary_layer_mixing(state, grid, params)
+    bl_out = run_physics_scheme(
+        'boundary_layer', params.get('boundary_layer_scheme', 'richardson'), state, grid, params
+    )
     check_nan('bl dt', bl_out['dt'])
     bl_dt = torch.nan_to_num(bl_out['dt'], nan=0.0).to(state['t'].dtype)
     bl_dq = torch.nan_to_num(bl_out['dq'], nan=0.0).to(state['q'].dtype)
@@ -258,7 +259,9 @@ def physics_step(state, grid, params, rad_cache=None, ls_forcing=None):
 
     # --- shallow convection ---
     state = update_derived(state, grid)
-    shallow_out = shallow_convection(state, grid, params)
+    shallow_out = run_physics_scheme(
+        'shallow_convection', params.get('shallow_convection_scheme', 'simple'), state, grid, params
+    )
     check_nan('shallow dt', shallow_out['dt'])
     check_nan('shallow dq', shallow_out['dq'])
     shallow_dt = torch.nan_to_num(shallow_out['dt'], nan=0.0).to(state['t'].dtype)
@@ -280,7 +283,9 @@ def physics_step(state, grid, params, rad_cache=None, ls_forcing=None):
 
     # --- large-scale condensation (instantaneous adjustment) ---
     state = update_derived(state, grid)
-    cond_out = condensation(state, grid, params)
+    cond_out = run_physics_scheme(
+        'condensation', params.get('condensation_scheme', 'large_scale'), state, grid, params
+    )
     check_nan('cond dt', cond_out['dt'])
     cond_dt = torch.nan_to_num(cond_out['dt'], nan=0.0).to(state['t'].dtype)
     cond_dq = torch.nan_to_num(cond_out['dq'], nan=0.0).to(state['q'].dtype)
@@ -451,7 +456,8 @@ def dispatch_convection(state, grid, params):
     in params, compute both schemes and blend for the mixed structural
     ensemble. otherwise use whichever single scheme is specified."""
 
-    scheme = params.get('convection_scheme', 'betts_miller')
+    params = apply_physics_suite_defaults(params)
+    scheme = params.get('convection_scheme', 'mass_flux')
     scheme_mask = params.get('scheme_mask', None)
 
     if scheme_mask is not None:
@@ -485,18 +491,8 @@ def dispatch_convection(state, grid, params):
         }
         return out
 
-    elif scheme == 'betts_miller':
-        out = betts_miller(state, grid, params)
-    elif scheme == 'mass_flux':
-        out = mass_flux_convection(state, grid, params)
-    elif scheme == 'none':
-        return {
-            'dt': torch.zeros_like(state['t']),
-            'dq': torch.zeros_like(state['q']),
-            'precip': torch.zeros(state['t'].shape[0], device=state['t'].device),
-        }
     else:
-        raise ValueError(f"unknown convection scheme: {scheme}")
+        out = run_physics_scheme('convection', scheme, state, grid, params)
 
     # guard against NaN
     for k in ['dt', 'dq', 'precip']:
@@ -520,7 +516,7 @@ def run(state, grid, params, nsteps, rad_interval=8, diag_interval=100,
 
     diag_history = []
     rad_cache = None
-    params = apply_surface_param_aliases(apply_composition_param_aliases(params))
+    params = apply_physics_suite_defaults(apply_surface_param_aliases(apply_composition_param_aliases(params)))
     effective_rad_interval = max(1, int(rad_interval))
 
     # When cloud condensate is prognostic, let radiation see the updated
