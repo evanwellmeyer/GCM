@@ -12,7 +12,7 @@
 import torch
 from scm.thermo import (
     cp, Lv, g, Rd, Rv, eps,
-    saturation_specific_humidity, virtual_temperature
+    saturation_specific_humidity, virtual_temperature, full_level_coordinate
 )
 
 
@@ -140,12 +140,12 @@ def mass_flux_convection(state, grid, params):
     tau_mode = str(params.get('mf_cape_timescale_mode', 'fixed'))
     tau_cape_eff = tau_cape
     if tau_mode == 'flow_dependent':
-        sigma = grid['sigma_full'].to(device=t.device, dtype=t.dtype)
+        sigma = full_level_coordinate(grid, state=state, device=t.device, dtype=t.dtype)
         ft_top_sigma = _column_param(params, 'mf_tau_cape_ft_top_sigma', 0.30, t, batch)
         ft_bottom_sigma = _column_param(params, 'mf_tau_cape_ft_bottom_sigma', 0.80, t, batch)
         ft_mask = (
-            (sigma.unsqueeze(0) >= ft_top_sigma.unsqueeze(1))
-            & (sigma.unsqueeze(0) <= ft_bottom_sigma.unsqueeze(1))
+            (sigma >= ft_top_sigma.unsqueeze(1))
+            & (sigma <= ft_bottom_sigma.unsqueeze(1))
         ).to(t.dtype)
         ft_mass = torch.sum(ft_mask * dp / g, dim=1).clamp(min=1.0e-8)
 

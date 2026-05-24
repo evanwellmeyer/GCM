@@ -2,7 +2,7 @@
 # backward euler with tridiagonal solve, unconditionally stable.
 
 import torch
-from scm.thermo import g, cp, Rd, p0, kappa, virtual_temperature
+from scm.thermo import g, cp, Rd, p0, kappa, virtual_temperature, full_level_coordinate
 
 
 def boundary_layer_mixing(state, grid, params):
@@ -128,8 +128,8 @@ def richardson_diffusivity(state, grid, params, k_diff, mix_top):
 
     tv = virtual_temperature(t, q)
     theta_v = tv * (p0 / p.clamp(min=1.0)) ** kappa
-    sigma_full = grid['sigma_full'].to(device=device, dtype=dtype)
-    sigma_top = sigma_full[mix_top]
+    sigma_full = full_level_coordinate(grid, state=state, device=device, dtype=dtype)
+    sigma_top = sigma_full[:, mix_top:mix_top + 1]
 
     d = torch.zeros(batch, nlevels, device=device, dtype=dtype)
     wind2 = wind * wind + shear_floor * shear_floor
@@ -150,12 +150,14 @@ def richardson_diffusivity(state, grid, params, k_diff, mix_top):
         unstable_factor = 1.0 + unstable_boost.unsqueeze(1) * torch.clamp(-ri, min=0.0)
         stability_factor = torch.where(ri >= 0.0, stable_factor, unstable_factor)
 
-        sigma_interface = 0.5 * (sigma_full[mix_top:nlevels - 1] + sigma_full[mix_top + 1:nlevels])
+        sigma_interface = 0.5 * (
+            sigma_full[:, mix_top:nlevels - 1] + sigma_full[:, mix_top + 1:nlevels]
+        )
         depth_denominator = (1.0 - sigma_top).clamp(min=1.0e-3)
         depth_factor = ((sigma_interface - sigma_top) / depth_denominator).clamp(min=0.2, max=1.0)
 
-        kd = kd_base.unsqueeze(1) * depth_factor.unsqueeze(0) * stability_factor
-        kd = torch.maximum(kd, kd_min.unsqueeze(1) * depth_factor.unsqueeze(0))
+        kd = kd_base.unsqueeze(1) * depth_factor * stability_factor
+        kd = torch.maximum(kd, kd_min.unsqueeze(1) * depth_factor)
         kd = torch.minimum(kd, kd_base.unsqueeze(1) * kd_cap_factor.unsqueeze(1))
 
         rho_ref = p_upper / (Rd * t[:, mix_top:nlevels - 1].clamp(min=150.0))

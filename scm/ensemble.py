@@ -165,5 +165,6 @@ def default_params(device='cpu'):
     params['co2'] = 400.0
     params['co2_ref'] = 400.0
     params['use_slab_ocean'] = True
-    params['convection_scheme'] = 'betts_miller'
+    params['physics_suite'] = 'mass_flux_default'
+    params['convection_scheme'] = 'mass_flux'
     return params
