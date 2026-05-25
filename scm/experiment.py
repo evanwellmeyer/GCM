@@ -3,6 +3,17 @@ from pathlib import Path
 import torch
 
 
+COLUMN_OUTPUT_ROOT = Path(__file__).resolve().parents[1] / "outputs" / "column"
+
+
+def column_output_path(filename, category):
+    """Return a path under the repo-local column output directory."""
+
+    path = COLUMN_OUTPUT_ROOT / category / filename
+    path.parent.mkdir(parents=True, exist_ok=True)
+    return path
+
+
 def build_output_stem(mode, scheme, sampling, fixed_sst, spinup_days,
                       perturb_days, label=''):
     sst_mode = 'fixedsst' if fixed_sst else 'slabocean'
@@ -113,13 +124,14 @@ def build_restart_path(output_stem, phase):
 
     if phase not in ('1x', '2x'):
         raise ValueError(f"restart phase must be '1x' or '2x', got {phase}")
-    return Path(f"{output_stem}_{phase}_restart.pt")
+    return column_output_path(f"{output_stem}_{phase}_restart.pt", "restarts")
 
 
 def save_restart_bundle(path, bundle):
     """Save a restart bundle with tensors moved to CPU."""
 
     save_path = Path(path)
+    save_path.parent.mkdir(parents=True, exist_ok=True)
     torch.save(cpu_tensors(bundle), save_path)
     return save_path
 

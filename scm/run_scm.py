@@ -21,6 +21,7 @@ from scm.configuration import (
 )
 from scm.experiment import (
     apply_param_overrides, build_output_stem, build_restart_path,
+    column_output_path,
     expand_member_params_to_columns, load_restart_bundle, member_counts,
     save_restart_bundle,
 )
@@ -573,7 +574,7 @@ def main():
         'history_2x': [{k: v.cpu() if isinstance(v, torch.Tensor) else v
                         for k, v in d.items()} for d in history_2x],
     }
-    output_path = f'{output_stem}_results.pt'
+    output_path = column_output_path(f'{output_stem}_results.pt', 'results')
     torch.save(output, output_path)
     print(f"\nresults saved to {output_path}")
 
@@ -583,7 +584,7 @@ def main():
             from scm.plotting import full_diagnostic_figure
 
             combined_history = history_1x + history_2x
-            figure_path = f'{output_stem}_diagnostics.png'
+            figure_path = column_output_path(f'{output_stem}_diagnostics.png', 'figures')
 
             fig = full_diagnostic_figure(
                 combined_history, results, grid, state,

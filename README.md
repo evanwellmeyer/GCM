@@ -505,7 +505,14 @@ By default, the calibration runner batches candidates into chunks instead of run
 
 This is the preferred way to make calibration runs use CPU threads or MPS more effectively.
 
-The calibration output prints the top candidates and saves a results file with the ranked sweep summary plus a TOML snippet for the best candidate.
+The calibration output prints the top candidates and saves a results file with the ranked sweep summary plus a TOML snippet for the best candidate. Generated column-model outputs are kept under `outputs/column/`:
+
+- `outputs/column/results/` for SCM run result bundles
+- `outputs/column/restarts/` for restart bundles
+- `outputs/column/benchmarks/` for benchmark results and reports
+- `outputs/column/calibration/` for radiation-calibration sweeps
+- `outputs/column/ensembles/` for older standalone ensemble bundles
+- `outputs/column/figures/` for diagnostic plots
 
 ### Benchmark suite
 
@@ -517,8 +524,8 @@ python -m scm.benchmark --suite scm/configs/benchmark_suite.toml --device cpu
 
 This runs a small set of named experiment cases from a frozen baseline config and writes:
 
-- `scm_benchmark_<label>_results.pt`
-- `scm_benchmark_<label>_report.md`
+- `outputs/column/benchmarks/scm_benchmark_<label>_results.pt`
+- `outputs/column/benchmarks/scm_benchmark_<label>_report.md`
 
 The committed reference record for the current stable baseline lives in:
 
@@ -585,7 +592,7 @@ This lets you continue long runs without rerunning the whole control branch. For
 
 ```bash
 python -m scm.run_scm --scheme mf --fixed-params --spinup-days 2000 --perturb-days 2000 --device cpu --no-plot
-python -m scm.run_scm --restart-from scm_full_mf_fixed_slabocean_spin2000d_pert2000d_2x_restart.pt --perturb-days 4000 --device cpu --no-plot
+python -m scm.run_scm --restart-from outputs/column/restarts/scm_full_mf_fixed_slabocean_spin2000d_pert2000d_2x_restart.pt --perturb-days 4000 --device cpu --no-plot
 ```
 
 The first command produces the restart bundle. The second extends the existing `2xCO2`
@@ -632,9 +639,9 @@ that can otherwise freeze long integrations while nonzero surface fluxes remain.
 
 The main driver saves:
 
-- a results file named like `scm_demo_mf_fixed_slabocean_spin500d_pert500d_results.pt`
-- restart bundles named like `scm_demo_mf_fixed_slabocean_spin500d_pert500d_1x_restart.pt`
-  and `scm_demo_mf_fixed_slabocean_spin500d_pert500d_2x_restart.pt`
+- a results file named like `outputs/column/results/scm_demo_mf_fixed_slabocean_spin500d_pert500d_results.pt`
+- restart bundles named like `outputs/column/restarts/scm_demo_mf_fixed_slabocean_spin500d_pert500d_1x_restart.pt`
+  and `outputs/column/restarts/scm_demo_mf_fixed_slabocean_spin500d_pert500d_2x_restart.pt`
 - a diagnostics figure with a matching stem if plotting is available
 
 These contain equilibrium statistics, sensitivity estimates, parameter fields, and history snapshots. The filenames now encode mode, scheme, sampling mode, SST mode, and run lengths so runs do not overwrite each other as easily.

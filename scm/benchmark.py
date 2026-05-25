@@ -13,7 +13,8 @@ from scm.diagnostics import (
 )
 from scm.ensemble import make_fixed_ensemble_params
 from scm.experiment import (
-    apply_param_overrides, cpu_tensors, load_restart_bundle, move_tensors
+    apply_param_overrides, column_output_path, cpu_tensors,
+    load_restart_bundle, move_tensors,
 )
 from scm.thermo import make_grid
 
@@ -502,8 +503,8 @@ def main():
         _print_case_status(case_name, case_result.get('evaluation', {'passed': True, 'sections': {}}))
         case_results.append(case_result)
 
-    results_path = Path(f"scm_benchmark_{label}_results.pt")
-    report_path = Path(f"scm_benchmark_{label}_report.md")
+    results_path = column_output_path(f"scm_benchmark_{label}_results.pt", "benchmarks")
+    report_path = column_output_path(f"scm_benchmark_{label}_report.md", "benchmarks")
     torch.save({'label': label, 'base_config': str(base_config_path), 'cases': case_results}, results_path)
     report_path.write_text(render_markdown_report(label, base_config_path, case_results))
 
