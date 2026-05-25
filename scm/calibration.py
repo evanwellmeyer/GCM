@@ -10,6 +10,7 @@ from scm.ensemble import make_fixed_ensemble_params
 from scm.experiment import (
     apply_param_overrides,
     build_calibration_output_stem,
+    column_output_path,
     member_counts,
 )
 from scm.thermo import make_grid
@@ -344,7 +345,7 @@ def run_radiation_calibration(config, device):
     output_stem = build_calibration_output_stem(
         scheme, fixed_sst, spinup_days, len(candidates), label=label
     )
-    output_path = f"{output_stem}_results.pt"
+    output_path = column_output_path(f"{output_stem}_results.pt", "calibration")
     torch.save(
         {
             'config': config,

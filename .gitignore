@@ -2,6 +2,7 @@ __pycache__/
 *.pyc
 .DS_Store
 *.pt
+outputs/
 
 # generated SCM diagnostics
 scm*_results.pt
