@@ -6,10 +6,6 @@ from scm.thermo import Lv, rho_water
 from scm.surface_context import batch_param, surface_fractions
 
 
-def _batch_param(name, value, like):
-    return batch_param(name, value, like)
-
-
 def land_fraction(params, like):
     """Return grid-cell land fraction as a batch vector."""
 
@@ -19,7 +15,7 @@ def land_fraction(params, like):
 def soil_water_capacity(params, like):
     """Maximum one-layer bucket water storage in meters of liquid water."""
 
-    return _batch_param("soil_water_capacity", params.get("soil_water_capacity", 0.15), like).clamp_min(1.0e-8)
+    return batch_param("soil_water_capacity", params.get("soil_water_capacity", 0.15), like).clamp_min(1.0e-8)
 
 
 def initialize_land_state(batch, params, device="cpu", dtype=None):
@@ -31,7 +27,7 @@ def initialize_land_state(batch, params, device="cpu", dtype=None):
 
     ref = torch.empty(int(batch), device=device, dtype=dtype or torch.get_default_dtype())
     capacity = soil_water_capacity(params, ref)
-    initial_fraction = _batch_param(
+    initial_fraction = batch_param(
         "soil_moisture_initial_fraction",
         params.get("soil_moisture_initial_fraction", 0.75),
         ref,
@@ -44,7 +40,7 @@ def soil_evaporation_beta(state, params, like):
 
     capacity = soil_water_capacity(params, like)
     default_soil = (
-        _batch_param("soil_moisture_initial_fraction", params.get("soil_moisture_initial_fraction", 0.75), like)
+        batch_param("soil_moisture_initial_fraction", params.get("soil_moisture_initial_fraction", 0.75), like)
         .clamp(0.0, 1.0)
         * capacity
     )
@@ -53,8 +49,8 @@ def soil_evaporation_beta(state, params, like):
         device=like.device,
         dtype=like.dtype,
     ).reshape(-1)
-    wilting = _batch_param("soil_wilting_fraction", params.get("soil_wilting_fraction", 0.10), like)
-    critical = _batch_param("soil_evap_critical_fraction", params.get("soil_evap_critical_fraction", 0.50), like)
+    wilting = batch_param("soil_wilting_fraction", params.get("soil_wilting_fraction", 0.10), like)
+    critical = batch_param("soil_evap_critical_fraction", params.get("soil_evap_critical_fraction", 0.50), like)
     rel = (soil / capacity).clamp(0.0, 1.0)
     denom = (critical - wilting).clamp_min(1.0e-6)
     return ((rel - wilting) / denom).clamp(0.0, 1.0)
@@ -63,10 +59,10 @@ def soil_evaporation_beta(state, params, like):
 def land_latent_heat_cap(state, params, like):
     """Maximum land latent heat flux allowed by current bucket water."""
 
-    dt = _batch_param("dt", params.get("dt", 900.0), like).clamp_min(1.0e-6)
+    dt = batch_param("dt", params.get("dt", 900.0), like).clamp_min(1.0e-6)
     capacity = soil_water_capacity(params, like)
     default_soil = (
-        _batch_param("soil_moisture_initial_fraction", params.get("soil_moisture_initial_fraction", 0.75), like)
+        batch_param("soil_moisture_initial_fraction", params.get("soil_moisture_initial_fraction", 0.75), like)
         .clamp(0.0, 1.0)
         * capacity
     )
@@ -94,13 +90,13 @@ def update_soil_bucket(state, params, precip_rate, land_lhf, dt):
     frac = land_fraction(params, ref)
     capacity = soil_water_capacity(params, ref)
     field_capacity = (
-        _batch_param("soil_field_capacity_fraction", params.get("soil_field_capacity_fraction", 0.85), ref)
+        batch_param("soil_field_capacity_fraction", params.get("soil_field_capacity_fraction", 0.85), ref)
         .clamp(0.0, 1.0)
         * capacity
     )
 
     if "soil_moisture" in params:
-        state["soil_moisture"] = _batch_param("soil_moisture", params["soil_moisture"], ref)
+        state["soil_moisture"] = batch_param("soil_moisture", params["soil_moisture"], ref)
     elif "soil_moisture" not in state:
         state.update(initialize_land_state(ref.shape[0], params, device=ref.device, dtype=ref.dtype))
 
@@ -113,7 +109,7 @@ def update_soil_bucket(state, params, precip_rate, land_lhf, dt):
     runoff_depth = (raw_soil - capacity).clamp_min(0.0)
     after_runoff = torch.minimum(raw_soil, capacity)
 
-    drainage_timescale = _batch_param(
+    drainage_timescale = batch_param(
         "soil_drainage_timescale",
         params.get("soil_drainage_timescale", 0.0),
         ref,

@@ -3,23 +3,9 @@
 import torch
 from scm.thermo import cp, Lv, g, rho_water, c_water, saturation_specific_humidity
 from scm.land_surface import land_fraction, land_latent_heat_cap, soil_evaporation_beta
-from scm.surface_context import exchange_coefficients, surface_fractions, surface_temperature
+from scm.surface_context import batch_param, exchange_coefficients, surface_fractions, surface_temperature
 
 rho_air = 1.2
-
-
-def _batch_param(name, value, like):
-    tensor = torch.as_tensor(value, device=like.device, dtype=like.dtype)
-    batch = like.shape[0]
-    if tensor.dim() == 0:
-        return tensor.expand(batch)
-    tensor = tensor.reshape(-1)
-    if tensor.numel() == 1:
-        return tensor.expand(batch)
-    if tensor.numel() == batch:
-        return tensor
-    raise ValueError(f"{name} must be scalar or length batch={batch}, got {tuple(tensor.shape)}")
-
 
 def slab_heat_capacity(params):
     depth = params.get('ocean_depth', 50.0)
@@ -45,7 +31,7 @@ def surface_fluxes(state, grid, params):
     # configs keep the legacy prescribed wind_speed path.
     # Use ts as the dtype reference so the legacy scalar path keeps its
     # historical promotion behavior when standalone slab temperatures are fp64.
-    wind = _batch_param('wind_speed', wind_value, ts).clamp(min=0.0)
+    wind = batch_param('wind_speed', wind_value, ts).clamp(min=0.0)
 
     qs_sfc = saturation_specific_humidity(ts, p_lowest)
 
