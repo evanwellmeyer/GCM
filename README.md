@@ -306,6 +306,10 @@ For a fresh installation and a first guided experiment, see the
 [`Student Quickstart`](docs/student_quickstart.md). The commands below are the
 more complete reference for scientific and development runs.
 
+For a notebook-based course workflow, begin with
+[`01_setup.ipynb`](notebooks/01_setup.ipynb), then continue to the self-contained
+[`02_experiments.ipynb`](notebooks/02_experiments.ipynb).
+
 ### Config-driven runs
 
 The driver now supports TOML configuration files:
