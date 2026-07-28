@@ -1,6 +1,11 @@
 import argparse
+import hashlib
+import platform
+import subprocess
+import sys
 import time
 import tomllib
+from datetime import datetime, timezone
 from pathlib import Path
 
 import torch
@@ -25,6 +30,75 @@ def pick_device():
     if hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
         return torch.device('mps')
     return torch.device('cpu')
+
+
+def file_sha256(path):
+    """Return the SHA-256 digest for a paper-run input file."""
+
+    digest = hashlib.sha256()
+    with Path(path).open('rb') as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b''):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def git_value(*args):
+    """Read a Git value without making the benchmark depend on Git."""
+
+    try:
+        result = subprocess.run(
+            ['git', *args], capture_output=True, check=True, text=True,
+        )
+    except (OSError, subprocess.CalledProcessError):
+        return 'unavailable'
+    return result.stdout.strip()
+
+
+def run_provenance(suite_path, base_config_path, device):
+    """Capture enough context to identify and reproduce a benchmark run."""
+
+    status = git_value('status', '--porcelain')
+    diff = git_value('diff', '--binary', 'HEAD')
+    diff_sha256 = (
+        hashlib.sha256(diff.encode()).hexdigest()
+        if diff != 'unavailable' else 'unavailable'
+    )
+    return {
+        'started_utc': datetime.now(timezone.utc).isoformat(),
+        'git_commit': git_value('rev-parse', 'HEAD'),
+        'git_dirty': status not in ('', 'unavailable'),
+        'git_status': status,
+        'git_diff_sha256': diff_sha256,
+        'python_version': platform.python_version(),
+        'python_executable': sys.executable,
+        'torch_version': torch.__version__,
+        'platform': platform.platform(),
+        'device': str(device),
+        'suite_path': str(Path(suite_path).resolve()),
+        'suite_sha256': file_sha256(suite_path),
+        'base_config_path': str(Path(base_config_path).resolve()),
+        'base_config_sha256': file_sha256(base_config_path),
+    }
+
+
+def progress_callback(case_name, phase_name, total_steps, steps_per_day, progress_days):
+    """Build a compact callback for long paper runs."""
+
+    progress_steps = max(1, progress_days * steps_per_day)
+
+    def report(step, state, diag):
+        if step != 0 and step % progress_steps != 0 and step + 1 < total_steps:
+            return
+        day = step / steps_per_day
+        ts = float(state['ts'].mean().item())
+        toa = float(diag['toa_net'].mean().item())
+        print(
+            f"  {case_name} {phase_name}: day {day:.0f}/{total_steps / steps_per_day:.0f}  "
+            f"Ts={ts:.2f} K  TOA={toa:+.2f} W/m2",
+            flush=True,
+        )
+
+    return report
 
 
 def _resolve_path(path_str, suite_path):
@@ -142,7 +216,10 @@ def _print_case_status(case_name, evaluation):
             print(f"    {section_name}.{check['metric']}: {actual_str} {check['condition']}")
 
 
-def run_benchmark_case(case_name, case_cfg, base_config, device, suite_path=None, spinup_cache=None):
+def run_benchmark_case(
+    case_name, case_cfg, base_config, device, suite_path=None,
+    spinup_cache=None, progress_days=100,
+):
     config = deep_merge(base_config, {})
     config_override = case_cfg.get('config_override', {})
     if config_override:
@@ -251,7 +328,9 @@ def run_benchmark_case(case_name, case_cfg, base_config, device, suite_path=None
         state, history_1x = run(
             state, grid, params, spinup_steps,
             rad_interval=rad_every, diag_interval=diag_every,
-            callback=None,
+            callback=progress_callback(
+                case_name, '1x', spinup_steps, steps_per_day, progress_days,
+            ),
         )
         elapsed_1x = time.time() - t0
 
@@ -314,7 +393,9 @@ def run_benchmark_case(case_name, case_cfg, base_config, device, suite_path=None
     state, new_history_2x = run(
         state, grid, params, perturb_steps,
         rad_interval=rad_every, diag_interval=diag_every,
-        callback=None,
+        callback=progress_callback(
+            case_name, '2x', perturb_steps, steps_per_day, progress_days,
+        ),
     )
     elapsed_2x = time.time() - t0
     history_2x = history_2x + new_history_2x
@@ -338,13 +419,32 @@ def run_benchmark_case(case_name, case_cfg, base_config, device, suite_path=None
     return case_result
 
 
-def render_markdown_report(label, base_config_path, case_results):
+def render_markdown_report(label, base_config_path, case_results, provenance=None):
     lines = [
         f"# SCM Benchmark Report: {label}",
         "",
         f"- Baseline config: `{base_config_path}`",
         "",
     ]
+    if provenance is not None:
+        lines.extend([
+            "## Run provenance",
+            "",
+            f"- Started UTC: `{provenance['started_utc']}`",
+            f"- Finished UTC: `{provenance['finished_utc']}`",
+            f"- Total runtime: `{provenance['elapsed_s']:.1f} s`",
+            f"- Git commit: `{provenance['git_commit']}`",
+            f"- Dirty worktree: `{provenance['git_dirty']}`",
+            f"- Git diff SHA-256: `{provenance['git_diff_sha256']}`",
+            f"- Python: `{provenance['python_version']}`",
+            f"- PyTorch: `{provenance['torch_version']}`",
+            f"- Device: `{provenance['device']}`",
+            f"- Platform: `{provenance['platform']}`",
+            f"- Suite SHA-256: `{provenance['suite_sha256']}`",
+            f"- Baseline config SHA-256: `{provenance['base_config_sha256']}`",
+            f"- Overall status: `{'PASS' if provenance['passed'] else 'FAIL'}`",
+            "",
+        ])
     for case in case_results:
         lines.extend([
             f"## {case['name']}",
@@ -471,6 +571,10 @@ def main():
         help='path to benchmark suite TOML',
     )
     parser.add_argument('--device', type=str, default=None, help='force device (cpu/cuda/mps)')
+    parser.add_argument(
+        '--progress-days', type=int, default=100,
+        help='model-day interval for progress messages',
+    )
     args = parser.parse_args()
 
     suite_path = Path(args.suite)
@@ -491,6 +595,12 @@ def main():
     print(f"using device: {device}")
     print(f"benchmark suite: {label}")
     print(f"baseline config: {base_config_path}")
+    provenance = run_provenance(suite_path, base_config_path, device)
+    benchmark_start = time.time()
+    print(f"git commit: {provenance['git_commit']}")
+    print(f"dirty worktree: {provenance['git_dirty']}")
+    print(f"suite sha256: {provenance['suite_sha256']}")
+    print(f"baseline config sha256: {provenance['base_config_sha256']}", flush=True)
 
     case_results = []
     spinup_cache = {}
@@ -499,14 +609,27 @@ def main():
         case_result = run_benchmark_case(
             case_name, case_cfg, base_config, device,
             suite_path=suite_path, spinup_cache=spinup_cache,
+            progress_days=max(1, args.progress_days),
         )
         _print_case_status(case_name, case_result.get('evaluation', {'passed': True, 'sections': {}}))
         case_results.append(case_result)
 
     results_path = column_output_path(f"scm_benchmark_{label}_results.pt", "benchmarks")
     report_path = column_output_path(f"scm_benchmark_{label}_report.md", "benchmarks")
-    torch.save({'label': label, 'base_config': str(base_config_path), 'cases': case_results}, results_path)
-    report_path.write_text(render_markdown_report(label, base_config_path, case_results))
+    provenance['finished_utc'] = datetime.now(timezone.utc).isoformat()
+    provenance['elapsed_s'] = time.time() - benchmark_start
+    provenance['passed'] = all(
+        case.get('evaluation', {}).get('passed', True) for case in case_results
+    )
+    torch.save({
+        'label': label,
+        'base_config': str(base_config_path),
+        'provenance': provenance,
+        'cases': case_results,
+    }, results_path)
+    report_path.write_text(
+        render_markdown_report(label, base_config_path, case_results, provenance)
+    )
 
     print(f"\nsaved benchmark results to {results_path}")
     print(f"saved benchmark report to {report_path}")

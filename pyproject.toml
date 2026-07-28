@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gcm-scm"
+version = "0.1.0"
+description = "A compact, modular atmospheric single-column model"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "numpy>=1.26",
+    "torch>=2.2",
+]
+
+[project.optional-dependencies]
+plot = ["matplotlib>=3.8"]
+test = ["pytest>=8"]
+dev = ["gcm-scm[plot,test]"]
+
+[project.scripts]
+scm-run = "scm.run_scm:main"
+scm-benchmark = "scm.benchmark:main"
+
+[tool.setuptools.packages.find]
+include = ["scm*"]
+exclude = ["scm.test*"]
+
+[tool.setuptools.package-data]
+scm = ["configs/*.toml"]
+
+[tool.pytest.ini_options]
+addopts = "--strict-config --strict-markers"
+testpaths = ["scm"]
+python_files = ["test_*.py"]
+norecursedirs = ["VFS", "paper", "papers"]

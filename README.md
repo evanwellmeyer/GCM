@@ -302,6 +302,10 @@ This is useful for exploring how parameter uncertainty and structural uncertaint
 
 ## How To Run
 
+For a fresh installation and a first guided experiment, see the
+[`Student Quickstart`](docs/student_quickstart.md). The commands below are the
+more complete reference for scientific and development runs.
+
 ### Config-driven runs
 
 The driver now supports TOML configuration files:

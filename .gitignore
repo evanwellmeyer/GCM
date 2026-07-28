@@ -3,6 +3,11 @@ __pycache__/
 .DS_Store
 *.pt
 outputs/
+.venv/
+.pytest_cache/
+*.egg-info/
+build/
+dist/
 
 # generated SCM diagnostics
 scm*_results.pt
@@ -10,3 +15,4 @@ scm*_restart.pt
 scm*_diagnostics.png
 scm_benchmark_*_results.pt
 scm_benchmark_*_report.md
+paper/

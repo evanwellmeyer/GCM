@@ -665,7 +665,7 @@ def test_calibration_utils():
 def test_benchmark_thresholds():
     """verify benchmark threshold evaluation catches passes and failures."""
     print("=== benchmark thresholds ===")
-    from scm.benchmark import evaluate_case_thresholds
+    from scm.benchmark import evaluate_case_thresholds, file_sha256, render_markdown_report
 
     case_result = {
         'one_x': {'late_toa_abs': 0.8, 'equilibrium': False, 'tau_cape_eff': 3600.0},
@@ -683,6 +683,53 @@ def test_benchmark_thresholds():
     thresholds['sensitivity']['ecs_max'] = 3.0
     evaluation_fail = evaluate_case_thresholds(case_result, thresholds)
     assert not evaluation_fail['passed'], "violated thresholds should fail"
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        input_path = Path(tmpdir) / 'input.toml'
+        input_path.write_text('[run]\nspinup_days = 10\n')
+        first_hash = file_sha256(input_path)
+        second_hash = file_sha256(input_path)
+    assert first_hash == second_hash
+    assert len(first_hash) == 64
+
+    report_case = {
+        'name': 'smoke',
+        'description': 'short test',
+        'scheme': 'mf',
+        'fixed_sst': False,
+        'spinup_days': 10,
+        'perturb_days': 0,
+        'source': 'fresh',
+        'one_x': {
+            'ts': 290.0,
+            'toa_net': 0.5,
+            'surface_total': 0.2,
+            'column_residual': 0.1,
+            'precip_mm_day': 2.5,
+            'equilibrium': True,
+        },
+        'evaluation': {'passed': True, 'sections': {}},
+    }
+    provenance = {
+        'started_utc': '2026-01-01T00:00:00+00:00',
+        'finished_utc': '2026-01-01T00:01:00+00:00',
+        'elapsed_s': 60.0,
+        'git_commit': 'abc123',
+        'git_dirty': False,
+        'git_diff_sha256': first_hash,
+        'python_version': '3.11.0',
+        'torch_version': '2.2.0',
+        'device': 'cpu',
+        'platform': 'test',
+        'suite_sha256': first_hash,
+        'base_config_sha256': second_hash,
+        'passed': True,
+    }
+    report = render_markdown_report(
+        'test', 'baseline.toml', [report_case], provenance,
+    )
+    assert '## Run provenance' in report
+    assert 'Overall status: `PASS`' in report
     print("benchmark thresholds: PASS\n")
 
 
