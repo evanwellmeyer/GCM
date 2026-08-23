@@ -1,13 +1,13 @@
 [run]
 mode = "full"
-scheme = "mixed"
-sampling = "random"
+scheme = "mf"
+sampling = "fixed"
 spinup_days = 2000
-perturb_days = 2000
+perturb_days = 8000
 fixed_sst = false
-plot = true
+plot = false
 device = "auto"
-label = ""
+label = "mf_baseline_v1"
 preserve_ensemble_shape = false
 save_restarts = true
 restart_from = ""
@@ -70,8 +70,6 @@ n2o_base_tau = 0.01
 n2o_log_factor = 0.01
 o3_lw_tau = 0.02
 o3_sw_tau = 0.03
-o3_peak_sigma = 0.18
-o3_width_sigma = 0.08
 other_ghg_tau = 0.00
 
 [radiation.clouds]
@@ -129,7 +127,7 @@ enforce_mse_conservation = true
 
 [mass_flux]
 entrainment_rate = 5.0e-6
-tau_cape = 5400.0
+tau_cape = 3600.0
 precip_efficiency = 0.80
 cape_threshold = 50.0
 detrain_rh = 0.70
@@ -140,13 +138,13 @@ max_dq_day = 5.0
 condensate_retention = 0.25
 condensate_fallout = 0.45
 enforce_mse_conservation = true
-cape_timescale_mode = "flow_dependent"
-tau_cape_min = 3000.0
-tau_cape_max = 9000.0
-tau_cape_rh_ref = 0.60
-tau_cape_rh_sensitivity = 0.50
-tau_cape_cape_ref = 750.0
-tau_cape_cape_sensitivity = 0.35
+cape_timescale_mode = "fixed"
+tau_cape_min = 1800.0
+tau_cape_max = 7200.0
+tau_cape_rh_ref = 0.55
+tau_cape_rh_sensitivity = 1.0
+tau_cape_cape_ref = 500.0
+tau_cape_cape_sensitivity = 1.0
 tau_cape_ft_top_sigma = 0.30
 tau_cape_ft_bottom_sigma = 0.80
 

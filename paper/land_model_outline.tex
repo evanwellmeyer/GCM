@@ -1,0 +1,58 @@
+% Outline for the land-model section of the VFS paper.
+
+\section{Land surface model}\label{sec:land}
+
+\subsection{Design goals and state ownership}
+\begin{itemize}
+  \item Motivate a tensor-native, dense land model suitable for shared-cell coupling and accelerator execution.
+  \item Define the land state: layered liquid soil water, layered soil temperature, optional soil ice, canopy water, snow-water equivalent, skin temperature, and static land-use type.
+  \item State units: water stores are kg m$^{-2}$, temperatures are K, and soil fields use shape $(n_{\mathrm{cell}}, n_{\mathrm{soil}})$.
+  \item Explain that the surface system blends land boundary properties and routes transfers, while the land component owns its prognostic stores.
+\end{itemize}
+\subsection{Hydrology and vegetation controls}
+\begin{itemize}
+  \item Describe layered bucket hydrology: precipitation and snowmelt enter the upper layer, saturation excess cascades downward, and gravity drainage removes lower-boundary water.
+  \item Describe root-weighted evaporation extraction above the wilting point and moisture availability between wilting and field capacity.
+  \item Describe static land-use lookup fields: albedo, roughness, evaporation factor, root depth, emissions factor, and canopy capacity factor.
+  \item Describe canopy interception, throughfall, canopy evaporation, runoff, and drainage in terms of explicit water transfers.
+\end{itemize}
+
+\subsection{Snow and energy balance}
+\begin{itemize}
+  \item Describe snow-water storage, fractional snow cover, snow-modified albedo and roughness, and snow insulation of the soil upper boundary.
+  \item Give the local skin-energy balance with net radiation, turbulent fluxes, conductive soil flux, and energy-limited snowmelt.
+  \item Describe explicit soil thermal diffusion and its stability substepping.
+  \item Define sign conventions for downward radiative fluxes and fluxes leaving the skin reservoir.
+\end{itemize}
+
+\subsection{Coupling and conservation accounting}
+\begin{itemize}
+  \item Explain the \texttt{ConservativeTransfer} ledger: atmosphere-to-land rain/snow, land-to-atmosphere evaporation, and land-to-runoff export.
+  \item Explain fractional land masks and the requirement that inactive cells retain their land state.
+  \item Define total stored land water as soil liquid plus soil ice plus snow plus canopy water, area weighted over land fraction.
+\end{itemize}
+
+\subsection{Verification and results to report}
+\begin{table}[t]
+\centering
+\caption{Planned land-model verification cases.}
+\label{tab:land-verification}
+\begin{tabular}{p{0.28\linewidth}p{0.35\linewidth}p{0.27\linewidth}}
+\hline
+Case & Required diagnostic & Planned paper result \\
+\hline
+Synthetic water budget & Storage change versus transfer ledger; runoff and drainage closure & Residual table at float64 and float32 \\
+Diurnal rain/snow forcing & Soil water, canopy water, snow, runoff, skin temperature & Multi-day time series and budget residual \\
+Snowmelt energy limit & Potential versus energy-limited melt; skin energy residual & Process-level figure \\
+Land-use contrast & Albedo, roughness, root profile, evaporation, and runoff across classes & Comparison table or panel plot \\
+Restart/mask test & Restart equality and inactive-cell invariance & Error norm summary \\
+\hline
+\end{tabular}
+\end{table}
+
+\subsection{Known scope limits}
+\begin{itemize}
+  \item Describe the implementation as a layered, conservation-aware prototype rather than a production terrestrial biosphere model.
+  \item State absent processes: lateral groundwater and river routing, dynamic vegetation, carbon and nutrient cycles, detailed soil phase change, and calibrated global land datasets.
+  \item State that long coupled restart and climate validation remain required before making climate-performance claims.
+\end{itemize}

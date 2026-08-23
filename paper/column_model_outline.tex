@@ -1,0 +1,52 @@
+% First prose draft for the atmospheric-column section of the GCM paper.
+% Numerical values marked TO BE FIXED should be filled from the final paper run.
+
+\section{Atmospheric column physics}
+\label{sec:column}
+
+The atmospheric physics in the Portable Research Earth System Model (PRESM) is organized as a column model.  At each horizontal location, the column model represents processes that occur within or between the model layers but are not resolved directly by the horizontal flow solver.  These processes include radiative heating and cooling, exchange of heat and water with the surface, vertical mixing in the lower atmosphere, convection, condensation, clouds, and precipitation.  The Voronoi Flow Solver (VFS) carries air through the three-dimensional domain and supplies the evolving atmospheric state.  The column physics then calculates how unresolved physical processes change that state during one model step.  Every atmospheric column in the baseline model uses the same physical formulation and parameter values; spatial differences arise from the atmospheric and surface conditions supplied to each column rather than from randomly varying the parameterization.
+
+\subsection{Interface and process sequence}
+
+VFS owns the horizontal grid, pressure structure, winds, transport, and dynamical changes in temperature and surface pressure.  The column physics receives layer temperature, water-vapor content, surface pressure, and the pressure at layer boundaries.  The surface coupling provides surface temperature, relative wind near the surface, and properties such as surface fraction and albedo.  The column physics returns changes in temperature and water, together with surface fluxes, precipitation, and diagnostic quantities.  It does not calculate a momentum tendency in the present configuration, so winds are advanced by VFS while near-surface wind is used to determine the strength of surface exchange.  Cloud condensate and the radiation state are carried between calls so that clouds can persist and influence later calculations.
+
+The GCM passes all horizontal columns to the physics package together.  In the implementation this appears as a batch, but each batch entry is a physical location rather than a member of a parameter ensemble.  The same calculations are therefore applied efficiently across the global grid while the physical update of each column remains local.
+
+The physical processes are applied in a fixed sequence.  The model first calculates radiative heating and cooling.  It then exchanges heat and moisture with the surface and mixes the lower atmosphere.  Shallow convection acts before the deeper convective scheme.  Large-scale condensation removes any remaining excess water vapor, after which the cloud calculation updates cloud water, cloud cover, optical properties, and precipitation.  Surface reservoirs are updated after the atmospheric tendencies and precipitation are known.  A process later in the sequence sees the state produced by the processes before it; in particular, cloud properties produced near the end of one call affect radiation during a later call.
+
+% TO BE FIXED: atmospheric levels, timestep, physics substeps, radiation
+% cadence, vertical-grid mapping, and archived configuration revisions.
+
+\subsection{Radiation}
+
+Radiation is represented with a compact multiband model.  Incoming sunlight is divided into a small number of bands that differ in their absorption by water vapor, ozone, and clouds.  Thermal radiation emitted by the surface and atmosphere is likewise divided into bands with different absorption strengths. This allows water vapor, carbon dioxide, ozone, methane, nitrous oxide, and clouds to affect the energy balance without the cost of a full spectroscopic radiation package.
+
+The scheme calculates sunlight absorbed by the atmosphere and surface, sunlight reflected to space, thermal emission to space, and upward and downward thermal fluxes at the surface.  These fluxes determine atmospheric heating and surface energy exchange.  Companion clear-sky calculations can be used to separate the direct effects of gases from the effects of clouds.
+
+The radiation scheme is deliberately simplified.  Its bands represent broad classes of absorption rather than individual spectral lines, and cloud overlap is treated in a compact way.  It is intended to provide transparent and computationally affordable climate feedbacks, not to reproduce the detail of an operational weather or climate radiation package.
+
+\subsection{Surface exchange and lower-atmosphere mixing}
+
+The surface exchange calculation transfers sensible heat and water vapor between the surface and the lowest atmospheric layers.  The transfer becomes stronger when the air--surface temperature or moisture difference is larger and when the wind near the surface is stronger.  Surface properties supplied through BRIDGE determine whether evaporation is drawn from open water, soil, snow, or ice and whether the available surface water limits that evaporation.
+
+After surface exchange, a boundary-layer scheme mixes heat and moisture in the lower atmosphere.  The strength and vertical extent of this mixing respond to the stability of the air: vigorous mixing is allowed when the lower atmosphere is unstable, while stable layering suppresses it.  The numerical calculation is formulated so that strong mixing does not require an impractically short model step.
+
+\subsection{Shallow convection}
+
+Shallow convection represents small clouds that redistribute heat and moisture through the lower atmosphere without developing into deep precipitating systems.  The scheme is activated when the lower atmosphere is sufficiently moist and unstable, but is reduced when conditions favor deep convection.  It moves moisture upward from the sub-cloud layer and adjusts the temperature profile over a finite time.  Limits are placed on the size of a single-step adjustment, and a small correction prevents the scheme from creating or destroying column energy through the adjustment itself.
+
+\subsection{Deep convection}
+
+Deep convection is represented by an entraining mass-flux scheme.  The scheme follows a rising parcel of warm, moist air as it mixes with the surrounding environment.  This mixing weakens the parcel and makes the calculation more representative of a cloud plume than an undiluted parcel ascent.  The parcel's buoyancy is summarized using convective available potential energy.  When sufficient instability is present, that energy determines the strength and timescale of the convective response.
+
+The convective plume transports heat and moisture vertically, mixes with its environment, forms condensate, and produces precipitation.  Part of the condensate can remain available to form cloud, while the rest falls out as precipitation.  The temperature and moisture changes are adjusted together so that the convective calculation does not introduce a spurious column-energy source.  The formulation is intentionally compact, but it retains the key physical ideas of entrainment, detrainment, condensate loading, precipitation efficiency, and a finite response time.
+
+\subsection{Large-scale condensation, clouds, and precipitation}
+
+After convection, a saturation adjustment checks each layer for water vapor in excess of saturation.  Excess vapor is condensed, water vapor is reduced, and the associated latent heat warms the layer.  This step represents condensation that occurs on the resolved column scale rather than within the convective plume.
+
+Cloud condensate is a prognostic part of the coupled atmospheric state.  It can be supplied by large-scale condensation and by convective detrainment, can evaporate in unsaturated air, and can be converted to precipitation.  The rate of precipitation increases rapidly once condensate exceeds a threshold, so thin clouds can persist while sufficiently thick clouds rain out more readily. The model divides condensate between liquid and ice according to temperature.
+
+Cloud fraction is estimated from both relative humidity and condensate amount. The liquid and ice water paths are then converted into shortwave and longwave optical depths, allowing the internally generated clouds to reflect sunlight and absorb thermal radiation.  This closes the feedback among convection, clouds, radiation, and surface temperature.  The model does not attempt to represent separate rain, snow, graupel, or multiple cloud-particle size distributions, and its cloud-fraction and overlap assumptions remain important sources of uncertainty.
+
+Total precipitation combines contributions from shallow convection, deep convection, large-scale condensation, and cloud-water conversion.  The surface coupling routes precipitation to the active surface reservoirs and evaporation in the opposite direction, allowing the exchange of water among the atmosphere, ocean, land, snow, and ice to be diagnosed explicitly.

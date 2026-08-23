@@ -1,0 +1,59 @@
+% Outline for the sea-ice-model section of the VFS paper.
+
+\section{Sea-ice thermodynamics and surface coupling}\label{sec:sea-ice}
+
+\subsection{Model scope and state}
+\begin{itemize}
+  \item State clearly that the present model is a single-category, thermodynamic sea-ice component with no horizontal ice dynamics.
+  \item Define the prognostic state: ice fraction, ice thickness, snow mass on sea ice, and sea-ice surface temperature.
+  \item List key parameters: ice density, latent heat of fusion, formation thickness, melt temperature, bare-ice and snow albedos, roughnesses, and snow-cover/insulation scales.
+  \item Explain ownership: sea ice owns its phase stores; ocean owns heat and salinity; the surface system only blends properties and routes explicit transfers.
+\end{itemize}
+\subsection{Boundary properties and snow cover}
+\begin{itemize}
+  \item Define snow-cover fraction as a bounded function of snow-water equivalent.
+  \item Describe snow blending of bare-ice and snow albedo/roughness.
+  \item Describe the snow insulation factor used to reduce ice growth under snow cover.
+  \item Explain how ice fraction overlays the ocean fraction in the surface-fraction state.
+\end{itemize}
+
+\subsection{Freeze, melt, and salt exchange}
+\begin{itemize}
+  \item Define the local freezing condition using sea-surface temperature, salinity-dependent freezing temperature, and upward ocean heat loss.
+  \item Explain conversion of available heat to ice mass using latent heat and the handling of fraction and thickness after growth or complete melt.
+  \item Explain energy-limited melt: snow melts before ice, then meltwater returns freshwater and latent heat to the ocean.
+  \item Explain brine rejection: salt excluded during freezing is returned to the ocean and diagnosed explicitly.
+  \item List the transfer-ledger entries for snowfall, freeze, brine rejection, snowmelt, and ice melt.
+\end{itemize}
+
+\subsection{Coupling diagnostics}
+\begin{itemize}
+  \item Define the ocean-facing heat, freshwater, salt, and brine-rejection flux diagnostics.
+  \item Explain the area/fraction weighting used in storage and flux calculations.
+  \item State how these diagnostics enter the same-support surface conservation assessment.
+\end{itemize}
+
+\subsection{Verification and results to report}
+\begin{table}[t]
+\centering
+\caption{Planned sea-ice verification cases.}
+\label{tab:ice-verification}
+\begin{tabular}{p{0.28\linewidth}p{0.35\linewidth}p{0.27\linewidth}}
+\hline
+Case & Required diagnostic & Planned paper result \\
+\hline
+Freezing event & Ice mass gain, ocean heat loss, brine salt return & Water/salt/energy closure table \\
+Snowfall and melt sequence & Snow storage, snowmelt-first behavior, ocean freshwater flux & Time series and conservation residual \\
+Snow-insulation sensitivity & Ice growth with bare versus snow-covered ice & Growth-rate comparison plot \\
+Fractional-ice surface blend & Effective albedo, roughness, and ocean/ice fractions & Property-blending panel \\
+Coupled surface gate & Maximum relative residual across all sea-ice transfers & Pass/fail summary with tolerance \\
+\hline
+\end{tabular}
+\end{table}
+
+\subsection{Known scope limits}
+\begin{itemize}
+  \item Do not claim a dynamic sea-ice model: advection, deformation, ridging, rheology, leads, melt ponds, thickness distributions, and ice momentum are absent.
+  \item The current growth/melt rule is flux-limited; conductive multilayer ice/snow thermodynamics remains future work.
+  \item Present results as phase-change and coupling-conservation verification, not a validation of observed sea-ice extent or thickness climatology.
+\end{itemize}
