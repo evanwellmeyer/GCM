@@ -1,5 +1,8 @@
 # GCM / SCM Column Model
 
+[![Open setup in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/evanwellmeyer/GCM/blob/main/notebooks/01_setup.ipynb)
+[![Open exercises in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/evanwellmeyer/GCM/blob/main/notebooks/02_experiments.ipynb)
+
 This repository currently contains a single-column atmospheric model built as a research sandbox for tropical radiative-convective equilibrium experiments.
 
 Despite the directory name, the codebase is not yet a full general circulation model. It is better described as a **single-column model (SCM)** with modular physics packages and an ensemble driver. The intent is to keep the model small, inspectable, and easy to couple to a future dynamical core.

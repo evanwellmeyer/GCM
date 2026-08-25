@@ -1,5 +1,22 @@
 # Student Quickstart
 
+## Recommended: Google Colab
+
+No local installation is required. Open the setup notebook, choose
+**Runtime → Run all**, and confirm that all tests pass:
+
+[Open `01_setup.ipynb` in Colab](https://colab.research.google.com/github/evanwellmeyer/GCM/blob/main/notebooks/01_setup.ipynb)
+
+Then open the exercise notebook and again choose **Runtime → Run all**:
+
+[Open `02_experiments.ipynb` in Colab](https://colab.research.google.com/github/evanwellmeyer/GCM/blob/main/notebooks/02_experiments.ipynb)
+
+Each notebook installs the model into its current Colab runtime. Colab storage is
+temporary, so students should download their completed notebook or save a copy to
+Google Drive before closing the session.
+
+## Local installation
+
 This guide gets you from a fresh clone to a tested SCM and a short experiment. Run every command from the repository root.
 
 ## 1. Create an isolated Python environment
