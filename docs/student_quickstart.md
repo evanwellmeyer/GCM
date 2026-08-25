@@ -11,6 +11,10 @@ Then open the exercise notebook and again choose **Runtime → Run all**:
 
 [Open `02_experiments.ipynb` in Colab](https://colab.research.google.com/github/evanwellmeyer/GCM/blob/main/notebooks/02_experiments.ipynb)
 
+For the senior atmospheric dynamics version, open the ATM 407 lab instead:
+
+[Open `02_experiments_atm407.ipynb` in Colab](https://colab.research.google.com/github/evanwellmeyer/GCM/blob/main/notebooks/02_experiments_atm407.ipynb)
+
 Each notebook installs the model into its current Colab runtime. Colab storage is
 temporary, so students should download their completed notebook or save a copy to
 Google Drive before closing the session.

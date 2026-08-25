@@ -1,0 +1,25 @@
+{
+  "description": "Pre-equilibrated ATM407 mass-flux SCM reference state",
+  "reference_levels": 20,
+  "accelerated_spinup_days": 500,
+  "final_adjustment_days": 100,
+  "spinup_ocean_depth_m": 5.0,
+  "final_ocean_depth_m": 50.0,
+  "final_dt_s": 900.0,
+  "radiation_scheme": "multiband",
+  "convection_scheme": "mass_flux",
+  "surface_albedo": 0.32,
+  "surface_temperature_k": 289.9989559156027,
+  "toa_net_wm2": -0.921040204505552,
+  "surface_total_flux_wm2": -1.562974121424375,
+  "precipitation_mmday": 2.4844742089044303,
+  "equilibrium_metrics": {
+    "max_ts_slope": 0.0006390080469318797,
+    "max_ts_window_drift": 0.0313113942996621,
+    "max_toa_imbalance": 0.921040204505552,
+    "max_surface_total_imbalance": 1.562974121424375,
+    "max_column_residual": 0.738645030371853,
+    "max_column_mse_residual": 0.738645030371853
+  },
+  "generation_runtime_s": 100.91838791600094
+}

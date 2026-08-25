@@ -2,6 +2,7 @@
 
 [![Open setup in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/evanwellmeyer/GCM/blob/main/notebooks/01_setup.ipynb)
 [![Open exercises in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/evanwellmeyer/GCM/blob/main/notebooks/02_experiments.ipynb)
+[![Open ATM 407 lab in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/evanwellmeyer/GCM/blob/main/notebooks/02_experiments_atm407.ipynb)
 
 This repository currently contains a single-column atmospheric model built as a research sandbox for tropical radiative-convective equilibrium experiments.
 
