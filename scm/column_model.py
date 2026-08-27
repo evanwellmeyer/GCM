@@ -477,6 +477,26 @@ def physics_step(state, grid, params, rad_cache=None, ls_forcing=None):
     diag.update(surface_context_diagnostics(state, params, state['ts']))
     diag.update(composition_diagnostics(params, state['ts']))
 
+    if params.get('profile_diagnostics', False):
+        cloud_dt = cloud_out.get('dt', torch.zeros_like(state['t'])) / dt
+        cloud_dq = cloud_out.get('dq', torch.zeros_like(state['q'])) / dt
+        diag.update({
+            'radiation_temperature_tendency': rad_dt,
+            'radiation_moisture_tendency': rad_dq,
+            'surface_temperature_tendency': sfc_dt,
+            'surface_moisture_tendency': sfc_dq,
+            'boundary_layer_temperature_tendency': bl_dt,
+            'boundary_layer_moisture_tendency': bl_dq,
+            'shallow_temperature_tendency': shallow_dt,
+            'shallow_moisture_tendency': shallow_dq,
+            'deep_temperature_tendency': conv_dt,
+            'deep_moisture_tendency': conv_dq,
+            'condensation_temperature_tendency': cond_dt / dt,
+            'condensation_moisture_tendency': cond_dq / dt,
+            'cloud_temperature_tendency': cloud_dt,
+            'cloud_moisture_tendency': cloud_dq,
+        })
+
     return state, diag, rad_out
 
 

@@ -104,6 +104,41 @@ def test_dycore_supplied_vertical_grid_contract(device):
     assert torch.isfinite(diag['toa_net']).all()
 
 
+def test_profile_diagnostics_are_opt_in(device):
+    """Vertical process tendencies are available for teaching diagnostics."""
+
+    from scm.column_model import initial_state, physics_step
+    from scm.ensemble import default_params
+    from scm.thermo import make_grid
+
+    grid = make_grid(nlevels=8, device=device)
+    params = default_params(device=device)
+    params.update({
+        'dt': 300.0,
+        'use_slab_ocean': False,
+    })
+    state = initial_state(2, grid, params, device=device)
+    state, diag, _ = physics_step(state, grid, params)
+    assert 'radiation_temperature_tendency' not in diag
+
+    params['profile_diagnostics'] = True
+    state = initial_state(2, grid, params, device=device)
+    state, diag, _ = physics_step(state, grid, params)
+
+    processes = [
+        'radiation',
+        'surface',
+        'boundary_layer',
+        'shallow',
+        'deep',
+        'condensation',
+        'cloud',
+    ]
+    for process in processes:
+        assert diag[f'{process}_temperature_tendency'].shape == (2, 8)
+        assert diag[f'{process}_moisture_tendency'].shape == (2, 8)
+
+
 def test_land_surface_bucket(device):
     """Verify the first land bucket limits evaporation and closes water storage."""
 
@@ -1345,6 +1380,7 @@ def main():
 
     test_coupling_grid_and_surface_contract(device)
     test_dycore_supplied_vertical_grid_contract(device)
+    test_profile_diagnostics_are_opt_in(device)
     test_land_surface_bucket(device)
     test_surface_context_and_composition_contract(device)
     test_thermo(device)
