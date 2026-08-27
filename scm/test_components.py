@@ -638,6 +638,7 @@ def test_shallow_convection(device):
         'shallow_top_sigma': 0.72,
         'shallow_base_sigma': 0.90,
         'shallow_rh_trigger': 0.75,
+        'shallow_detrain_rh': 0.85,
         'shallow_cape_suppress': 1.0e6,
         'shallow_mse_scale': 1000.0,
         'shallow_max_dt_day': 3.0,
@@ -657,7 +658,23 @@ def test_shallow_convection(device):
     assert out['precip'][0].item() == 0.0, "shallow convection should not precipitate here"
     assert dq_day[up_mask].mean().item() > 0.0, "shallow convection should moisten above the BL"
     assert dq_day[low_mask].mean().item() < 0.0, "shallow convection should dry the subcloud layer"
+    q_after = q + out['dq'] * params['dt']
+    q_ceiling = torch.maximum(q, 0.85 * qs)
+    assert torch.all(q_after[:, up_mask] <= q_ceiling[:, up_mask] + 1.0e-8)
     assert abs(shallow_mse) < 1.0e-2, "shallow correction should keep column moist enthalpy nearly closed"
+
+    wet_q = q.clone()
+    wet_q[:, up_mask] = 0.98 * qs[:, up_mask]
+    wet_q[:, low_mask] = 0.95 * qs[:, low_mask]
+    wet_state = dict(state)
+    wet_state['q'] = wet_q
+    wet_out = shallow_convection(wet_state, grid, params)
+    assert wet_out['dq'][0, up_mask].mean() < 0.0
+    assert wet_out['dq'][0, low_mask].mean() > 0.0
+    wet_mse = torch.sum(
+        (cp * wet_out['dt'][0] + Lv * wet_out['dq'][0]) * dp[0] / 9.81
+    ).item()
+    assert abs(wet_mse) < 1.0e-2
 
     print("shallow convection: PASS\n")
 
@@ -1195,7 +1212,13 @@ def test_convection_mf(device):
         'mf_tau_cape_cape_sensitivity': 1.0,
     })
     out_flow = mass_flux_convection(state, grid, params_flow)
-
+    params_response = dict(params)
+    params_response.update({
+        'mf_closure_mode': 'cape_response',
+        'mf_trial_mass_flux': 0.01,
+        'mf_minimum_cape_response': 1.0,
+    })
+    out_response = mass_flux_convection(state, grid, params_response)
     dcape_noload = dilute_cape(t, q, p, params['entrainment_rate'])
     dcape_load = dilute_cape(
         t, q, p, params['entrainment_rate'],
@@ -1221,9 +1244,47 @@ def test_convection_mf(device):
     assert out_flow['tau_cape_eff'][0].item() < out['tau_cape_eff'][0].item(), (
         "flow-dependent CAPE timescale should shorten in a moist, high-CAPE column"
     )
+    rejected = ~out_response['closure_stabilizing']
+    assert torch.all(out_response['cloud_base_mass_flux'][rejected] == 0.0), (
+        "the response closure should reject any plume that increases CAPE"
+    )
     assert abs(conv_mse) < 1.0e-2, "MF correction should keep column moist enthalpy nearly closed"
 
     print("convection (mf): PASS\n")
+
+
+def test_mass_flux_response_closure(device):
+    """Verify that the response closure measures and limits CAPE removal."""
+    print("=== mass-flux response closure ===")
+    from scm.column_model import initial_state, update_derived
+    from scm.convection_mf import mass_flux_convection
+    from scm.ensemble import default_params
+    from scm.thermo import make_grid
+
+    grid = make_grid(nlevels=20, device=device)
+    params = default_params(device=device)
+    params.update({
+        'dt': 900.0,
+        'mf_closure_mode': 'cape_response',
+        'tau_cape': torch.tensor([14400.0, 28800.0, 57600.0], device=device),
+        'mf_trial_mass_flux': 0.01,
+        'mf_minimum_cape_response': 1.0,
+        'mf_available_mass_fraction': 0.25,
+        'mf_source_top_sigma': 0.90,
+        'mf_mb_max': 100.0,
+    })
+    state = initial_state(3, grid, params, device=device)
+    update_derived(state, grid)
+    out = mass_flux_convection(state, grid, params)
+
+    assert torch.all(out['closure_stabilizing'])
+    assert torch.all(out['cape_response_per_mass_flux'] > 0.0)
+    assert out['cloud_base_mass_flux_unlimited'][0] > out['cloud_base_mass_flux_unlimited'][1]
+    assert out['cloud_base_mass_flux_unlimited'][1] > out['cloud_base_mass_flux_unlimited'][2]
+    assert torch.all(out['cloud_base_mass_flux'] <= out['cloud_base_mass_flux_limit'])
+    assert torch.all(out['cloud_base_mass_flux_limit'] > 0.0)
+
+    print("mass-flux response closure: PASS\n")
 
 
 def test_short_integration(device):
@@ -1400,6 +1461,7 @@ def main():
     test_condensation(device)
     test_convection_bm(device)
     test_convection_mf(device)
+    test_mass_flux_response_closure(device)
     test_short_integration(device)
     test_ensemble_batching(device)
 

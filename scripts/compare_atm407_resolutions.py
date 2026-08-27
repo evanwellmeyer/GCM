@@ -22,6 +22,7 @@ parser = ArgumentParser()
 parser.add_argument('--levels', nargs='+', type=int, default=[10, 20, 40])
 parser.add_argument('--days', type=int, default=100)
 parser.add_argument('--surface-temperature', type=float, default=290.45)
+parser.add_argument('--config', type=Path)
 parser.add_argument('--mb-max', type=float)
 parser.add_argument('--detrain-rh', type=float)
 parser.add_argument('--max-dq-day', type=float)
@@ -29,10 +30,11 @@ parser.add_argument('--output', type=Path)
 args = parser.parse_args()
 
 results = []
+config = load_run_config(args.config)
 for nlevels in args.levels:
     grid = make_grid(nlevels, device='cpu')
     params = default_params(device='cpu')
-    params.update(extract_param_overrides(load_run_config()))
+    params.update(extract_param_overrides(config))
     params.update({
         'dt': 900.0,
         'ts_init': args.surface_temperature,
@@ -69,6 +71,7 @@ for nlevels in args.levels:
 
     result = {
         'levels': nlevels,
+        'configuration_label': config['run']['label'],
         'days': args.days,
         'surface_temperature_k': args.surface_temperature,
         'cape_jkg': stats['cape_mean'][0].item(),

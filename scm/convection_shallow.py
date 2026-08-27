@@ -1,6 +1,13 @@
 import torch
 
-from scm.thermo import Lv, cp, cape, relative_humidity, full_level_coordinate
+from scm.thermo import (
+    Lv,
+    cp,
+    cape,
+    relative_humidity,
+    full_level_coordinate,
+    saturation_specific_humidity,
+)
 
 
 def shallow_convection(state, grid, params):
@@ -50,6 +57,7 @@ def shallow_convection(state, grid, params):
     rh_low = (low_mask * rh * mass).sum(dim=1) / low_mass
 
     rh_trigger = float(params.get('shallow_rh_trigger', 0.80))
+    detrain_rh = float(params.get('shallow_detrain_rh', 1.0))
     mse_scale = float(params.get('shallow_mse_scale', 4000.0))
     cape_suppress = float(params.get('shallow_cape_suppress', 500.0))
     tau = max(float(params.get('shallow_tau', 14400.0)), 1.0)
@@ -68,7 +76,9 @@ def shallow_convection(state, grid, params):
     h_low_col = h_low.unsqueeze(1)
     strength_col = strength.unsqueeze(1)
 
-    dq_up_step = relax * strength_col * up_mask * (q_low_col - q).clamp(min=0.0)
+    qs = saturation_specific_humidity(t, p)
+    q_target = torch.minimum(q_low_col, detrain_rh * qs)
+    dq_up_step = relax * strength_col * up_mask * (q_target - q)
     dh_up_step = relax * strength_col * up_mask * (h_low_col - h).clamp(min=0.0)
 
     added_q = (dq_up_step * mass).sum(dim=1)

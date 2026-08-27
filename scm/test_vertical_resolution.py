@@ -1,7 +1,7 @@
 import torch
 
 from scm.column_model import initial_state, update_derived
-from scm.convection_mf import dilute_cape
+from scm.convection_mf import dilute_cape, mass_flux_convection
 from scm.ensemble import default_params
 from scm.surface import surface_fluxes
 from scm.thermo import (
@@ -58,3 +58,34 @@ def test_surface_flux_distribution_conserves_flux_across_grids():
 
         assert torch.allclose(heat_flux, output['shf'], rtol=1.0e-5, atol=1.0e-5)
         assert torch.allclose(moisture_flux, output['lhf'], rtol=1.0e-5, atol=1.0e-5)
+
+
+def test_mass_flux_cape_response_converges_across_teaching_grids():
+    responses = []
+    limits = []
+    for nlevels in [10, 20, 40]:
+        grid = make_grid(nlevels)
+        params = default_params()
+        params.update({
+            'dt': 900.0,
+            'mf_closure_mode': 'cape_response',
+            'mf_trial_mass_flux': 0.01,
+            'mf_minimum_cape_response': 1.0,
+            'mf_available_mass_fraction': 0.25,
+            'mf_source_top_sigma': 0.90,
+            'mf_mb_max': 100.0,
+        })
+        state = initial_state(1, grid, params)
+        state = update_derived(state, grid)
+        output = mass_flux_convection(state, grid, params)
+        responses.append(output['cape_response_per_mass_flux'][0])
+        limits.append(output['cloud_base_mass_flux_limit'][0])
+
+    responses = torch.stack(responses)
+    limits = torch.stack(limits)
+    responsespread = (responses.max() - responses.min()) / responses.mean()
+    limitspread = (limits.max() - limits.min()) / limits.mean()
+
+    assert torch.all(responses > 0.0)
+    assert responsespread < 0.15
+    assert limitspread < 0.02

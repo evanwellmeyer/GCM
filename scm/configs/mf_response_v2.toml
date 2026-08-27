@@ -1,0 +1,20 @@
+[run]
+label = "mf_response_v2"
+
+[mass_flux]
+closure_mode = "cape_response"
+tau_cape = 86400.0
+cape_timescale_mode = "fixed"
+trial_mass_flux = 0.01
+minimum_cape_response = 1.0
+available_mass_fraction = 0.25
+source_top_sigma = 0.90
+mb_max = 1.0
+bl_export_fraction = 1.0
+buoyancy_detrainment_weight = 1.0
+
+[params]
+bl_top_sigma = 0.72
+
+[shallow_convection]
+detrain_rh = 1.0

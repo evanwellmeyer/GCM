@@ -44,6 +44,17 @@ def _column_param(params, name, default, ref_tensor, batch):
     return _as_column_tensor(params.get(name, default), ref_tensor, batch, name)
 
 
+def _conserve_mse(dt_tend, dq_tend, dp):
+    """Remove the column moist-energy residual from active temperature levels."""
+
+    residual = torch.sum((cp * dt_tend + Lv * dq_tend) * dp / g, dim=1)
+    active = ((dt_tend.abs() + dq_tend.abs()) > 0.0).to(dt_tend.dtype)
+    active_mass = torch.sum(active * dp / g, dim=1).clamp(min=1.0e-8)
+    correction = residual / (cp * active_mass)
+    corrected = dt_tend - correction.unsqueeze(1) * active
+    return corrected
+
+
 def dilute_cape(
     t,
     q,
@@ -146,7 +157,11 @@ def mass_flux_convection(state, grid, params):
     max_dq_day = _column_param(params, 'mf_max_dq_day', 5.0, t, batch)
     cond_retain = _column_param(params, 'mf_condensate_retention', 0.25, t, batch)
     cond_fallout = _column_param(params, 'mf_condensate_fallout', 0.45, t, batch)
+    buoyancy_detrainment = _column_param(
+        params, 'mf_buoyancy_detrainment_weight', 1.0, t, batch
+    ).clamp(min=0.0, max=1.0)
     enforce_mse = bool(params.get('mf_enforce_mse_conservation', True))
+    model_dt = float(params.get('dt', 900.0))
 
     # use dilute CAPE for the closure
     cape_val = dilute_cape(
@@ -240,7 +255,11 @@ def mass_flux_convection(state, grid, params):
         # Detrainment and plume decay are rates per pascal. The previous
         # fixed fraction per model level changed when the same layer was
         # divided into two thinner layers.
-        detrain_exponent = detrainment * (1.0 - buoyant) * dp_step
+        detrain_factor = (
+            (1.0 - buoyancy_detrainment)
+            + buoyancy_detrainment * (1.0 - buoyant)
+        )
+        detrain_exponent = detrainment * detrain_factor * dp_step
         detrain_frac = 1.0 - torch.exp(-detrain_exponent.clamp(min=0.0, max=5.0))
         mf_detrained = mf_profile * detrain_frac
         mf_profile = mf_profile * (1.0 - detrain_frac)
@@ -289,13 +308,69 @@ def mass_flux_convection(state, grid, params):
         bl_export_fraction * export_q / export_mass
     ).unsqueeze(1) * export_weights
 
-    # CAPE closure: only CAPE above threshold can force deep convection.
-    col_heating = torch.sum(dt_norm.clamp(min=0.0) * dp / g, dim=1)
-    col_mass = dp.sum(dim=1) / g
-    col_heating_safe = col_heating.clamp(min=1e-8)
-    mb_unlimited = cape_excess * col_mass / (cp * col_heating_safe * tau_cape_eff)
+    closure_mode = str(params.get('mf_closure_mode', 'heating_proxy'))
+    cape_response = torch.zeros_like(cape_val)
+    closure_stabilizing = torch.ones_like(cape_val, dtype=torch.bool)
+
+    if closure_mode == 'cape_response':
+        trial_mass_flux = _column_param(
+            params, 'mf_trial_mass_flux', 0.01, t, batch
+        ).clamp(min=1.0e-6)
+        trial_dt = dt_norm * trial_mass_flux.unsqueeze(1)
+        trial_dq = dq_norm * trial_mass_flux.unsqueeze(1)
+        if enforce_mse:
+            trial_dt = _conserve_mse(trial_dt, trial_dq, dp)
+
+        trial_t = torch.clamp(t + model_dt * trial_dt, min=150.0, max=350.0)
+        trial_q = torch.clamp(q + model_dt * trial_dq, min=1.0e-7, max=0.1)
+        trial_cape = dilute_cape(
+            trial_t,
+            trial_q,
+            p,
+            entrainment,
+            condensate_retention=cond_retain,
+            condensate_fallout=cond_fallout,
+            max_pressure_step=params.get('mf_cape_max_pressure_step', 2500.0),
+        )
+        cape_response = (cape_val - trial_cape) / trial_mass_flux
+        minimum_response = _column_param(
+            params, 'mf_minimum_cape_response', 1.0, t, batch
+        ).clamp(min=0.0)
+        closure_stabilizing = cape_response > minimum_response
+        target_reduction = cape_excess * (
+            1.0 - torch.exp(-model_dt / tau_cape_eff.clamp(min=model_dt))
+        )
+        mb_unlimited = torch.where(
+            closure_stabilizing,
+            target_reduction / cape_response.clamp(min=1.0e-8),
+            torch.zeros_like(cape_response),
+        )
+
+        source_top_sigma = float(params.get('mf_source_top_sigma', 0.90))
+        source_overlap = (
+            sigma_half[:, 1:] - torch.maximum(
+                sigma_half[:, :-1],
+                torch.as_tensor(source_top_sigma, device=t.device, dtype=t.dtype),
+            )
+        ).clamp(min=0.0)
+        source_weights = (source_overlap / sigma_span).clamp(max=1.0)
+        empty_source = source_weights.sum(dim=1) == 0
+        source_weights[empty_source, -1] = 1.0
+        source_mass = torch.sum(source_weights * layer_mass, dim=1)
+        available_fraction = _column_param(
+            params, 'mf_available_mass_fraction', 0.25, t, batch
+        ).clamp(min=0.0, max=1.0)
+        available_mass_limit = available_fraction * source_mass / model_dt
+        mb_limit = torch.minimum(mb_max, available_mass_limit)
+    else:
+        col_heating = torch.sum(dt_norm.clamp(min=0.0) * dp / g, dim=1)
+        col_mass = dp.sum(dim=1) / g
+        col_heating_safe = col_heating.clamp(min=1e-8)
+        mb_unlimited = cape_excess * col_mass / (cp * col_heating_safe * tau_cape_eff)
+        mb_limit = mb_max
+
     mb_unlimited = mb_unlimited.clamp(min=0.0)
-    mb = torch.minimum(mb_unlimited, mb_max)
+    mb = torch.minimum(mb_unlimited, mb_limit)
 
     dt_uncapped = dt_norm * mb.unsqueeze(1)
     dq_uncapped = dq_norm * mb.unsqueeze(1)
@@ -313,10 +388,7 @@ def mass_flux_convection(state, grid, params):
     # simply because the two profiles were limited independently.
     mse_residual = torch.sum((cp * dt_tend + Lv * dq_tend) * dp / g, dim=1)
     if enforce_mse:
-        active_mask = ((dt_tend.abs() + dq_tend.abs()) > 0.0).to(t.dtype)
-        active_mass = torch.sum(active_mask * dp / g, dim=1).clamp(min=1.0e-8)
-        temp_correction = mse_residual / (cp * active_mass)
-        dt_tend = dt_tend - temp_correction.unsqueeze(1) * active_mask
+        dt_tend = _conserve_mse(dt_tend, dq_tend, dp)
         dt_tend = torch.maximum(torch.minimum(dt_tend, max_dt), -max_dt)
         mse_residual = torch.sum((cp * dt_tend + Lv * dq_tend) * dp / g, dim=1)
 
@@ -343,7 +415,10 @@ def mass_flux_convection(state, grid, params):
         'tau_cape_eff': tau_cape_eff,
         'cloud_base_mass_flux': mb,
         'cloud_base_mass_flux_unlimited': mb_unlimited,
-        'mass_flux_cap_active': mb_unlimited > mb_max,
+        'cloud_base_mass_flux_limit': mb_limit,
+        'cape_response_per_mass_flux': cape_response,
+        'closure_stabilizing': closure_stabilizing,
+        'mass_flux_cap_active': mb_unlimited > mb_limit,
         'temperature_cap_fraction': dt_cap_active.to(t.dtype).mean(dim=1),
         'moisture_cap_fraction': dq_cap_active.to(t.dtype).mean(dim=1),
         'mse_residual': mse_residual,

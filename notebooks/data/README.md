@@ -4,18 +4,21 @@
 `scripts/make_atm407_reference.py`. Its matching JSON file records the model
 configuration, spin-up procedure, diagnostics, and runtime.
 
-The accepted reference uses configuration label `mf_resolution_tuned_v1`. It
-was integrated for 500 accelerated days with a 5 m slab and then 800 days with
-the physical 50 m slab. Its late-window TOA imbalance is 0.04 W m-2, surface
-imbalance is -0.59 W m-2, 50-day surface-temperature drift is 0.012 K, and
-column energy and water budgets close tightly.
-
-The reference is suitable as an equilibrated teaching initial condition, but
-the mass-flux cap is active throughout its late diagnostic window. Exercises
-must therefore diagnose the limiter rather than claim that `tau_cape` controls
-the realized convective adjustment in this configuration.
+The accepted reference uses configuration label `mf_response_v3`. It was
+initialized from the response-only diagnostic checkpoint and adjusted for 200
+days with the physical 50 m slab. Its late-window TOA imbalance is +0.56 W m-2,
+surface imbalance is +0.31 W m-2, and 50-day surface-temperature drift is
+0.006 K. CAPE is 1434 J kg-1, 3.5% of atmospheric mass is at or above 95% RH,
+and deep convection produces most of the precipitation. Mass-flux and tendency
+limits are inactive, while column energy, moist-static-energy, and water
+budgets close tightly.
 
 The reference is stored on the native 20-level sigma grid. The ATM407 notebook
 can interpolate temperature and water fields to another sigma grid, but labels
 the result as a balanced initial guess rather than an exact equilibrium. A short
 adjustment integration follows any interpolation.
+
+`atm407_equilibrium_20level_mf_response_v3.npz` is an identical named copy of
+the accepted checkpoint retained to make the configuration transition explicit.
+The response-only `v2` checkpoint remains available for reproducing the
+moisture-budget diagnosis.

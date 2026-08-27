@@ -327,9 +327,11 @@ python -m scm.run_scm --config scm/configs/default.toml
 
 Two example configs are included:
 
-- `scm/configs/default.toml` - accepted 20-level standalone SCM and ATM407 reference configuration, labeled `mf_resolution_tuned_v1`
+- `scm/configs/default.toml` - accepted 20-level standalone SCM and ATM407 reference configuration, labeled `mf_response_v3`
 - `scm/configs/mf_baseline_v1.toml` - frozen earlier mass-flux configuration retained for reproducing the `2000d/8000d` coupling benchmark
 - `scm/configs/mf_flowdev_v1.toml` - current flow-dependent MF development configuration with softer CAPE-timescale limits
+- `scm/configs/mf_response_v2.toml` - experimental CAPE-response closure with a source-layer mass limit, used to diagnose the saturated-column bias before changing the accepted default
+- `scm/configs/mf_response_v3.toml` - frozen copy of the accepted CAPE-response configuration
 - `scm/configs/simplified_physics.toml` - simplified fallback: semi-gray radiation and no cloud microphysics
 - `scm/configs/trace_gases_example.toml` - example of the optional trace-gas radiation mode
 - `scm/configs/clouds_example.toml` - example of the optional cloud-radiative mode
@@ -475,12 +477,13 @@ The richer default path also enables a conservative shallow-convection section:
 - `tau = 14400 s`
 - no shallow-convective precipitation by default
 
-The accepted default uses fixed CAPE closure with `tau_cape = 3600 s`, a cloud-base
-mass-flux ceiling of `0.10 kg m-2 s-1`, and no retained convective condensate. In
-the accepted equilibrium checkpoint the mass-flux ceiling is active throughout
-the late diagnostic window. Changes to `tau_cape` therefore do not necessarily
-change the applied convective response; both unlimited and applied mass flux must
-be inspected when interpreting closure experiments.
+The accepted default measures CAPE removal with a trial plume and relaxes CAPE
+over 86400 s. Cloud-base mass flux is limited by the available source-layer
+mass, while the absolute `1.0 kg m-2 s-1` ceiling remains a numerical guard.
+The accepted equilibrium does not activate the mass-flux or tendency limits.
+Boundary-layer diffusion ends at sigma 0.94, and shallow convection relaxes its
+upper layer toward 85% RH from either side while conserving water and moist
+enthalpy.
 
 The separate development snapshot in `scm/configs/mf_flowdev_v1.toml` retains the
 flow-dependent CAPE-timescale experiment.

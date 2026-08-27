@@ -1,5 +1,5 @@
 {
-  "description": "Accepted near-equilibrium ATM407 mass-flux SCM reference state",
+  "description": "Near-equilibrium ATM407 mass-flux SCM reference state",
   "configuration_label": "mf_response_v3",
   "initial_reference": "notebooks/data/atm407_equilibrium_20level_mf_response_v2.npz",
   "reference_levels": 20,

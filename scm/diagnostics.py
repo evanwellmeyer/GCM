@@ -120,6 +120,8 @@ def equilibrium_stats(diag_history, last_n=50):
                 'conv_mse_residual', 'shallow_mse_residual', 'cape',
                 'tau_cape_eff',
                 'cloud_base_mass_flux', 'cloud_base_mass_flux_unlimited',
+                'cloud_base_mass_flux_limit', 'cape_response_per_mass_flux',
+                'closure_stabilizing',
                 'mass_flux_cap_active', 'temperature_cap_fraction',
                 'moisture_cap_fraction',
                 'cloud_cover', 'lwp', 'iwp']:

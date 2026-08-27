@@ -18,20 +18,27 @@ from scm.ensemble import default_params
 from scm.thermo import g, make_grid, relative_humidity
 
 
-outputdir = root / 'notebooks' / 'data'
-outputdir.mkdir(parents=True, exist_ok=True)
-referencepath = outputdir / 'atm407_equilibrium_20level.npz'
-metadatapath = outputdir / 'atm407_equilibrium_20level.json'
-
 parser = argparse.ArgumentParser()
 parser.add_argument('--force', action='store_true')
 parser.add_argument('--adjustment-days', type=int, default=100)
+parser.add_argument('--config', type=Path)
+parser.add_argument('--output-label', default='')
+parser.add_argument('--initial-reference', type=Path)
 args = parser.parse_args()
+
+if args.output_label and not args.output_label.replace('_', '').isalnum():
+    parser.error('--output-label may contain only letters, numbers, and underscores')
+
+outputdir = root / 'notebooks' / 'data'
+outputdir.mkdir(parents=True, exist_ok=True)
+suffix = f'_{args.output_label}' if args.output_label else ''
+referencepath = outputdir / f'atm407_equilibrium_20level{suffix}.npz'
+metadatapath = outputdir / f'atm407_equilibrium_20level{suffix}.json'
 
 device = torch.device('cpu')
 grid = make_grid(20, device=device)
 params = default_params(device=device)
-config = load_run_config()
+config = load_run_config(args.config)
 params.update(extract_param_overrides(config))
 params.update({
     'dt': 1800.0,
@@ -46,10 +53,25 @@ params.update({
 })
 
 start = time.perf_counter()
-if referencepath.exists() and not args.force:
-    previousmetadata = json.loads(metadatapath.read_text()) if metadatapath.exists() else {}
+sourcepath = None
+if not args.force:
+    if args.initial_reference is not None:
+        sourcepath = args.initial_reference
+    elif referencepath.exists():
+        sourcepath = referencepath
+
+if sourcepath is not None:
+    if not sourcepath.exists():
+        raise FileNotFoundError(sourcepath)
+    resumingoutput = sourcepath.resolve() == referencepath.resolve()
+    previousmetadata = (
+        json.loads(metadatapath.read_text())
+        if resumingoutput and metadatapath.exists()
+        else {}
+    )
     previousadjustment = int(previousmetadata.get('final_adjustment_days', 0))
-    reference = np.load(referencepath)
+    initialreference = previousmetadata.get('initial_reference', str(sourcepath))
+    reference = np.load(sourcepath)
     state = initial_state(1, grid, params, device=device)
     state['t'][0] = torch.as_tensor(reference['t'], dtype=state['t'].dtype)
     state['q'][0] = torch.as_tensor(reference['q'], dtype=state['q'].dtype)
@@ -64,6 +86,7 @@ if referencepath.exists() and not args.force:
     history = []
 else:
     previousadjustment = 0
+    initialreference = None
     state = initial_state(1, grid, params, device=device)
     stepsperday = round(86400 / params['dt'])
     state, history = run(
@@ -108,6 +131,7 @@ np.savez_compressed(
 metadata = {
     'description': 'Near-equilibrium ATM407 mass-flux SCM reference state',
     'configuration_label': config['run']['label'],
+    'initial_reference': initialreference,
     'reference_levels': 20,
     'accelerated_spinup_days': 500,
     'final_adjustment_days': previousadjustment + args.adjustment_days,

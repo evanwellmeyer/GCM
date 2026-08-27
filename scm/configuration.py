@@ -152,6 +152,7 @@ def extract_param_overrides(config):
             "shallow_top_sigma": shallow_convection.get("top_sigma"),
             "shallow_base_sigma": shallow_convection.get("base_sigma"),
             "shallow_rh_trigger": shallow_convection.get("rh_trigger"),
+            "shallow_detrain_rh": shallow_convection.get("detrain_rh"),
             "shallow_cape_suppress": shallow_convection.get("cape_suppress"),
             "shallow_mse_scale": shallow_convection.get("mse_scale"),
             "shallow_max_dt_day": shallow_convection.get("max_dt_day"),
@@ -244,6 +245,12 @@ def extract_param_overrides(config):
             "mf_tau_cape_ft_top_sigma": mass_flux.get("tau_cape_ft_top_sigma"),
             "mf_tau_cape_ft_bottom_sigma": mass_flux.get("tau_cape_ft_bottom_sigma"),
             "mf_cape_max_pressure_step": mass_flux.get("cape_max_pressure_step"),
+            "mf_closure_mode": mass_flux.get("closure_mode"),
+            "mf_trial_mass_flux": mass_flux.get("trial_mass_flux"),
+            "mf_minimum_cape_response": mass_flux.get("minimum_cape_response"),
+            "mf_available_mass_fraction": mass_flux.get("available_mass_fraction"),
+            "mf_source_top_sigma": mass_flux.get("source_top_sigma"),
+            "mf_buoyancy_detrainment_weight": mass_flux.get("buoyancy_detrainment_weight"),
         }))
 
     return params

@@ -295,6 +295,7 @@ def physics_step(state, grid, params, rad_cache=None, ls_forcing=None):
     atm_energy_after_cond = atmospheric_energy_content(state, grid)
 
     # --- cloud microphysics / cloud-radiative state ---
+    qc_before_cloud = state['qc'].clone()
     cloud_out = cloud_microphysics_step(state, grid, params, cond_out, conv_out)
     state['t'] = state['t'] + cloud_out.get('dt', torch.zeros_like(state['t']))
     state['q'] = state['q'] + cloud_out.get('dq', torch.zeros_like(state['q']))
@@ -457,6 +458,15 @@ def physics_step(state, grid, params, rad_cache=None, ls_forcing=None):
         'cloud_base_mass_flux_unlimited': conv_out.get(
             'cloud_base_mass_flux_unlimited', torch.zeros_like(state['ts'])
         ),
+        'cloud_base_mass_flux_limit': conv_out.get(
+            'cloud_base_mass_flux_limit', torch.zeros_like(state['ts'])
+        ),
+        'cape_response_per_mass_flux': conv_out.get(
+            'cape_response_per_mass_flux', torch.zeros_like(state['ts'])
+        ),
+        'closure_stabilizing': conv_out.get(
+            'closure_stabilizing', torch.zeros_like(state['ts'], dtype=torch.bool)
+        ).to(state['ts'].dtype),
         'mass_flux_cap_active': conv_out.get(
             'mass_flux_cap_active', torch.zeros_like(state['ts'], dtype=torch.bool)
         ).to(state['ts'].dtype),
@@ -480,6 +490,7 @@ def physics_step(state, grid, params, rad_cache=None, ls_forcing=None):
     if params.get('profile_diagnostics', False):
         cloud_dt = cloud_out.get('dt', torch.zeros_like(state['t'])) / dt
         cloud_dq = cloud_out.get('dq', torch.zeros_like(state['q'])) / dt
+        cloud_dqc = (state['qc'] - qc_before_cloud) / dt
         diag.update({
             'radiation_temperature_tendency': rad_dt,
             'radiation_moisture_tendency': rad_dq,
@@ -495,6 +506,8 @@ def physics_step(state, grid, params, rad_cache=None, ls_forcing=None):
             'condensation_moisture_tendency': cond_dq / dt,
             'cloud_temperature_tendency': cloud_dt,
             'cloud_moisture_tendency': cloud_dq,
+            'cloud_condensate_tendency': cloud_dqc,
+            'cloud_total_water_tendency': cloud_dq + cloud_dqc,
         })
 
     return state, diag, rad_out
