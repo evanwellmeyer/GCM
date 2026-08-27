@@ -1,6 +1,6 @@
 import torch
 
-from scm.thermo import g, saturation_specific_humidity, full_level_coordinate
+from scm.thermo import Lv, cp, g, saturation_specific_humidity, full_level_coordinate
 
 
 def initialize_cloud_state(batch, grid, device='cpu'):
@@ -94,20 +94,34 @@ def cloud_microphysics_step(state, grid, params, cond_out, conv_out):
     anvil_profile = torch.exp(-((sigma - anvil_center) / max(anvil_width, 1.0e-3)) ** 2)
     anvil_profile = anvil_profile / anvil_profile.sum(dim=1, keepdim=True).clamp(min=1.0e-8)
 
-    conv_cloud_eff = _to_col(params.get('conv_cloud_efficiency', 0.03), batch, device, dtype)
-    conv_precip = conv_out.get('precip', torch.zeros(batch, device=device, dtype=dtype)).unsqueeze(1)
-    conv_source = conv_cloud_eff * conv_precip * dt * g / dp.clamp(min=1.0) * anvil_profile
+    if 'cloud_condensate' in conv_out:
+        conv_condensate = conv_out['cloud_condensate'].unsqueeze(1)
+    else:
+        conv_cloud_eff = _to_col(
+            params.get('conv_cloud_efficiency', 0.03), batch, device, dtype
+        )
+        conv_precip = conv_out.get(
+            'precip', torch.zeros(batch, device=device, dtype=dtype)
+        ).unsqueeze(1)
+        conv_condensate = conv_cloud_eff * conv_precip
+    conv_source = conv_condensate * dt * g / dp.clamp(min=1.0) * anvil_profile
 
     source = ls_source + conv_source
 
     evap_tau = _to_col(params.get('cloud_evap_tau', 3600.0), batch, device, dtype)
     rh_evap = _to_col(params.get('cloud_rh_evap', 0.75), batch, device, dtype).clamp(min=1.0e-3)
 
-    qc = torch.clamp(qc_prev + source, min=0.0, max=float(params.get('cloud_qc_max', 0.01)))
+    qc_max = float(params.get('cloud_qc_max', 0.01))
+    qc_unbounded = torch.clamp(qc_prev + source, min=0.0)
+    overflow_sink = torch.clamp(qc_unbounded - qc_max, min=0.0)
+    qc = torch.clamp(qc_unbounded, max=qc_max)
     qc, autoconv_sink = _quadratic_autoconversion(qc, dt, params, batch, device, dtype)
     dry_factor = torch.clamp((rh_evap - rh) / rh_evap, min=0.0, max=1.0)
+    qc_before_evaporation = qc
     qc = qc * torch.exp(-(dt / evap_tau.clamp(min=1.0)) * dry_factor)
-    qc = torch.clamp(qc, min=0.0, max=float(params.get('cloud_qc_max', 0.01)))
+    evaporation = qc_before_evaporation - qc
+    vapor_adjustment = evaporation
+    temperature_adjustment = -Lv / cp * evaporation
 
     t_liq = float(params.get('cloud_liquid_temp', 273.15))
     t_ice = float(params.get('cloud_ice_temp', 258.15))
@@ -142,7 +156,7 @@ def cloud_microphysics_step(state, grid, params, cond_out, conv_out):
 
     cloud_sw_tau_layer = cloud_fraction * (k_liq_sw * lwp + k_ice_sw * iwp)
     cloud_lw_tau_layer = cloud_fraction * (k_liq_lw * lwp + k_ice_lw * iwp)
-    precip = torch.sum(autoconv_sink * dp / g, dim=1)
+    precip = torch.sum((overflow_sink + autoconv_sink) * dp / g, dim=1)
 
     return {
         'qc': qc,
@@ -152,4 +166,6 @@ def cloud_microphysics_step(state, grid, params, cond_out, conv_out):
         'lwp': lwp,
         'iwp': iwp,
         'precip': precip,
+        'dq': vapor_adjustment,
+        'dt': temperature_adjustment,
     }

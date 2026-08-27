@@ -220,8 +220,11 @@ def extract_param_overrides(config):
     if mass_flux:
         params.update(_non_null_items({
             "entrainment_rate": mass_flux.get("entrainment_rate"),
+            "mf_detrainment_rate": mass_flux.get("detrainment_rate"),
+            "mf_plume_decay_rate": mass_flux.get("plume_decay_rate"),
             "tau_cape": mass_flux.get("tau_cape"),
             "precip_efficiency": mass_flux.get("precip_efficiency"),
+            "mf_retain_convective_condensate": mass_flux.get("retain_convective_condensate"),
             "cape_threshold": mass_flux.get("cape_threshold"),
             "mf_detrain_rh": mass_flux.get("detrain_rh"),
             "mf_mb_max": mass_flux.get("mb_max"),
@@ -240,6 +243,7 @@ def extract_param_overrides(config):
             "mf_tau_cape_cape_sensitivity": mass_flux.get("tau_cape_cape_sensitivity"),
             "mf_tau_cape_ft_top_sigma": mass_flux.get("tau_cape_ft_top_sigma"),
             "mf_tau_cape_ft_bottom_sigma": mass_flux.get("tau_cape_ft_bottom_sigma"),
+            "mf_cape_max_pressure_step": mass_flux.get("cape_max_pressure_step"),
         }))
 
     return params

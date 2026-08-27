@@ -1,7 +1,10 @@
 # surface fluxes and slab ocean.
 
 import torch
-from scm.thermo import cp, Lv, g, rho_water, c_water, saturation_specific_humidity
+from scm.thermo import (
+    cp, Lv, g, rho_water, c_water, saturation_specific_humidity,
+    half_level_coordinate,
+)
 from scm.land_surface import land_fraction, land_latent_heat_cap, soil_evaporation_beta
 from scm.surface_context import batch_param, exchange_coefficients, surface_fractions, surface_temperature
 
@@ -52,21 +55,38 @@ def surface_fluxes(state, grid, params):
     # radiation/cloud path can be sensitive to how strongly the lowest model
     # level is coupled to the slab surface.
     nlevels = state['t'].shape[1]
-    heat_levels = int(params.get('surface_heat_levels', 8))
-    moist_levels = int(params.get('surface_moisture_levels', 3))
-    heat_levels = max(1, min(heat_levels, nlevels))
-    moist_levels = max(1, min(moist_levels, nlevels))
+    sigma_half = half_level_coordinate(grid, state=state)
 
-    total_mass = (state['dp'][:, -heat_levels:] / g).sum(dim=1)
-    moist_mass = (state['dp'][:, -moist_levels:] / g).sum(dim=1)
+    def surface_layer_weights(depth_name, levels_name, default_levels):
+        if depth_name in params:
+            depth = max(0.0, min(float(params[depth_name]), 1.0))
+            cutoff = 1.0 - depth
+            span = (sigma_half[:, 1:] - sigma_half[:, :-1]).clamp(min=1.0e-8)
+            overlap = (
+                sigma_half[:, 1:] - torch.maximum(
+                    sigma_half[:, :-1], torch.as_tensor(cutoff, device=t_lowest.device)
+                )
+            ).clamp(min=0.0)
+            return (overlap / span).clamp(max=1.0)
 
-    dt_uniform = shf / (total_mass * cp)
-    dq_uniform = lhf / (moist_mass * Lv)
+        levels = int(params.get(levels_name, default_levels))
+        levels = max(1, min(levels, nlevels))
+        weights = torch.zeros_like(state['t'])
+        weights[:, -levels:] = 1.0
+        return weights
 
-    dt = torch.zeros_like(state['t'])
-    dq = torch.zeros_like(state['q'])
-    dt[:, -heat_levels:] = dt_uniform.unsqueeze(1)
-    dq[:, -moist_levels:] = dq_uniform.unsqueeze(1)
+    heat_weights = surface_layer_weights(
+        'surface_heat_sigma_depth', 'surface_heat_levels', 8
+    )
+    moist_weights = surface_layer_weights(
+        'surface_moisture_sigma_depth', 'surface_moisture_levels', 3
+    )
+    layer_mass = state['dp'] / g
+    heat_mass = (heat_weights * layer_mass).sum(dim=1).clamp(min=1.0e-8)
+    moist_mass = (moist_weights * layer_mass).sum(dim=1).clamp(min=1.0e-8)
+
+    dt = heat_weights * (shf / (heat_mass * cp)).unsqueeze(1)
+    dq = moist_weights * (lhf / (moist_mass * Lv)).unsqueeze(1)
 
     return {
         'dt': dt,

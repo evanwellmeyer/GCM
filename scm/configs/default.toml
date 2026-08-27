@@ -7,7 +7,7 @@ perturb_days = 8000
 fixed_sst = false
 plot = false
 device = "auto"
-label = "mf_baseline_v1"
+label = "mf_resolution_tuned_v1"
 preserve_ensemble_shape = false
 save_restarts = true
 restart_from = ""
@@ -127,14 +127,17 @@ enforce_mse_conservation = true
 
 [mass_flux]
 entrainment_rate = 5.0e-6
+detrainment_rate = 3.0e-5
+plume_decay_rate = 1.5e-4
 tau_cape = 3600.0
 precip_efficiency = 0.80
+retain_convective_condensate = false
 cape_threshold = 50.0
 detrain_rh = 0.70
-mb_max = 0.05
+mb_max = 0.10
 bl_export_fraction = 0.02
 max_dt_day = 10.0
-max_dq_day = 5.0
+max_dq_day = 10.0
 condensate_retention = 0.25
 condensate_fallout = 0.45
 enforce_mse_conservation = true
@@ -147,6 +150,7 @@ tau_cape_cape_ref = 500.0
 tau_cape_cape_sensitivity = 1.0
 tau_cape_ft_top_sigma = 0.30
 tau_cape_ft_bottom_sigma = 0.80
+cape_max_pressure_step = 2500.0
 
 [calibration]
 enabled = false
@@ -191,6 +195,10 @@ surface_net_flux = 10.0
 boundary_layer_scheme = "richardson"
 surface_heat_levels = 2
 surface_moisture_levels = 1
+surface_heat_sigma_depth = 0.02
+surface_moisture_sigma_depth = 0.005
+bl_top_sigma = 0.72
+mf_bl_export_top_sigma = 0.96
 include_precip_enthalpy_flux = true
 #
 # examples:

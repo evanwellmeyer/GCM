@@ -109,12 +109,19 @@ def equilibrium_stats(diag_history, last_n=50):
                 'rad_energy_tendency', 'surface_energy_tendency',
                 'bl_energy_tendency', 'shallow_energy_tendency',
                 'conv_energy_tendency', 'condensation_energy_tendency',
+                'cloud_energy_tendency',
                 'atmos_flux_convergence', 'atmos_energy_tendency',
                 'atmos_energy_residual', 'atmos_mse_tendency',
                 'atmos_mse_residual', 'slab_energy_tendency',
                 'column_energy_tendency', 'column_energy_residual',
                 'column_mse_tendency', 'column_mse_residual',
-                'conv_mse_residual', 'shallow_mse_residual', 'tau_cape_eff',
+                'column_water_tendency', 'column_water_flux',
+                'column_water_residual',
+                'conv_mse_residual', 'shallow_mse_residual', 'cape',
+                'tau_cape_eff',
+                'cloud_base_mass_flux', 'cloud_base_mass_flux_unlimited',
+                'mass_flux_cap_active', 'temperature_cap_fraction',
+                'moisture_cap_fraction',
                 'cloud_cover', 'lwp', 'iwp']:
         if key in recent[0]:
             vals = torch.stack([d[key] for d in recent])

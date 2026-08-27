@@ -12,7 +12,8 @@
 import torch
 from scm.thermo import (
     cp, Lv, g, Rd, Rv, eps,
-    saturation_specific_humidity, virtual_temperature, full_level_coordinate
+    saturation_specific_humidity, virtual_temperature, full_level_coordinate,
+    half_level_coordinate,
 )
 
 
@@ -43,7 +44,15 @@ def _column_param(params, name, default, ref_tensor, batch):
     return _as_column_tensor(params.get(name, default), ref_tensor, batch, name)
 
 
-def dilute_cape(t, q, p, entrainment, condensate_retention=0.0, condensate_fallout=1.0):
+def dilute_cape(
+    t,
+    q,
+    p,
+    entrainment,
+    condensate_retention=0.0,
+    condensate_fallout=1.0,
+    max_pressure_step=2500.0,
+):
     """CAPE computed with an entraining parcel. more realistic than
     undilute CAPE because it accounts for how environmental humidity
     affects buoyancy. returns (batch,) in J/kg."""
@@ -65,43 +74,51 @@ def dilute_cape(t, q, p, entrainment, condensate_retention=0.0, condensate_fallo
         condensate_retention, t, batch, 'condensate_retention'
     ).clamp(min=0.0, max=1.0)
 
+    pressure_step = max(float(max_pressure_step), 100.0)
     for k in range(nlevels - 2, -1, -1):
-        p_target = p[:, k]
-        dp_step = (p_parcel - p_target).abs()
+        p_lower = p[:, k + 1]
+        p_upper = p[:, k]
+        layer_span = (p_lower - p_upper).abs()
+        nsubsteps = max(1, int(torch.ceil(layer_span.max() / pressure_step).item()))
 
-        # entrain environmental air
-        mix = 1.0 - torch.exp(-(entrainment * dp_step).clamp(min=0.0, max=5.0))
-        t_parcel = (1.0 - mix) * t_parcel + mix * t[:, k]
-        q_parcel = (1.0 - mix) * q_parcel + mix * q[:, k]
-        qc_parcel = (1.0 - mix) * qc_parcel
+        for substep in range(1, nsubsteps + 1):
+            fraction = substep / nsubsteps
+            p_target = p_lower + fraction * (p_upper - p_lower)
+            t_env = t[:, k + 1] + fraction * (t[:, k] - t[:, k + 1])
+            q_env = q[:, k + 1] + fraction * (q[:, k] - q[:, k + 1])
+            dp_step = (p_parcel - p_target).abs()
 
-        # adiabatic ascent
-        qs_p = saturation_specific_humidity(t_parcel, p_target)
-        saturated = (q_parcel >= qs_p).float()
+            # Mix at the parcel pressure before taking the next ascent step.
+            mix = 1.0 - torch.exp(-(entrainment * dp_step).clamp(min=0.0, max=5.0))
+            t_parcel = (1.0 - mix) * t_parcel + mix * t_env
+            q_parcel = (1.0 - mix) * q_parcel + mix * q_env
+            qc_parcel = (1.0 - mix) * qc_parcel
 
-        gamma_dry = Rd * t_parcel / (cp * p_target)
-        num = (Rd * t_parcel / (cp * p_target)) * (1.0 + Lv * qs_p / (Rd * t_parcel))
-        den = 1.0 + Lv * Lv * qs_p / (cp * Rv * t_parcel * t_parcel)
-        gamma_moist = num / den
-        gamma = (1.0 - saturated) * gamma_dry + saturated * gamma_moist
+            qs_p = saturation_specific_humidity(t_parcel, p_target)
+            saturated = (q_parcel >= qs_p).float()
+            gamma_dry = Rd * t_parcel / (cp * p_target)
+            num = (Rd * t_parcel / (cp * p_target)) * (
+                1.0 + Lv * qs_p / (Rd * t_parcel)
+            )
+            den = 1.0 + Lv * Lv * qs_p / (cp * Rv * t_parcel * t_parcel)
+            gamma_moist = num / den
+            gamma = (1.0 - saturated) * gamma_dry + saturated * gamma_moist
 
-        dp_rise = p_target - p_parcel
-        t_parcel = t_parcel + gamma * dp_rise
-        p_parcel = p_target
+            p_previous = p_parcel
+            t_parcel = t_parcel + gamma * (p_target - p_parcel)
+            p_parcel = p_target
 
-        # condensation
-        qs_new = saturation_specific_humidity(t_parcel, p_target)
-        excess = torch.clamp(q_parcel - qs_new, min=0.0)
-        q_parcel = q_parcel - excess
-        t_parcel = t_parcel + Lv / cp * excess
-        qc_parcel = fallout_keep * (qc_parcel + cond_retain * excess)
+            qs_new = saturation_specific_humidity(t_parcel, p_target)
+            excess = torch.clamp(q_parcel - qs_new, min=0.0)
+            q_parcel = q_parcel - excess
+            t_parcel = t_parcel + Lv / cp * excess
+            qc_parcel = fallout_keep * (qc_parcel + cond_retain * excess)
 
-        # buoyancy contribution
-        tv_parcel = loaded_virtual_temperature(t_parcel, q_parcel, qc_parcel)
-        tv_env = virtual_temperature(t[:, k], q[:, k])
-        buoyancy = torch.clamp((tv_parcel - tv_env) / tv_env, min=0.0)
-        dlnp = torch.log(p[:, k + 1].clamp(min=1.0) / p[:, k].clamp(min=1.0))
-        dcape = dcape + Rd * tv_env * buoyancy * dlnp
+            tv_parcel = loaded_virtual_temperature(t_parcel, q_parcel, qc_parcel)
+            tv_env = virtual_temperature(t_env, q_env)
+            buoyancy = torch.clamp((tv_parcel - tv_env) / tv_env, min=0.0)
+            dlnp = torch.log(p_previous.clamp(min=1.0) / p_target.clamp(min=1.0))
+            dcape = dcape + Rd * tv_env * buoyancy * dlnp
 
     return dcape
 
@@ -117,6 +134,8 @@ def mass_flux_convection(state, grid, params):
     nlevels = t.shape[1]
 
     entrainment = _column_param(params, 'entrainment_rate', 5.0e-6, t, batch)  # per Pa
+    detrainment = _column_param(params, 'mf_detrainment_rate', 3.0e-5, t, batch)
+    plume_decay = _column_param(params, 'mf_plume_decay_rate', 1.5e-4, t, batch)
     tau_cape = _column_param(params, 'tau_cape', 3600.0, t, batch)
     precip_eff = _column_param(params, 'precip_efficiency', 0.8, t, batch)
     cape_threshold = _column_param(params, 'cape_threshold', 50.0, t, batch)
@@ -134,6 +153,7 @@ def mass_flux_convection(state, grid, params):
         t, q, p, entrainment,
         condensate_retention=cond_retain,
         condensate_fallout=cond_fallout,
+        max_pressure_step=params.get('mf_cape_max_pressure_step', 2500.0),
     )
     cape_excess = torch.clamp(cape_val - cape_threshold, min=0.0)
 
@@ -189,8 +209,9 @@ def mass_flux_convection(state, grid, params):
         q_plume = (1.0 - mix) * q_plume + mix * q[:, k]
         qc_plume = (1.0 - mix) * qc_plume
 
-        # mass flux increases from entrainment
-        mf_profile = mf_profile * (1.0 + mix)
+        # Use the pressure-coordinate solution for plume-mass growth so that
+        # splitting a layer does not change cumulative entrainment.
+        mf_profile = mf_profile * torch.exp((entrainment * dp_step).clamp(max=5.0))
 
         # adiabatic cooling
         qs_p = saturation_specific_humidity(t_plume, p_here)
@@ -216,9 +237,11 @@ def mass_flux_convection(state, grid, params):
         tv_env = virtual_temperature(t[:, k], q[:, k])
         buoyant = torch.sigmoid((tv_plume - tv_env) * 5.0)
 
-        # detrainment: where plume loses buoyancy, detrain mass.
-        # detrainment rate increases where buoyancy decreases.
-        detrain_frac = (1.0 - buoyant) * 0.15  # up to 15% per level (was 30%)
+        # Detrainment and plume decay are rates per pascal. The previous
+        # fixed fraction per model level changed when the same layer was
+        # divided into two thinner layers.
+        detrain_exponent = detrainment * (1.0 - buoyant) * dp_step
+        detrain_frac = 1.0 - torch.exp(-detrain_exponent.clamp(min=0.0, max=5.0))
         mf_detrained = mf_profile * detrain_frac
         mf_profile = mf_profile * (1.0 - detrain_frac)
 
@@ -242,34 +265,48 @@ def mass_flux_convection(state, grid, params):
             subsidence_rate = mf_detrained * g / dp_layer
             dt_norm[:, k] = dt_norm[:, k] + subsidence_rate * (t[:, k + 1] - t[:, k])
 
-        # kill plume where it's clearly not buoyant
-        mf_profile = mf_profile * (0.3 + 0.7 * buoyant)
+        decay_exponent = plume_decay * (1.0 - buoyant) * dp_step
+        mf_profile = mf_profile * torch.exp(-decay_exponent.clamp(min=0.0, max=5.0))
 
-    # modest subcloud moisture export spread over the lowest few levels.
-    # this avoids the previous behavior where the lowest model level was
-    # dried aggressively enough to drive unrealistically large surface fluxes.
-    export_levels = min(3, nlevels)
-    export_slice = slice(nlevels - export_levels, nlevels)
-    dq_norm[:, export_slice] = dq_norm[:, export_slice] - (
-        bl_export_fraction.unsqueeze(1) * g / dp[:, export_slice] * q[:, export_slice] / export_levels
-    )
+    # Modest subcloud moisture export over a fixed sigma depth. Normalizing by
+    # the selected layer mass keeps the column sink independent of level count.
+    export_top_sigma = float(params.get('mf_bl_export_top_sigma', 0.96))
+    sigma_half = half_level_coordinate(grid, state=state, device=t.device, dtype=t.dtype)
+    sigma_span = (sigma_half[:, 1:] - sigma_half[:, :-1]).clamp(min=1.0e-8)
+    export_overlap = (
+        sigma_half[:, 1:] - torch.maximum(
+            sigma_half[:, :-1],
+            torch.as_tensor(export_top_sigma, device=t.device, dtype=t.dtype),
+        )
+    ).clamp(min=0.0)
+    export_weights = (export_overlap / sigma_span).clamp(max=1.0)
+    empty_export = export_weights.sum(dim=1) == 0
+    export_weights[empty_export, -1] = 1.0
+    layer_mass = dp / g
+    export_mass = torch.sum(export_weights * layer_mass, dim=1).clamp(min=1.0e-8)
+    export_q = torch.sum(export_weights * q * layer_mass, dim=1) / export_mass
+    dq_norm = dq_norm - (
+        bl_export_fraction * export_q / export_mass
+    ).unsqueeze(1) * export_weights
 
     # CAPE closure: only CAPE above threshold can force deep convection.
     col_heating = torch.sum(dt_norm.clamp(min=0.0) * dp / g, dim=1)
     col_mass = dp.sum(dim=1) / g
     col_heating_safe = col_heating.clamp(min=1e-8)
-    mb = cape_excess * col_mass / (cp * col_heating_safe * tau_cape_eff)
-    mb = mb.clamp(min=0.0)
-    mb = torch.minimum(mb, mb_max)
+    mb_unlimited = cape_excess * col_mass / (cp * col_heating_safe * tau_cape_eff)
+    mb_unlimited = mb_unlimited.clamp(min=0.0)
+    mb = torch.minimum(mb_unlimited, mb_max)
 
-    dt_tend = dt_norm * mb.unsqueeze(1)
-    dq_tend = dq_norm * mb.unsqueeze(1)
+    dt_uncapped = dt_norm * mb.unsqueeze(1)
+    dq_uncapped = dq_norm * mb.unsqueeze(1)
 
     # limit tendencies
     max_dt = (max_dt_day / 86400.0).unsqueeze(1)
     max_dq = (max_dq_day * 1.0e-3 / 86400.0).unsqueeze(1)
-    dt_tend = torch.maximum(torch.minimum(dt_tend, max_dt), -max_dt)
-    dq_tend = torch.maximum(torch.minimum(dq_tend, max_dq), -max_dq)
+    dt_cap_active = dt_uncapped.abs() > max_dt
+    dq_cap_active = dq_uncapped.abs() > max_dq
+    dt_tend = torch.maximum(torch.minimum(dt_uncapped, max_dt), -max_dt)
+    dq_tend = torch.maximum(torch.minimum(dq_uncapped, max_dq), -max_dq)
 
     # Keep the capped heating and drying tendencies close to column
     # moist-enthalpy conserving so convection does not create energy
@@ -283,15 +320,31 @@ def mass_flux_convection(state, grid, params):
         dt_tend = torch.maximum(torch.minimum(dt_tend, max_dt), -max_dt)
         mse_residual = torch.sum((cp * dt_tend + Lv * dq_tend) * dp / g, dim=1)
 
-    # precipitation follows the actual net convective drying tendency.
-    precip = precip_eff * (-torch.sum(dq_tend * dp / g, dim=1)).clamp(min=0.0)
+    # By default all net convective drying reaches the surface as rain. A
+    # retained-condensate path is available for experiments, but it requires
+    # separate long-run validation because anvil evaporation strongly changes
+    # the thermal profile in this lightweight cloud scheme.
+    column_drying = (-torch.sum(dq_tend * dp / g, dim=1)).clamp(min=0.0)
+    precip_eff = precip_eff.clamp(min=0.0, max=1.0)
+    if params.get('mf_retain_convective_condensate', False):
+        precip = precip_eff * column_drying
+        cloud_condensate = (1.0 - precip_eff) * column_drying
+    else:
+        precip = column_drying
+        cloud_condensate = torch.zeros_like(column_drying)
     precip = precip.clamp(max=50.0 / 86400.0)
 
     return {
         'dt': dt_tend,
         'dq': dq_tend,
         'precip': precip,
+        'cloud_condensate': cloud_condensate,
         'cape': cape_val,
         'tau_cape_eff': tau_cape_eff,
+        'cloud_base_mass_flux': mb,
+        'cloud_base_mass_flux_unlimited': mb_unlimited,
+        'mass_flux_cap_active': mb_unlimited > mb_max,
+        'temperature_cap_fraction': dt_cap_active.to(t.dtype).mean(dim=1),
+        'moisture_cap_fraction': dq_cap_active.to(t.dtype).mean(dim=1),
         'mse_residual': mse_residual,
     }

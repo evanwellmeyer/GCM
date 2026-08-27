@@ -26,9 +26,15 @@ def boundary_layer_mixing(state, grid, params):
     batch = t.shape[0]
     mass = dp / g
 
-    mix_levels = int(params.get('bl_mix_levels', 8))
-    mix_levels = max(1, min(mix_levels, nlevels))
-    mix_top = max(0, nlevels - mix_levels)
+    if 'bl_top_sigma' in params:
+        sigma = full_level_coordinate(grid, state=state, device=t.device, dtype=t.dtype)
+        active = sigma[0] >= float(params['bl_top_sigma'])
+        indices = torch.nonzero(active, as_tuple=False).flatten()
+        mix_top = int(indices[0].item()) if indices.numel() else nlevels - 1
+    else:
+        mix_levels = int(params.get('bl_mix_levels', 8))
+        mix_levels = max(1, min(mix_levels, nlevels))
+        mix_top = max(0, nlevels - mix_levels)
 
     if scheme == 'constant':
         d = constant_diffusivity(state, grid, k_diff, mix_top)

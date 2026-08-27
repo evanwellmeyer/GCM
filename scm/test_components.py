@@ -887,17 +887,27 @@ def test_energy_budget_diagnostics(device):
     diag = history[-1]
 
     for key in [
-        'precip_heat_flux', 'surface_total_flux', 'atmos_flux_convergence',
+        'precip_heat_flux', 'surface_net_flux', 'surface_total_flux',
+        'atmos_flux_convergence',
         'atmos_energy_tendency', 'atmos_energy_residual',
         'atmos_mse_tendency', 'atmos_mse_residual',
         'slab_energy_tendency', 'column_energy_tendency', 'column_energy_residual',
         'column_mse_tendency', 'column_mse_residual',
+        'column_water_tendency', 'column_water_flux', 'column_water_residual',
         'rad_energy_tendency', 'surface_energy_tendency', 'bl_energy_tendency',
         'shallow_energy_tendency', 'conv_energy_tendency',
         'condensation_energy_tendency', 'conv_mse_residual', 'shallow_mse_residual',
     ]:
         assert key in diag, f"missing diagnostic: {key}"
         assert torch.isfinite(diag[key]).all(), f"non-finite diagnostic: {key}"
+
+    expected_atmos_convergence = diag['toa_net'] - diag['surface_net_flux']
+    expected_column_residual = (
+        diag['toa_net'] - diag['column_energy_tendency'] + diag['precip_heat_flux']
+    )
+    assert torch.allclose(diag['atmos_flux_convergence'], expected_atmos_convergence)
+    assert torch.allclose(diag['column_energy_residual'], expected_column_residual)
+    assert diag['column_water_residual'].abs().max() < 1.0e-7
 
     print(f"column residual = {diag['column_energy_residual'][0].item():+.2f} W/m2")
     print("energy budget diagnostics: PASS\n")

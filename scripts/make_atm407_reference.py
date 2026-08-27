@@ -1,4 +1,5 @@
 from pathlib import Path
+import argparse
 import json
 import sys
 import time
@@ -14,17 +15,24 @@ from scm.column_model import initial_state, run
 from scm.configuration import extract_param_overrides, load_run_config
 from scm.diagnostics import equilibrium_metrics, equilibrium_stats
 from scm.ensemble import default_params
-from scm.thermo import make_grid
+from scm.thermo import g, make_grid, relative_humidity
 
 
 outputdir = root / 'notebooks' / 'data'
 outputdir.mkdir(parents=True, exist_ok=True)
 referencepath = outputdir / 'atm407_equilibrium_20level.npz'
+metadatapath = outputdir / 'atm407_equilibrium_20level.json'
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--force', action='store_true')
+parser.add_argument('--adjustment-days', type=int, default=100)
+args = parser.parse_args()
 
 device = torch.device('cpu')
 grid = make_grid(20, device=device)
 params = default_params(device=device)
-params.update(extract_param_overrides(load_run_config()))
+config = load_run_config()
+params.update(extract_param_overrides(config))
 params.update({
     'dt': 1800.0,
     'ps0': 100000.0,
@@ -38,7 +46,9 @@ params.update({
 })
 
 start = time.perf_counter()
-if referencepath.exists():
+if referencepath.exists() and not args.force:
+    previousmetadata = json.loads(metadatapath.read_text()) if metadatapath.exists() else {}
+    previousadjustment = int(previousmetadata.get('final_adjustment_days', 0))
     reference = np.load(referencepath)
     state = initial_state(1, grid, params, device=device)
     state['t'][0] = torch.as_tensor(reference['t'], dtype=state['t'].dtype)
@@ -53,6 +63,7 @@ if referencepath.exists():
     state['slab_energy'].zero_()
     history = []
 else:
+    previousadjustment = 0
     state = initial_state(1, grid, params, device=device)
     stepsperday = round(86400 / params['dt'])
     state, history = run(
@@ -66,12 +77,14 @@ else:
 
 params['dt'] = 900.0
 params['ocean_depth'] = 50.0
+state['slab_ts_ref'] = state['ts'].clone()
+state['slab_energy'].zero_()
 stepsperday = round(86400 / params['dt'])
 state, finalhistory = run(
     state,
     grid,
     params,
-    100 * stepsperday,
+    args.adjustment_days * stepsperday,
     rad_interval=8,
     diag_interval=stepsperday,
 )
@@ -79,6 +92,8 @@ history.extend(finalhistory)
 
 metrics = equilibrium_metrics(history, window=50)
 stats = equilibrium_stats(history, last_n=50)
+rh = relative_humidity(state['q'], state['t'], state['p'])[0]
+rh95mass = torch.sum((rh >= 0.95) * state['dp'][0] / g) / torch.sum(state['dp'][0] / g)
 np.savez_compressed(
     referencepath,
     sigma_full=grid['sigma_full'].cpu().numpy(),
@@ -91,10 +106,11 @@ np.savez_compressed(
 )
 
 metadata = {
-    'description': 'Pre-equilibrated ATM407 mass-flux SCM reference state',
+    'description': 'Near-equilibrium ATM407 mass-flux SCM reference state',
+    'configuration_label': config['run']['label'],
     'reference_levels': 20,
     'accelerated_spinup_days': 500,
-    'final_adjustment_days': 100,
+    'final_adjustment_days': previousadjustment + args.adjustment_days,
     'spinup_ocean_depth_m': 5.0,
     'final_ocean_depth_m': 50.0,
     'final_dt_s': 900.0,
@@ -105,11 +121,20 @@ metadata = {
     'toa_net_wm2': stats['toa_net_mean'][0].item(),
     'surface_total_flux_wm2': stats['surface_total_flux_mean'][0].item(),
     'precipitation_mmday': stats['precip_total_mean'][0].item() * 86400,
+    'deep_precipitation_mmday': stats['precip_conv_mean'][0].item() * 86400,
+    'large_scale_precipitation_mmday': stats['precip_ls_mean'][0].item() * 86400,
+    'cloud_precipitation_mmday': stats['precip_cloud_mean'][0].item() * 86400,
+    'cape_jkg': stats['cape_mean'][0].item(),
+    'rh95_mass_fraction': rh95mass.item(),
+    'cloud_base_mass_flux_kgm2s': stats['cloud_base_mass_flux_mean'][0].item(),
+    'mass_flux_cap_fraction': stats['mass_flux_cap_active_mean'][0].item(),
+    'temperature_cap_fraction': stats['temperature_cap_fraction_mean'][0].item(),
+    'moisture_cap_fraction': stats['moisture_cap_fraction_mean'][0].item(),
+    'column_water_residual_kgm2s': stats['column_water_residual_mean'][0].item(),
     'equilibrium_metrics': metrics,
     'generation_runtime_s': time.perf_counter() - start,
 }
 
-metadatapath = outputdir / 'atm407_equilibrium_20level.json'
 metadatapath.write_text(json.dumps(metadata, indent=2) + '\n')
 print(referencepath)
 print(metadatapath)

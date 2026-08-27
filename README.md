@@ -312,7 +312,10 @@ more complete reference for scientific and development runs.
 
 For a notebook-based course workflow, begin with
 [`01_setup.ipynb`](notebooks/01_setup.ipynb), then continue to the self-contained
-[`02_experiments.ipynb`](notebooks/02_experiments.ipynb).
+[`02_experiments_atm407.ipynb`](notebooks/02_experiments_atm407.ipynb) for the
+atmospheric dynamics lab. The more general
+[`02_experiments.ipynb`](notebooks/02_experiments.ipynb) remains available for
+introductory SCM exercises.
 
 ### Config-driven runs
 
@@ -324,8 +327,8 @@ python -m scm.run_scm --config scm/configs/default.toml
 
 Two example configs are included:
 
-- `scm/configs/default.toml` - richer default run settings: multiband radiation, optional trace gases, and microphysics-coupled cloud radiation
-- `scm/configs/mf_baseline_v1.toml` - frozen mass-flux reference configuration associated with the current stable `2000d/8000d` benchmark; this is the current **stable coupling reference**
+- `scm/configs/default.toml` - accepted 20-level standalone SCM and ATM407 reference configuration, labeled `mf_resolution_tuned_v1`
+- `scm/configs/mf_baseline_v1.toml` - frozen earlier mass-flux configuration retained for reproducing the `2000d/8000d` coupling benchmark
 - `scm/configs/mf_flowdev_v1.toml` - current flow-dependent MF development configuration with softer CAPE-timescale limits
 - `scm/configs/simplified_physics.toml` - simplified fallback: semi-gray radiation and no cloud microphysics
 - `scm/configs/trace_gases_example.toml` - example of the optional trace-gas radiation mode
@@ -340,9 +343,11 @@ The config file is the preferred place for persistent run setup. Existing CLI fl
 
 If you need one stable configuration today, use:
 
-- `scm/configs/mf_baseline_v1.toml`
+- `scm/configs/default.toml`
 
-That is the current frozen mass-flux configuration with a passing benchmark suite and the cleanest documented path toward future dycore coupling.
+That is the configuration used to generate the accepted ATM407 equilibrium
+checkpoint. Use `mf_baseline_v1.toml` only when reproducing results that were
+explicitly run with the earlier coupling benchmark.
 
 The radiation settings are now structured into sections like:
 
@@ -470,25 +475,15 @@ The richer default path also enables a conservative shallow-convection section:
 - `tau = 14400 s`
 - no shallow-convective precipitation by default
 
-And the richer default MF plume keeps a modest amount of condensate loading through `[mass_flux]`:
+The accepted default uses fixed CAPE closure with `tau_cape = 3600 s`, a cloud-base
+mass-flux ceiling of `0.10 kg m-2 s-1`, and no retained convective condensate. In
+the accepted equilibrium checkpoint the mass-flux ceiling is active throughout
+the late diagnostic window. Changes to `tau_cape` therefore do not necessarily
+change the applied convective response; both unlimited and applied mass flux must
+be inspected when interpreting closure experiments.
 
-- `condensate_retention = 0.25`
-- `condensate_fallout = 0.45`
-
-The development default also enables a softer flow-dependent CAPE closure timescale through `[mass_flux]`:
-
-- `cape_timescale_mode = "flow_dependent"`
-- `tau_cape = 5400 s`
-- `tau_cape_min = 3000 s`
-- `tau_cape_max = 9000 s`
-- `tau_cape_rh_ref = 0.60`
-- `tau_cape_cape_ref = 750 J/kg`
-
-This shortens the deep-convective adjustment time when CAPE excess is large and the
-free troposphere is moist, and lengthens it when the environment is drier or less
-unstable. The development snapshot in `scm/configs/mf_flowdev_v1.toml` pins the current
-softened values, while the frozen benchmark baseline keeps `cape_timescale_mode = "fixed"`
-so the reference benchmark stays stable across future physics development.
+The separate development snapshot in `scm/configs/mf_flowdev_v1.toml` retains the
+flow-dependent CAPE-timescale experiment.
 
 Those overrides are there to keep the lowest atmospheric level better coupled to the slab surface under the multiband plus cloud-microphysics configuration.
 

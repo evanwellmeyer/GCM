@@ -192,6 +192,7 @@ def physics_step(state, grid, params, rad_cache=None, ls_forcing=None):
     atm_energy_prev = atmospheric_energy_content(state, grid)
     atm_energy_start = atm_energy_prev.clone()
     atm_mse_prev = atmospheric_mse_content(state, grid)
+    water_prev = torch.sum((state['q'] + state['qc']) * state['dp'] / g, dim=1)
     atm_energy_after_forcing = atm_energy_start
     atm_mse_after_forcing = atm_mse_prev
 
@@ -295,10 +296,13 @@ def physics_step(state, grid, params, rad_cache=None, ls_forcing=None):
 
     # --- cloud microphysics / cloud-radiative state ---
     cloud_out = cloud_microphysics_step(state, grid, params, cond_out, conv_out)
+    state['t'] = state['t'] + cloud_out.get('dt', torch.zeros_like(state['t']))
+    state['q'] = state['q'] + cloud_out.get('dq', torch.zeros_like(state['q']))
     state['qc'] = cloud_out['qc']
     state['cloud_fraction'] = cloud_out['cloud_fraction']
     state['cloud_sw_tau_layer'] = cloud_out['cloud_sw_tau_layer']
     state['cloud_lw_tau_layer'] = cloud_out['cloud_lw_tau_layer']
+    atm_energy_after_cloud = atmospheric_energy_content(state, grid)
 
     # --- clamp to physical range ---
     state['q'] = torch.clamp(state['q'], min=1e-7, max=0.1)
@@ -352,6 +356,7 @@ def physics_step(state, grid, params, rad_cache=None, ls_forcing=None):
 
     atm_energy_now = atmospheric_energy_content(state, grid)
     atm_mse_now = atmospheric_mse_content(state, grid)
+    water_now = torch.sum((state['q'] + state['qc']) * state['dp'] / g, dim=1)
     forcing_energy_tendency = (atm_energy_after_forcing - atm_energy_start) / dt
     forcing_mse_tendency = (atm_mse_after_forcing - atm_mse_prev) / dt
     rad_energy_tendency = (atm_energy_after_rad - atm_energy_after_forcing) / dt
@@ -360,15 +365,26 @@ def physics_step(state, grid, params, rad_cache=None, ls_forcing=None):
     shallow_energy_tendency = (atm_energy_after_shallow - atm_energy_after_bl) / dt
     conv_energy_tendency = (atm_energy_after_conv - atm_energy_after_shallow) / dt
     condensation_energy_tendency = (atm_energy_after_cond - atm_energy_after_conv) / dt
+    cloud_energy_tendency = (atm_energy_after_cloud - atm_energy_after_cond) / dt
     atm_energy_tendency = (atm_energy_now - atm_energy_prev) / dt
-    atmos_flux_convergence = rad_out['toa_net'] - surface_total_flux
+    # Atmospheric storage does not include precipitating-liquid enthalpy.
+    # Keep the rain-temperature adjustment in the slab budget, but exclude
+    # that internal exchange from the atmospheric boundary flux.
+    atmos_flux_convergence = rad_out['toa_net'] - surface_net_flux
     atmos_energy_residual = atmos_flux_convergence - atm_energy_tendency
     column_energy_tendency = atm_energy_tendency + slab_energy_tendency
-    column_energy_residual = rad_out['toa_net'] - column_energy_tendency
+    column_energy_residual = (
+        rad_out['toa_net'] - column_energy_tendency + precip_heat_flux
+    )
     atm_mse_tendency = (atm_mse_now - atm_mse_prev) / dt
     atmos_mse_residual = atmos_flux_convergence - atm_mse_tendency
     column_mse_tendency = atm_mse_tendency + slab_energy_tendency
-    column_mse_residual = rad_out['toa_net'] - column_mse_tendency
+    column_mse_residual = (
+        rad_out['toa_net'] - column_mse_tendency + precip_heat_flux
+    )
+    column_water_tendency = (water_now - water_prev) / dt
+    column_water_flux = sfc_out['lhf'] / Lv - precip_total
+    column_water_residual = column_water_flux - column_water_tendency
 
     # diagnostics
     diag = {
@@ -419,6 +435,7 @@ def physics_step(state, grid, params, rad_cache=None, ls_forcing=None):
         'shallow_energy_tendency': shallow_energy_tendency,
         'conv_energy_tendency': conv_energy_tendency,
         'condensation_energy_tendency': condensation_energy_tendency,
+        'cloud_energy_tendency': cloud_energy_tendency,
         'atmos_flux_convergence': atmos_flux_convergence,
         'atmos_energy_tendency': atm_energy_tendency,
         'atmos_energy_residual': atmos_energy_residual,
@@ -429,8 +446,26 @@ def physics_step(state, grid, params, rad_cache=None, ls_forcing=None):
         'column_energy_residual': column_energy_residual,
         'column_mse_tendency': column_mse_tendency,
         'column_mse_residual': column_mse_residual,
+        'column_water_tendency': column_water_tendency,
+        'column_water_flux': column_water_flux,
+        'column_water_residual': column_water_residual,
         'cape': conv_out.get('cape', torch.zeros_like(state['ts'])),
         'tau_cape_eff': conv_out.get('tau_cape_eff', torch.zeros_like(state['ts'])),
+        'cloud_base_mass_flux': conv_out.get(
+            'cloud_base_mass_flux', torch.zeros_like(state['ts'])
+        ),
+        'cloud_base_mass_flux_unlimited': conv_out.get(
+            'cloud_base_mass_flux_unlimited', torch.zeros_like(state['ts'])
+        ),
+        'mass_flux_cap_active': conv_out.get(
+            'mass_flux_cap_active', torch.zeros_like(state['ts'], dtype=torch.bool)
+        ).to(state['ts'].dtype),
+        'temperature_cap_fraction': conv_out.get(
+            'temperature_cap_fraction', torch.zeros_like(state['ts'])
+        ),
+        'moisture_cap_fraction': conv_out.get(
+            'moisture_cap_fraction', torch.zeros_like(state['ts'])
+        ),
         'shallow_mse_residual': shallow_out.get('mse_residual', torch.zeros_like(state['ts'])),
         'cloud_cover': 1.0 - torch.prod(
             1.0 - cloud_out['cloud_fraction'].clamp(min=0.0, max=1.0), dim=1

@@ -87,7 +87,7 @@ Before starting a long or published experiment:
 
 1. Record the Git commit with `git rev-parse HEAD` and keep the run configuration.
 2. Run `python -m pytest` in the same environment used for the experiment.
-3. Begin with the frozen `scm/configs/mf_baseline_v1.toml` reference unless your experiment requires a documented alternative.
+3. Begin with `scm/configs/default.toml`, the accepted standalone SCM reference, unless your experiment requires a documented alternative.
 4. Use a new output location or archive earlier output before rerunning the same case.
 5. Inspect energy-budget, equilibrium, and forcing diagnostics; a completed process is not automatically a scientifically valid run.
 6. Record Python, PyTorch, hardware, configuration, random seed, and wall-clock time in the experiment log.
@@ -98,5 +98,8 @@ For model design, configuration details, benchmark commands, and longer runs, co
 
 Students who are using Jupyter can instead begin with
 [`01_setup.ipynb`](../notebooks/01_setup.ipynb). After installation and kernel
-verification, [`02_experiments.ipynb`](../notebooks/02_experiments.ipynb)
-provides self-contained exercises without requiring students to edit TOML files.
+verification, [`02_experiments_atm407.ipynb`](../notebooks/02_experiments_atm407.ipynb)
+provides the self-contained atmospheric dynamics lab without requiring students
+to edit TOML files. The general
+[`02_experiments.ipynb`](../notebooks/02_experiments.ipynb) provides a shorter
+introductory exercise sequence.
