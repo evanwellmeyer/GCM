@@ -248,14 +248,25 @@ def physics_step(state, grid, params, rad_cache=None, ls_forcing=None):
 
     # --- boundary layer mixing ---
     state = update_derived(state, grid)
+    bl_params = params
+    flux_coupled = params.get('surface_flux_coupling', 'distributed') == 'boundary_layer'
+    if flux_coupled:
+        bl_params = dict(params)
+        bl_params['_surface_sensible_heat_flux'] = sfc_out['shf']
+        bl_params['_surface_moisture_flux'] = sfc_out['lhf'] / Lv
+        bl_params['_surface_energy_flux'] = sfc_out['shf'] + sfc_out['lhf']
     bl_out = run_physics_scheme(
-        'boundary_layer', params.get('boundary_layer_scheme', 'richardson'), state, grid, params
+        'boundary_layer', params.get('boundary_layer_scheme', 'richardson'), state, grid, bl_params
     )
     check_nan('bl dt', bl_out['dt'])
     bl_dt = torch.nan_to_num(bl_out['dt'], nan=0.0).to(state['t'].dtype)
     bl_dq = torch.nan_to_num(bl_out['dq'], nan=0.0).to(state['q'].dtype)
+    bl_dqc = torch.nan_to_num(
+        bl_out.get('dqc', torch.zeros_like(state['qc'])), nan=0.0
+    ).to(state['qc'].dtype)
     state['t'] = state['t'] + bl_dt * dt
     state['q'] = state['q'] + bl_dq * dt
+    state['qc'] = torch.clamp(state['qc'] + bl_dqc * dt, min=0.0)
     atm_energy_after_bl = atmospheric_energy_content(state, grid)
 
     # --- shallow convection ---
@@ -363,6 +374,9 @@ def physics_step(state, grid, params, rad_cache=None, ls_forcing=None):
     rad_energy_tendency = (atm_energy_after_rad - atm_energy_after_forcing) / dt
     surface_energy_tendency = (atm_energy_after_surface - atm_energy_after_rad) / dt
     bl_energy_tendency = (atm_energy_after_bl - atm_energy_after_surface) / dt
+    if flux_coupled:
+        surface_energy_tendency = sfc_out['shf'] + sfc_out['lhf']
+        bl_energy_tendency = bl_energy_tendency - surface_energy_tendency
     shallow_energy_tendency = (atm_energy_after_shallow - atm_energy_after_bl) / dt
     conv_energy_tendency = (atm_energy_after_conv - atm_energy_after_shallow) / dt
     condensation_energy_tendency = (atm_energy_after_cond - atm_energy_after_conv) / dt
@@ -497,10 +511,15 @@ def physics_step(state, grid, params, rad_cache=None, ls_forcing=None):
         diag.update({
             'radiation_temperature_tendency': rad_dt,
             'radiation_moisture_tendency': rad_dq,
-            'surface_temperature_tendency': sfc_dt,
-            'surface_moisture_tendency': sfc_dq,
-            'boundary_layer_temperature_tendency': bl_dt,
-            'boundary_layer_moisture_tendency': bl_dq,
+            'surface_temperature_tendency': bl_out.get('surface_dt', sfc_dt) if flux_coupled else sfc_dt,
+            'surface_moisture_tendency': bl_out.get('surface_dq', sfc_dq) if flux_coupled else sfc_dq,
+            'boundary_layer_temperature_tendency': bl_out.get('mixing_dt', bl_dt) if flux_coupled else bl_dt,
+            'boundary_layer_moisture_tendency': bl_out.get('mixing_dq', bl_dq) if flux_coupled else bl_dq,
+            'boundary_layer_condensate_tendency': bl_out.get('mixing_dqc', bl_dqc) if flux_coupled else bl_dqc,
+            'boundary_layer_total_water_tendency': (
+                bl_out.get('mixing_dq', bl_dq) + bl_out.get('mixing_dqc', bl_dqc)
+                if flux_coupled else bl_dq + bl_dqc
+            ),
             'shallow_temperature_tendency': shallow_dt,
             'shallow_moisture_tendency': shallow_dq,
             'deep_temperature_tendency': conv_dt,

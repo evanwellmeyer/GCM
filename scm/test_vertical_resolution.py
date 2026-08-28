@@ -62,6 +62,19 @@ def test_surface_flux_distribution_conserves_flux_across_grids():
         assert torch.allclose(moisture_flux, output['lhf'], rtol=1.0e-5, atol=1.0e-5)
 
 
+def test_boundary_layer_coupling_does_not_deposit_surface_fluxes_directly():
+    grid = make_grid(20)
+    params = default_params()
+    params['surface_flux_coupling'] = 'boundary_layer'
+    state = update_derived(initial_state(1, grid, params), grid)
+    output = surface_fluxes(state, grid, params)
+
+    assert torch.count_nonzero(output['dt']) == 0
+    assert torch.count_nonzero(output['dq']) == 0
+    assert torch.all(output['shf'] > 0.0)
+    assert torch.all(output['lhf'] > 0.0)
+
+
 def test_diagnosed_boundary_depth_is_grid_independent():
     depths = []
     for nlevels in [10, 20, 40]:
@@ -101,6 +114,69 @@ def test_boundary_layer_mse_mixing_conserves_column_energy():
     )
 
     assert torch.allclose(energy_tendency, torch.zeros_like(energy_tendency), atol=5.0e-2)
+
+
+def test_boundary_layer_surface_flux_is_conservative_across_grids():
+    for nlevels in [10, 20, 40]:
+        grid = make_grid(nlevels)
+        params = default_params()
+        params.update({
+            'dt': 900.0,
+            'bl_diagnose_depth': True,
+            'bl_min_depth_m': 100.0,
+            'bl_max_depth_m': 900.0,
+            'bl_mix_moist_static_energy': True,
+        })
+        state = update_derived(initial_state(1, grid, params), grid)
+        surface = surface_fluxes(state, grid, params)
+        params['_surface_sensible_heat_flux'] = surface['shf']
+        params['_surface_moisture_flux'] = surface['lhf'] / Lv
+        params['_surface_energy_flux'] = surface['shf'] + surface['lhf']
+        output = boundary_layer_mixing(state, grid, params)
+        layer_mass = state['dp'] / g
+
+        energy_flux = torch.sum(
+            (cp * output['dt'] + Lv * output['dq']) * layer_mass,
+            dim=1,
+        )
+        moisture_flux = torch.sum(output['dq'] * layer_mass, dim=1)
+
+        expected_energy_flux = (surface['shf'] + surface['lhf']).to(energy_flux.dtype)
+        expected_moisture_flux = (surface['lhf'] / Lv).to(moisture_flux.dtype)
+        assert torch.allclose(
+            energy_flux, expected_energy_flux, rtol=3.0e-3, atol=5.0e-2
+        )
+        assert torch.allclose(
+            moisture_flux, expected_moisture_flux, rtol=2.0e-4, atol=2.0e-8
+        )
+
+
+def test_boundary_layer_cloud_transport_conserves_total_water_and_energy():
+    grid = make_grid(20)
+    params = default_params()
+    params.update({
+        'dt': 900.0,
+        'bl_diagnose_depth': True,
+        'bl_min_depth_m': 100.0,
+        'bl_max_depth_m': 900.0,
+        'bl_mix_moist_static_energy': True,
+        'bl_mix_total_water': True,
+    })
+    state = update_derived(initial_state(1, grid, params), grid)
+    state['qc'][:, -3:] = torch.tensor([0.0, 5.0e-4, 1.0e-3])
+    output = boundary_layer_mixing(state, grid, params)
+    layer_mass = state['dp'] / g
+    water_tendency = torch.sum(
+        (output['dq'] + output['dqc']) * layer_mass,
+        dim=1,
+    )
+    energy_tendency = torch.sum(
+        (cp * output['dt'] + Lv * output['dq']) * layer_mass,
+        dim=1,
+    )
+
+    assert torch.allclose(water_tendency, torch.zeros_like(water_tendency), atol=2.0e-8)
+    assert torch.allclose(energy_tendency, torch.zeros_like(energy_tendency), atol=1.5e-1)
 
 
 def test_mass_flux_cape_response_converges_across_teaching_grids():

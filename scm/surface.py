@@ -88,6 +88,10 @@ def surface_fluxes(state, grid, params):
     dt = heat_weights * (shf / (heat_mass * cp)).unsqueeze(1)
     dq = moist_weights * (lhf / (moist_mass * Lv)).unsqueeze(1)
 
+    if params.get('surface_flux_coupling', 'distributed') == 'boundary_layer':
+        dt = torch.zeros_like(dt)
+        dq = torch.zeros_like(dq)
+
     return {
         'dt': dt,
         'dq': dq,

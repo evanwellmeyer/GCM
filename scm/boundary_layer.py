@@ -20,6 +20,7 @@ def boundary_layer_mixing(state, grid, params):
 
     t = state['t']
     q = state['q']
+    qc = state.get('qc', torch.zeros_like(q))
     p = state['p']
     dp = state['dp']
 
@@ -60,17 +61,53 @@ def boundary_layer_mixing(state, grid, params):
         a[:, mix_top + 1:nlevels] = -coeff_above
         b[:, mix_top + 1:nlevels] = b[:, mix_top + 1:nlevels] + coeff_above
 
-    q_new = tridiag_solve(a, b, c, q, mix_top, nlevels)
+    mix_total_water = bool(params.get('bl_mix_total_water', False))
+    water = q + qc if mix_total_water else q
+    water_mixed = tridiag_solve(a, b, c, water, mix_top, nlevels)
+    water_rhs = water.clone()
+    moisture_flux = params.get('_surface_moisture_flux', None)
+    if moisture_flux is not None:
+        moisture_flux = _as_batch_tensor(moisture_flux, batch, t.device, t.dtype)
+        water_rhs[:, -1] = water_rhs[:, -1] + dt * moisture_flux / mass[:, -1]
+    water_new = tridiag_solve(a, b, c, water_rhs, mix_top, nlevels)
+    if mix_total_water:
+        qc_mixed = tridiag_solve(a, b, c, qc, mix_top, nlevels)
+        qc_new = qc_mixed
+        q_mixed = torch.clamp(water_mixed - qc_mixed, min=0.0)
+        q_new = torch.clamp(water_new - qc_new, min=0.0)
+    else:
+        q_mixed = water_mixed
+        q_new = water_new
+        qc_mixed = qc
+        qc_new = qc
+
     if params.get('bl_mix_moist_static_energy', False):
         height = geopotential(t, q, p, grid)
         mse = cp * t + Lv * q + g * height
-        mse_new = tridiag_solve(a, b, c, mse, mix_top, nlevels)
+        mse_mixed = tridiag_solve(a, b, c, mse, mix_top, nlevels)
+        mse_rhs = mse.clone()
+        energy_flux = params.get('_surface_energy_flux', None)
+        if energy_flux is not None:
+            energy_flux = _as_batch_tensor(energy_flux, batch, t.device, t.dtype)
+            mse_rhs[:, -1] = mse_rhs[:, -1] + dt * energy_flux / mass[:, -1]
+        mse_new = tridiag_solve(a, b, c, mse_rhs, mix_top, nlevels)
+        t_mixed = (mse_mixed - Lv * q_mixed - g * height) / cp
         t_new = (mse_new - Lv * q_new - g * height) / cp
     else:
-        t_new = tridiag_solve(a, b, c, t, mix_top, nlevels)
+        t_mixed = tridiag_solve(a, b, c, t, mix_top, nlevels)
+        t_rhs = t.clone()
+        sensible_flux = params.get('_surface_sensible_heat_flux', None)
+        if sensible_flux is not None:
+            sensible_flux = _as_batch_tensor(sensible_flux, batch, t.device, t.dtype)
+            t_rhs[:, -1] = t_rhs[:, -1] + dt * sensible_flux / (cp * mass[:, -1])
+        t_new = tridiag_solve(a, b, c, t_rhs, mix_top, nlevels)
 
     dt_tend = (t_new - t) / dt
     dq_tend = (q_new - q) / dt
+    dqc_tend = (qc_new - qc) / dt
+    surface_dt_tend = (t_new - t_mixed) / dt
+    surface_dq_tend = (q_new - q_mixed) / dt
+    surface_dqc_tend = (qc_new - qc_mixed) / dt
 
     boundary_depth = torch.zeros(batch, device=t.device, dtype=t.dtype)
     if diagnose_depth:
@@ -89,6 +126,13 @@ def boundary_layer_mixing(state, grid, params):
     return {
         'dt': dt_tend,
         'dq': dq_tend,
+        'dqc': dqc_tend,
+        'mixing_dt': dt_tend - surface_dt_tend,
+        'mixing_dq': dq_tend - surface_dq_tend,
+        'mixing_dqc': dqc_tend - surface_dqc_tend,
+        'surface_dt': surface_dt_tend,
+        'surface_dq': surface_dq_tend,
+        'surface_dqc': surface_dqc_tend,
         'boundary_layer_depth_m': boundary_depth,
     }
 
