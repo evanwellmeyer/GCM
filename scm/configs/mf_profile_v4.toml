@@ -1,0 +1,18 @@
+[run]
+label = "mf_profile_v4"
+
+[radiation]
+scheme = "multiband_ozone_profile"
+
+[mass_flux]
+mse_correction_top_sigma = 0.20
+
+[composition]
+o3_peak_sigma = 0.08
+o3_width_sigma = 0.04
+
+[params]
+bl_mix_moist_static_energy = true
+bl_diagnose_depth = true
+bl_min_depth_m = 100.0
+bl_max_depth_m = 900.0

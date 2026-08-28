@@ -477,6 +477,9 @@ def physics_step(state, grid, params, rad_cache=None, ls_forcing=None):
             'moisture_cap_fraction', torch.zeros_like(state['ts'])
         ),
         'shallow_mse_residual': shallow_out.get('mse_residual', torch.zeros_like(state['ts'])),
+        'boundary_layer_depth_m': bl_out.get(
+            'boundary_layer_depth_m', torch.zeros_like(state['ts'])
+        ),
         'cloud_cover': 1.0 - torch.prod(
             1.0 - cloud_out['cloud_fraction'].clamp(min=0.0, max=1.0), dim=1
         ),

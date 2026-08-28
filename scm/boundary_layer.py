@@ -2,7 +2,7 @@
 # backward euler with tridiagonal solve, unconditionally stable.
 
 import torch
-from scm.thermo import g, cp, Rd, p0, kappa, virtual_temperature, full_level_coordinate
+from scm.thermo import Lv, g, cp, Rd, p0, kappa, geopotential, virtual_temperature, full_level_coordinate
 
 
 def boundary_layer_mixing(state, grid, params):
@@ -26,7 +26,10 @@ def boundary_layer_mixing(state, grid, params):
     batch = t.shape[0]
     mass = dp / g
 
-    if 'bl_top_sigma' in params:
+    diagnose_depth = bool(params.get('bl_diagnose_depth', False))
+    if diagnose_depth:
+        mix_top = 0
+    elif 'bl_top_sigma' in params:
         sigma = full_level_coordinate(grid, state=state, device=t.device, dtype=t.dtype)
         active = sigma[0] >= float(params['bl_top_sigma'])
         indices = torch.nonzero(active, as_tuple=False).flatten()
@@ -57,15 +60,36 @@ def boundary_layer_mixing(state, grid, params):
         a[:, mix_top + 1:nlevels] = -coeff_above
         b[:, mix_top + 1:nlevels] = b[:, mix_top + 1:nlevels] + coeff_above
 
-    t_new = tridiag_solve(a, b, c, t, mix_top, nlevels)
     q_new = tridiag_solve(a, b, c, q, mix_top, nlevels)
+    if params.get('bl_mix_moist_static_energy', False):
+        height = geopotential(t, q, p, grid)
+        mse = cp * t + Lv * q + g * height
+        mse_new = tridiag_solve(a, b, c, mse, mix_top, nlevels)
+        t_new = (mse_new - Lv * q_new - g * height) / cp
+    else:
+        t_new = tridiag_solve(a, b, c, t, mix_top, nlevels)
 
     dt_tend = (t_new - t) / dt
     dq_tend = (q_new - q) / dt
 
+    boundary_depth = torch.zeros(batch, device=t.device, dtype=t.dtype)
+    if diagnose_depth:
+        wind_value = params.get(
+            'relative_wind_speed_cell',
+            params.get('relative_wind_speed', params.get('surface_wind_speed', params.get('wind_speed', 5.0))),
+        )
+        wind = _as_batch_tensor(wind_value, batch, t.device, t.dtype)
+        shear_floor = _as_batch_tensor(params.get('bl_shear_floor', 1.0), batch, t.device, t.dtype)
+        wind2 = wind * wind + shear_floor * shear_floor
+        theta_v = virtual_temperature(t, q) * (p0 / p.clamp(min=1.0)) ** kappa
+        height = geopotential(t, q, p, grid)
+        ri_crit = _as_batch_tensor(params.get('ri_crit', 0.25), batch, t.device, t.dtype)
+        boundary_depth = diagnose_boundary_layer_depth(height, theta_v, wind2, ri_crit, params)
+
     return {
         'dt': dt_tend,
         'dq': dq_tend,
+        'boundary_layer_depth_m': boundary_depth,
     }
 
 
@@ -135,7 +159,6 @@ def richardson_diffusivity(state, grid, params, k_diff, mix_top):
     tv = virtual_temperature(t, q)
     theta_v = tv * (p0 / p.clamp(min=1.0)) ** kappa
     sigma_full = full_level_coordinate(grid, state=state, device=device, dtype=dtype)
-    sigma_top = sigma_full[:, mix_top:mix_top + 1]
 
     d = torch.zeros(batch, nlevels, device=device, dtype=dtype)
     wind2 = wind * wind + shear_floor * shear_floor
@@ -156,11 +179,25 @@ def richardson_diffusivity(state, grid, params, k_diff, mix_top):
         unstable_factor = 1.0 + unstable_boost.unsqueeze(1) * torch.clamp(-ri, min=0.0)
         stability_factor = torch.where(ri >= 0.0, stable_factor, unstable_factor)
 
-        sigma_interface = 0.5 * (
-            sigma_full[:, mix_top:nlevels - 1] + sigma_full[:, mix_top + 1:nlevels]
-        )
-        depth_denominator = (1.0 - sigma_top).clamp(min=1.0e-3)
-        depth_factor = ((sigma_interface - sigma_top) / depth_denominator).clamp(min=0.2, max=1.0)
+        if params.get('bl_diagnose_depth', False):
+            height = geopotential(t, q, p, grid)
+            boundary_depth = diagnose_boundary_layer_depth(
+                height, theta_v, wind2, ri_crit, params
+            )
+            interface_height = 0.5 * (
+                height[:, mix_top:nlevels - 1] + height[:, mix_top + 1:nlevels]
+            )
+            depth_factor = (
+                (boundary_depth.unsqueeze(1) - interface_height)
+                / boundary_depth.unsqueeze(1).clamp(min=1.0)
+            ).clamp(min=0.0, max=1.0) ** 2
+        else:
+            sigma_top = sigma_full[:, mix_top:mix_top + 1]
+            sigma_interface = 0.5 * (
+                sigma_full[:, mix_top:nlevels - 1] + sigma_full[:, mix_top + 1:nlevels]
+            )
+            depth_denominator = (1.0 - sigma_top).clamp(min=1.0e-3)
+            depth_factor = ((sigma_interface - sigma_top) / depth_denominator).clamp(min=0.2, max=1.0)
 
         kd = kd_base.unsqueeze(1) * depth_factor * stability_factor
         kd = torch.maximum(kd, kd_min.unsqueeze(1) * depth_factor)
@@ -170,6 +207,38 @@ def richardson_diffusivity(state, grid, params, k_diff, mix_top):
         d[:, mix_top:nlevels - 1] = kd * g * rho_ref * rho_ref / dp_interface
 
     return d
+
+
+def diagnose_boundary_layer_depth(height, theta_v, wind2, ri_crit, params):
+    """Find the first bulk-Richardson crossing above the surface layer."""
+
+    batch, nlevels = height.shape
+    minimum_depth = _as_batch_tensor(
+        params.get('bl_min_depth_m', 100.0), batch, height.device, height.dtype
+    )
+    maximum_depth = _as_batch_tensor(
+        params.get('bl_max_depth_m', 1200.0), batch, height.device, height.dtype
+    )
+    surface_theta = theta_v[:, -1]
+    bulk_ri = (
+        g * height * (theta_v - surface_theta.unsqueeze(1))
+        / (surface_theta.unsqueeze(1).clamp(min=150.0) * wind2.unsqueeze(1).clamp(min=1.0))
+    )
+
+    boundary_depth = maximum_depth.clone()
+    unresolved = torch.ones(batch, device=height.device, dtype=torch.bool)
+    for upper in range(nlevels - 2, -1, -1):
+        lower = upper + 1
+        crossing = unresolved & (bulk_ri[:, upper] >= ri_crit)
+        ri_span = (bulk_ri[:, upper] - bulk_ri[:, lower]).clamp(min=1.0e-8)
+        fraction = ((ri_crit - bulk_ri[:, lower]) / ri_span).clamp(min=0.0, max=1.0)
+        crossing_height = height[:, lower] + fraction * (height[:, upper] - height[:, lower])
+        boundary_depth = torch.where(crossing, crossing_height, boundary_depth)
+        unresolved = unresolved & ~crossing
+
+    lower_bound = torch.minimum(minimum_depth, maximum_depth)
+    upper_bound = torch.maximum(minimum_depth, maximum_depth)
+    return torch.maximum(torch.minimum(boundary_depth, upper_bound), lower_bound)
 
 
 def tridiag_solve(a, b, c, rhs, k_start, k_end):

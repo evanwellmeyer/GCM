@@ -251,6 +251,7 @@ def extract_param_overrides(config):
             "mf_available_mass_fraction": mass_flux.get("available_mass_fraction"),
             "mf_source_top_sigma": mass_flux.get("source_top_sigma"),
             "mf_buoyancy_detrainment_weight": mass_flux.get("buoyancy_detrainment_weight"),
+            "mf_mse_correction_top_sigma": mass_flux.get("mse_correction_top_sigma"),
         }))
 
     return params

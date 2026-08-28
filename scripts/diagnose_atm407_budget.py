@@ -115,6 +115,7 @@ result = {
         'surface_total_flux_wm2': meanvalue('surface_total_flux').item(),
         'cape_jkg': meanvalue('cape').item(),
         'rh95_mass_fraction': rh95mass.item(),
+        'boundary_layer_depth_m': meanvalue('boundary_layer_depth_m').item(),
         'deep_precipitation_mmday': meanvalue('precip_conv').item() * 86400,
         'large_scale_precipitation_mmday': meanvalue('precip_ls').item() * 86400,
         'cloud_precipitation_mmday': meanvalue('precip_cloud').item() * 86400,

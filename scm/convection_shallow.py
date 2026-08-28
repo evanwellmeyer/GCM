@@ -5,7 +5,7 @@ from scm.thermo import (
     cp,
     cape,
     relative_humidity,
-    full_level_coordinate,
+    half_level_coordinate,
     saturation_specific_humidity,
 )
 
@@ -32,17 +32,34 @@ def shallow_convection(state, grid, params):
     if not params.get('shallow_convection_enabled', False):
         return {'dt': zeros_t, 'dq': zeros_t, 'precip': zeros_s}
 
-    sigma = full_level_coordinate(grid, state=state, device=device, dtype=dtype)
+    sigmahalf = half_level_coordinate(grid, state=state, device=device, dtype=dtype)
+    sigmalower = sigmahalf[:, 1:]
+    sigmaupper = sigmahalf[:, :-1]
+    sigmaspan = (sigmalower - sigmaupper).clamp(min=1.0e-8)
     top_sigma = float(params.get('shallow_top_sigma', 0.75))
     base_sigma = float(params.get('shallow_base_sigma', 0.90))
-    low_mask_2d = (sigma >= base_sigma)
-    up_mask_2d = (sigma >= top_sigma) & (sigma < base_sigma)
+    lowoverlap = (sigmalower - torch.maximum(
+        sigmaupper,
+        torch.as_tensor(base_sigma, device=device, dtype=dtype),
+    )).clamp(min=0.0)
+    upoverlap = (
+        torch.minimum(
+            sigmalower,
+            torch.as_tensor(base_sigma, device=device, dtype=dtype),
+        )
+        - torch.maximum(
+            sigmaupper,
+            torch.as_tensor(top_sigma, device=device, dtype=dtype),
+        )
+    ).clamp(min=0.0)
+    low_mask_2d = (lowoverlap / sigmaspan).clamp(max=1.0)
+    up_mask_2d = (upoverlap / sigmaspan).clamp(max=1.0)
 
     if not low_mask_2d.any() or not up_mask_2d.any():
         return {'dt': zeros_t, 'dq': zeros_t, 'precip': zeros_s}
 
-    low_mask = low_mask_2d.to(dtype)
-    up_mask = up_mask_2d.to(dtype)
+    low_mask = low_mask_2d
+    up_mask = up_mask_2d
     mass = dp / 9.81
     low_mass = (low_mask * mass).sum(dim=1).clamp(min=1.0e-8)
     up_mass = (up_mask * mass).sum(dim=1).clamp(min=1.0e-8)

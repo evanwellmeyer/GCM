@@ -1,5 +1,7 @@
 import torch
 
+from scm.boundary_layer import boundary_layer_mixing, diagnose_boundary_layer_depth
+
 from scm.column_model import initial_state, update_derived
 from scm.convection_mf import dilute_cape, mass_flux_convection
 from scm.ensemble import default_params
@@ -58,6 +60,47 @@ def test_surface_flux_distribution_conserves_flux_across_grids():
 
         assert torch.allclose(heat_flux, output['shf'], rtol=1.0e-5, atol=1.0e-5)
         assert torch.allclose(moisture_flux, output['lhf'], rtol=1.0e-5, atol=1.0e-5)
+
+
+def test_diagnosed_boundary_depth_is_grid_independent():
+    depths = []
+    for nlevels in [10, 20, 40]:
+        height = torch.linspace(2000.0, 0.0, nlevels).unsqueeze(0)
+        theta = 300.0 + 0.001 * height
+        depth = diagnose_boundary_layer_depth(
+            height,
+            theta,
+            torch.tensor([25.0]),
+            torch.tensor([0.25]),
+            {'bl_min_depth_m': 100.0, 'bl_max_depth_m': 1500.0},
+        )
+        depths.append(depth[0])
+
+    depths = torch.stack(depths)
+    assert depths.max() - depths.min() < 20.0
+    assert torch.all((depths > 400.0) & (depths < 480.0))
+
+
+def test_boundary_layer_mse_mixing_conserves_column_energy():
+    grid = make_grid(20)
+    params = default_params()
+    params.update({
+        'dt': 900.0,
+        'bl_diagnose_depth': True,
+        'bl_min_depth_m': 100.0,
+        'bl_max_depth_m': 900.0,
+        'bl_mix_moist_static_energy': True,
+    })
+    state = initial_state(1, grid, params)
+    state = update_derived(state, grid)
+    output = boundary_layer_mixing(state, grid, params)
+    layer_mass = state['dp'] / g
+    energy_tendency = torch.sum(
+        (cp * output['dt'] + Lv * output['dq']) * layer_mass,
+        dim=1,
+    )
+
+    assert torch.allclose(energy_tendency, torch.zeros_like(energy_tendency), atol=5.0e-2)
 
 
 def test_mass_flux_cape_response_converges_across_teaching_grids():

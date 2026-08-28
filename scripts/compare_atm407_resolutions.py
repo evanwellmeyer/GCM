@@ -40,7 +40,6 @@ for nlevels in args.levels:
         'ts_init': args.surface_temperature,
         'use_slab_ocean': False,
         'convection_scheme': 'mass_flux',
-        'radiation_scheme': 'multiband',
     })
     if args.mb_max is not None:
         params['mf_mb_max'] = args.mb_max
@@ -84,6 +83,9 @@ for nlevels in args.levels:
         'atmospheric_energy_residual_wm2': stats['atmos_energy_residual_mean'][0].item(),
         'fixed_surface_column_residual_wm2': stats['column_energy_residual_mean'][0].item(),
         'rh95_mass_fraction': (saturated_mass / column_mass).item(),
+        'boundary_layer_depth_m': torch.stack([
+            item['boundary_layer_depth_m'][0] for item in history[-window:]
+        ]).mean().item(),
         'cloud_base_mass_flux_kgm2s': stats['cloud_base_mass_flux_mean'][0].item(),
         'mass_flux_cap_fraction': stats['mass_flux_cap_active_mean'][0].item(),
         'temperature_cap_fraction': stats['temperature_cap_fraction_mean'][0].item(),

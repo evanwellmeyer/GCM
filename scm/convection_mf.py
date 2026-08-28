@@ -44,11 +44,15 @@ def _column_param(params, name, default, ref_tensor, batch):
     return _as_column_tensor(params.get(name, default), ref_tensor, batch, name)
 
 
-def _conserve_mse(dt_tend, dq_tend, dp):
+def _conserve_mse(dt_tend, dq_tend, dp, correction_region=None):
     """Remove the column moist-energy residual from active temperature levels."""
 
     residual = torch.sum((cp * dt_tend + Lv * dq_tend) * dp / g, dim=1)
     active = ((dt_tend.abs() + dq_tend.abs()) > 0.0).to(dt_tend.dtype)
+    if correction_region is not None:
+        active = active * correction_region.to(dt_tend.dtype)
+        empty = active.sum(dim=1) == 0
+        active[empty] = ((dt_tend[empty].abs() + dq_tend[empty].abs()) > 0.0).to(dt_tend.dtype)
     active_mass = torch.sum(active * dp / g, dim=1).clamp(min=1.0e-8)
     correction = residual / (cp * active_mass)
     corrected = dt_tend - correction.unsqueeze(1) * active
@@ -162,6 +166,9 @@ def mass_flux_convection(state, grid, params):
     ).clamp(min=0.0, max=1.0)
     enforce_mse = bool(params.get('mf_enforce_mse_conservation', True))
     model_dt = float(params.get('dt', 900.0))
+    correction_top_sigma = float(params.get('mf_mse_correction_top_sigma', 0.0))
+    fullsigma = full_level_coordinate(grid, state=state, device=t.device, dtype=t.dtype)
+    correction_region = fullsigma >= correction_top_sigma
 
     # use dilute CAPE for the closure
     cape_val = dilute_cape(
@@ -319,7 +326,7 @@ def mass_flux_convection(state, grid, params):
         trial_dt = dt_norm * trial_mass_flux.unsqueeze(1)
         trial_dq = dq_norm * trial_mass_flux.unsqueeze(1)
         if enforce_mse:
-            trial_dt = _conserve_mse(trial_dt, trial_dq, dp)
+            trial_dt = _conserve_mse(trial_dt, trial_dq, dp, correction_region)
 
         trial_t = torch.clamp(t + model_dt * trial_dt, min=150.0, max=350.0)
         trial_q = torch.clamp(q + model_dt * trial_dq, min=1.0e-7, max=0.1)
@@ -388,7 +395,7 @@ def mass_flux_convection(state, grid, params):
     # simply because the two profiles were limited independently.
     mse_residual = torch.sum((cp * dt_tend + Lv * dq_tend) * dp / g, dim=1)
     if enforce_mse:
-        dt_tend = _conserve_mse(dt_tend, dq_tend, dp)
+        dt_tend = _conserve_mse(dt_tend, dq_tend, dp, correction_region)
         dt_tend = torch.maximum(torch.minimum(dt_tend, max_dt), -max_dt)
         mse_residual = torch.sum((cp * dt_tend + Lv * dq_tend) * dp / g, dim=1)
 
