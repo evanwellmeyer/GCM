@@ -123,6 +123,14 @@ result = {
         'surface_temperature_k': meanvalue('ts').item(),
         'surface_temperature_drift_k': (history[-1]['ts'][0] - history[0]['ts'][0]).item(),
         'toa_net_wm2': meanvalue('toa_net').item(),
+        'clear_sky_toa_net_wm2': meanvalue('clear_sky_toa_net').item(),
+        'cloud_toa_effect_wm2': (
+            meanvalue('toa_net') - meanvalue('clear_sky_toa_net')
+        ).item(),
+        'cloud_shortwave_effect_wm2': meanvalue('cloud_sw_cre').item(),
+        'cloud_longwave_effect_wm2': meanvalue('cloud_lw_cre').item(),
+        'clear_sky_asr_wm2': meanvalue('clear_sky_asr').item(),
+        'clear_sky_olr_wm2': meanvalue('clear_sky_olr').item(),
         'surface_total_flux_wm2': meanvalue('surface_total_flux').item(),
         'cape_jkg': meanvalue('cape').item(),
         'rh95_mass_fraction': rh95mass.item(),

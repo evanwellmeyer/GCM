@@ -212,8 +212,11 @@ def cloud_microphysics_step(state, grid, params, cond_out, conv_out, shallow_out
     k_liq_lw = float(params.get('cloud_k_liq_lw', 12.0))
     k_ice_lw = float(params.get('cloud_k_ice_lw', 6.0))
 
-    cloud_sw_tau_layer = cloud_fraction * (k_liq_sw * lwp + k_ice_sw * iwp)
-    cloud_lw_tau_layer = cloud_fraction * (k_liq_lw * lwp + k_ice_lw * iwp)
+    cloud_sw_tau_layer = k_liq_sw * lwp + k_ice_sw * iwp
+    cloud_lw_tau_layer = k_liq_lw * lwp + k_ice_lw * iwp
+    if not params.get('cloud_optical_depth_from_gridmean_water', False):
+        cloud_sw_tau_layer = cloud_fraction * cloud_sw_tau_layer
+        cloud_lw_tau_layer = cloud_fraction * cloud_lw_tau_layer
     precip = torch.sum((overflow_sink + autoconv_sink) * dp / g, dim=1)
 
     return {

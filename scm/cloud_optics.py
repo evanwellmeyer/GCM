@@ -65,15 +65,49 @@ def _microphysics_cloud_optics(state, params, batch, dtype, linear=False):
         params.get("cloud_sw_scattering_efficiency", 0.18),
         batch, device, dtype
     )
+    abs_frac = as_batch_tensor(
+        params.get("cloud_sw_absorption_fraction", 0.15),
+        batch, device, dtype
+    )
+    if params.get("cloud_fractional_gridmean_optics", False):
+        safe_fraction = cf.clamp(min=1.0e-6)
+        incloud_sw_tau = sw_tau_layer / safe_fraction
+        incloud_lw_tau = lw_tau_layer / safe_fraction
+        layer_reflectivity = cf * (
+            1.0 - torch.exp(-scatter_eff.unsqueeze(1) * incloud_sw_tau)
+        )
+        reflectivity = 1.0 - torch.prod(1.0 - layer_reflectivity, dim=1)
+        clear_fraction = 1.0 - cf
+        sw_transmission = clear_fraction + cf * torch.exp(
+            -abs_frac.unsqueeze(1) * incloud_sw_tau
+        )
+        lw_transmission = clear_fraction + cf * torch.exp(-incloud_lw_tau)
+        sw_effective_tau = -torch.log(sw_transmission.clamp(min=1.0e-8))
+        lw_effective_tau = -torch.log(lw_transmission.clamp(min=1.0e-8))
+        blend = float(params.get("cloud_fractional_optics_blend", 1.0))
+        blend = max(0.0, min(blend, 1.0))
+        legacy_sw_tau = cf * sw_tau_layer
+        legacy_lw_tau = cf * lw_tau_layer
+        legacy_reflectivity = cloud_cover * (
+            1.0 - torch.exp(-scatter_eff * legacy_sw_tau.sum(dim=1))
+        )
+        reflectivity = (
+            blend * reflectivity + (1.0 - blend) * legacy_reflectivity
+        )
+        sw_effective_tau = (
+            blend * sw_effective_tau
+            + (1.0 - blend) * abs_frac.unsqueeze(1) * legacy_sw_tau
+        )
+        lw_effective_tau = (
+            blend * lw_effective_tau + (1.0 - blend) * legacy_lw_tau
+        )
+        return reflectivity.clamp(min=0.0, max=0.95), sw_effective_tau, lw_effective_tau
+
     total_sw_tau = sw_tau_layer.sum(dim=1)
     if linear:
         reflectivity = cloud_cover * scatter_eff * total_sw_tau
     else:
         reflectivity = cloud_cover * (1.0 - torch.exp(-scatter_eff * total_sw_tau))
-    abs_frac = as_batch_tensor(
-        params.get("cloud_sw_absorption_fraction", 0.15),
-        batch, device, dtype
-    )
     return reflectivity.clamp(min=0.0, max=0.95), abs_frac.unsqueeze(1) * sw_tau_layer, lw_tau_layer
 
 

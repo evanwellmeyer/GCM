@@ -694,6 +694,30 @@ def test_evaporation_before_autoconversion_reduces_rain_in_dry_air(device):
     assert torch.sum(evaporation_first['dq']) > torch.sum(conversion_first['dq'])
 
 
+def test_fractional_gridmean_cloud_optics_removes_double_weighting(device):
+    from scm.cloud_optics import cloud_optical_properties
+    from scm.thermo import make_grid
+
+    grid = make_grid(nlevels=20, device=device)
+    state = {
+        't': torch.full((1, 20), 280.0, device=device),
+        'cloud_fraction': torch.full((1, 20), 0.25, device=device),
+        'cloud_sw_tau_layer': torch.full((1, 20), 0.2, device=device),
+        'cloud_lw_tau_layer': torch.full((1, 20), 0.05, device=device),
+    }
+    params = {
+        'cloud_optics_scheme': 'microphysics',
+        'cloud_fractional_gridmean_optics': True,
+        'cloud_fractional_optics_blend': 0.0,
+    }
+    legacy = cloud_optical_properties(state, grid, params, 1, torch.float32)
+    params['cloud_fractional_optics_blend'] = 1.0
+    corrected = cloud_optical_properties(state, grid, params, 1, torch.float32)
+    assert corrected[0][0] > legacy[0][0]
+    assert torch.sum(corrected[1]) > torch.sum(legacy[1])
+    assert torch.sum(corrected[2]) > torch.sum(legacy[2])
+
+
 def test_shallow_convection(device):
     """verify the shallow scheme moistens just above the BL without precipitating."""
     print("=== shallow convection ===")

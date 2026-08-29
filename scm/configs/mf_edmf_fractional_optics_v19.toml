@@ -1,0 +1,47 @@
+[run]
+label = "mf_edmf_fractional_optics_v19"
+
+[radiation]
+scheme = "multiband_ozone_profile"
+
+[radiation.diagnostics]
+clear_sky_fluxes = true
+
+[mass_flux]
+mse_correction_top_sigma = 0.20
+
+[composition]
+o3_peak_sigma = 0.08
+o3_width_sigma = 0.04
+
+[params]
+surface_flux_coupling = "boundary_layer"
+boundary_layer_scheme = "edmf_v3"
+shallow_convection_scheme = "none"
+cloud_evaporation_scheme = "saturation_deficit"
+cloud_evaporation_before_autoconversion = true
+cloud_optical_depth_from_gridmean_water = true
+cloud_fractional_gridmean_optics = true
+bl_min_depth_m = 100.0
+bl_max_depth_m = 1500.0
+tke_diffusivity_constant = 0.18
+tke_dissipation_constant = 0.70
+tke_mixing_length_max_m = 250.0
+tke_diffusivity_max_m2s = 100.0
+tke_stability_factor_max = 1.5
+tke_time_integration = "semi_implicit"
+tke_diagnose_boundary_layer_depth = true
+tke_boundary_layer_threshold_m2s2 = 0.01
+tke_boundary_layer_max_m = 4000.0
+edmf_plume_fraction = 0.25
+shallow_plume_updraft_area = 0.13
+shallow_plume_entrainment_constant = 0.4
+shallow_plume_velocity_drag = 2.0
+shallow_plume_velocity_buoyancy = 4.0
+shallow_plume_vertical_step_m = 50.0
+shallow_plume_detrainment_depth_m = 500.0
+shallow_plume_detrainment_strength = 8.0
+shallow_plume_buoyancy_detrainment_constant = 1.0
+shallow_plume_in_cloud_condensate_kgkg = 3.0e-3
+shallow_plume_cloud_fraction_max = 0.30
+shallow_plume_grid_saturation_adjustment = false
