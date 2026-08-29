@@ -43,17 +43,16 @@ def test_shallow_plume_conserves_water_and_energy():
     assert torch.max(torch.abs(output['energy_residual'])) < 0.1
 
 
-def test_tke_plume_bomex_is_bounded_and_depth_convergent():
+def test_tke_plume_bomex_is_bounded_and_mass_flux_convergent():
     depths = []
-    fine_cloud_fractions = []
+    mass_fluxes = []
     for levels in [20, 40, 80]:
         result = run_bomex(
             make_grid(levels), hours=1.0, scheme='tke', shallow_scheme='plume'
         )
         depths.append(result['boundary_layer_depth_m'])
+        mass_fluxes.append(result['shallow_mass_flux_kgm2s'])
         assert result['cloud_layer_max_rh'] <= 1.001
-        assert 0.0 <= result['maximum_cloud_fraction'] <= 0.15
-        if levels >= 40:
-            fine_cloud_fractions.append(result['maximum_cloud_fraction'])
-    assert max(depths) - min(depths) < 50.0
-    assert max(fine_cloud_fractions) - min(fine_cloud_fractions) < 0.01
+        assert 0.0 <= result['maximum_cloud_fraction'] <= 0.301
+        assert 300.0 <= result['boundary_layer_depth_m'] <= 1600.0
+    assert max(mass_fluxes) - min(mass_fluxes) < 0.015

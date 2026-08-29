@@ -197,6 +197,7 @@ def run_bomex(
     })
     steps = round(hours * 3600.0 / timestep)
     depth = torch.zeros(1)
+    shallow_mass_flux = torch.zeros(1)
     for _ in range(steps):
         theta_tendency, water_tendency = bomex_forcing(state, grid)
         state['t'] = state['t'] + theta_tendency * (state['p'] / p0) ** kappa * timestep
@@ -210,6 +211,12 @@ def run_bomex(
         )
         depth = output['boundary_layer_depth_m']
         if use_shallow:
+            params['_surface_sensible_heat_flux'] = torch.as_tensor(
+                [sensible_flux], device=state['t'].device, dtype=state['t'].dtype
+            )
+            params['_surface_moisture_flux'] = torch.as_tensor(
+                [moisture_flux], device=state['t'].device, dtype=state['t'].dtype
+            )
             if shallow_scheme == 'plume':
                 shallow = shallow_plume(state, grid, params)
             else:
@@ -222,6 +229,7 @@ def run_bomex(
             )
             if 'cloud_fraction' in shallow:
                 state['cloud_fraction'] = shallow['cloud_fraction']
+            shallow_mass_flux = shallow.get('cloud_base_mass_flux', shallow_mass_flux)
             state = update_derived(state, grid)
 
     height = model_height(state, grid)[0]
@@ -237,4 +245,5 @@ def run_bomex(
         'levels_below_2000m': int(torch.count_nonzero(height <= 2000.0)),
         'cloud_water_path_kgm2': float(torch.sum(state['qc'][0] * state['dp'][0] / g)),
         'maximum_cloud_fraction': float(torch.max(state['cloud_fraction'][0])),
+        'shallow_mass_flux_kgm2s': float(shallow_mass_flux[0]),
     }

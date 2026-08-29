@@ -1,3 +1,5 @@
+import math
+
 import torch
 
 from scm.thermo import Lv, cp, g, geopotential, kappa, p0, saturation_specific_humidity
@@ -56,16 +58,45 @@ def shallow_plume(state, grid, params):
     plume_cloud_fraction = torch.zeros_like(t)
     plume_condensate_profile = torch.zeros_like(t)
     cloud_mass_flux = torch.zeros(batch, device=t.device, dtype=t.dtype)
-    entrainment = float(params.get('shallow_plume_entrainment_m1', 1.5e-3))
     maximum_height = float(params.get('shallow_plume_top_m', 2500.0))
-    base_mass_flux = float(params.get('shallow_plume_mass_flux_kgm2s', 0.03))
     temperature_excess = float(params.get('shallow_plume_temperature_excess_k', 0.15))
+    updraft_area = float(params.get('shallow_plume_updraft_area', 0.13))
+    entrainment_constant = float(params.get('shallow_plume_entrainment_constant', 0.4))
+    velocity_drag = float(params.get('shallow_plume_velocity_drag', 2.0))
+    velocity_buoyancy = float(params.get('shallow_plume_velocity_buoyancy', 4.0))
+    vertical_step = float(params.get('shallow_plume_vertical_step_m', 50.0))
+    surface_flux_fraction = float(params.get('shallow_plume_surface_flux_fraction', 0.25))
+    tke = state.get('tke', torch.full_like(t, 0.1))
 
     for column in range(batch):
         source = levels - 1
-        plume_theta = theta_liquid[column, source] + temperature_excess
-        plume_water = total_water[column, source]
-        mass_flux = torch.as_tensor(base_mass_flux, device=t.device, dtype=t.dtype)
+        velocity_squared = torch.clamp(
+            (2.0 / 3.0) * tke[column, source], min=0.01
+        )
+        source_density = p[column, source] / (
+            287.0 * t[column, source].clamp(min=150.0)
+        )
+        area_fraction = torch.as_tensor(
+            updraft_area, device=t.device, dtype=t.dtype
+        ).clamp(min=0.0, max=float(params.get('shallow_plume_area_max', 0.20)))
+        source_mass_flux = source_density * area_fraction * torch.sqrt(velocity_squared)
+        sensible_flux = params.get('_surface_sensible_heat_flux', None)
+        moisture_flux = params.get('_surface_moisture_flux', None)
+        if sensible_flux is None:
+            plume_theta = theta_liquid[column, source] + temperature_excess
+        else:
+            plume_theta = theta_liquid[column, source] + (
+                surface_flux_fraction * sensible_flux[column]
+                / (cp * exner[column, source] * source_mass_flux)
+            )
+        if moisture_flux is None:
+            plume_water = total_water[column, source]
+        else:
+            plume_water = (
+                total_water[column, source]
+                + surface_flux_fraction * moisture_flux[column] / source_mass_flux
+            )
+        cloud_mass_flux[column] = source_mass_flux
 
         for lower in range(levels - 1, 0, -1):
             upper = lower - 1
@@ -73,31 +104,77 @@ def shallow_plume(state, grid, params):
             if interface_height > maximum_height:
                 break
             depth = (height[column, upper] - height[column, lower]).clamp(min=1.0)
-            retained = torch.exp(torch.as_tensor(-entrainment, device=t.device) * depth)
-            plume_theta = retained * plume_theta + (1.0 - retained) * theta_liquid[column, lower]
-            plume_water = retained * plume_water + (1.0 - retained) * total_water[column, lower]
-            plume_temperature, plume_vapor, plume_liquid = partition_plume(
-                plume_theta, plume_water, p[column, upper]
-            )
-            environment_virtual = t[column, upper] * (
-                1.0 + 0.61 * q[column, upper] - qc[column, upper]
-            )
-            plume_virtual = plume_temperature * (
-                1.0 + 0.61 * plume_vapor - plume_liquid
-            )
-            buoyancy = (plume_virtual - environment_virtual) / environment_virtual.clamp(min=150.0)
-            if buoyancy <= 0.0:
+            steps = max(1, math.ceil(float(depth) / vertical_step))
+            step_depth = depth / steps
+            active = True
+
+            for step in range(steps):
+                fraction = (step + 1.0) / steps
+                subheight = height[column, lower] + fraction * depth
+                distance_from_surface = subheight.clamp(min=1.0)
+                distance_from_top = (maximum_height - subheight).clamp(min=1.0)
+                entrainment = entrainment_constant * (
+                    1.0 / (distance_from_surface + step_depth)
+                    + 1.0 / (distance_from_top + step_depth)
+                )
+                environment_theta = (
+                    (1.0 - fraction) * theta_liquid[column, lower]
+                    + fraction * theta_liquid[column, upper]
+                )
+                environment_water = (
+                    (1.0 - fraction) * total_water[column, lower]
+                    + fraction * total_water[column, upper]
+                )
+                subpressure = (
+                    (1.0 - fraction) * p[column, lower]
+                    + fraction * p[column, upper]
+                )
+                environment_temperature = (
+                    (1.0 - fraction) * t[column, lower]
+                    + fraction * t[column, upper]
+                )
+                environment_vapor = (
+                    (1.0 - fraction) * q[column, lower]
+                    + fraction * q[column, upper]
+                )
+                environment_liquid = (
+                    (1.0 - fraction) * qc[column, lower]
+                    + fraction * qc[column, upper]
+                )
+                retained = torch.exp(-entrainment * step_depth)
+                plume_theta = retained * plume_theta + (1.0 - retained) * environment_theta
+                plume_water = retained * plume_water + (1.0 - retained) * environment_water
+                plume_temperature, plume_vapor, plume_liquid = partition_plume(
+                    plume_theta, plume_water, subpressure
+                )
+                environment_virtual = environment_temperature * (
+                    1.0 + 0.61 * environment_vapor - environment_liquid
+                )
+                plume_virtual = plume_temperature * (
+                    1.0 + 0.61 * plume_vapor - plume_liquid
+                )
+                buoyancy = (plume_virtual - environment_virtual) / environment_virtual.clamp(min=150.0)
+                damping_rate = velocity_drag * entrainment
+                velocity_retained = torch.exp(-damping_rate * step_depth)
+                buoyancy_equilibrium = (
+                    velocity_buoyancy * g * buoyancy / damping_rate.clamp(min=1.0e-8)
+                )
+                velocity_squared = (
+                    velocity_retained * velocity_squared
+                    + (1.0 - velocity_retained) * buoyancy_equilibrium
+                )
+                if velocity_squared <= 0.0:
+                    active = False
+                    break
+
+            if not active:
                 break
 
             plume_density = p[column, upper] / (
                 287.0 * plume_temperature.clamp(min=150.0)
             )
-            plume_velocity = torch.sqrt(
-                torch.clamp(2.0 * g * buoyancy * depth, min=0.25)
-            )
-            area_fraction = (
-                mass_flux / (plume_density * plume_velocity).clamp(min=1.0e-6)
-            ).clamp(min=0.0, max=float(params.get('shallow_plume_area_max', 0.20)))
+            plume_velocity = torch.sqrt(velocity_squared.clamp(min=0.0))
+            mass_flux = plume_density * area_fraction * plume_velocity
             if plume_liquid > 0.0:
                 plume_cloud_fraction[column, upper] = area_fraction
                 plume_condensate_profile[column, upper] = plume_liquid
@@ -113,7 +190,6 @@ def shallow_plume(state, grid, params):
             )
             mse_flux[column, lower] = mass_flux * (plume_mse - environment_mse)
             water_flux[column, lower] = mass_flux * (plume_water - environment_water)
-            cloud_mass_flux[column] = mass_flux
 
     mse_tendency = (mse_flux[:, 1:] - mse_flux[:, :-1]) / mass
     water_tendency = (water_flux[:, 1:] - water_flux[:, :-1]) / mass

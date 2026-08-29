@@ -273,8 +273,9 @@ def physics_step(state, grid, params, rad_cache=None, ls_forcing=None):
 
     # --- shallow convection ---
     state = update_derived(state, grid)
+    shallow_params = bl_params if flux_coupled else params
     shallow_out = run_physics_scheme(
-        'shallow_convection', params.get('shallow_convection_scheme', 'simple'), state, grid, params
+        'shallow_convection', params.get('shallow_convection_scheme', 'simple'), state, grid, shallow_params
     )
     check_nan('shallow dt', shallow_out['dt'])
     check_nan('shallow dq', shallow_out['dq'])
