@@ -162,4 +162,39 @@ def test_tke_depth_diagnostic_uses_turbulent_layer_top():
             'tke_boundary_layer_max_m': 4000.0,
         },
     )
-    assert torch.allclose(depth, torch.tensor([1200.0]))
+    assert torch.allclose(depth, torch.tensor([1600.0]))
+
+
+def test_tke_depth_diagnostic_converges_across_vertical_grids():
+    depths = []
+    for levels in (10, 20, 40):
+        height = torch.linspace(4000.0, 0.0, levels).unsqueeze(0)
+        tke = 0.0275 - 5.0e-6 * height
+        depth = tke_boundary_layer_depth(
+            height,
+            tke,
+            {
+                'tke_boundary_layer_threshold_m2s2': 0.02,
+                'bl_min_depth_m': 100.0,
+                'tke_boundary_layer_max_m': 4000.0,
+            },
+        )
+        depths.append(depth[0])
+
+    depths = torch.stack(depths)
+    assert torch.max(torch.abs(depths - 1500.0)) < 1.0
+
+
+def test_tke_depth_ignores_disconnected_turbulence_aloft():
+    height = torch.tensor([[3000.0, 2000.0, 1000.0, 200.0]])
+    tke = torch.tensor([[0.20, 0.001, 0.001, 0.10]])
+    depth = tke_boundary_layer_depth(
+        height,
+        tke,
+        {
+            'tke_boundary_layer_threshold_m2s2': 0.01,
+            'bl_min_depth_m': 100.0,
+            'tke_boundary_layer_max_m': 4000.0,
+        },
+    )
+    assert 200.0 < depth.item() < 1000.0

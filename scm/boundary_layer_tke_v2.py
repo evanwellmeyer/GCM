@@ -107,6 +107,8 @@ def tke_boundary_layer(state, grid, params):
 
 
 def tke_boundary_layer_depth(height, tke, params):
+    """Interpolate the top of the turbulent layer connected to the surface."""
+
     threshold = float(params.get('tke_boundary_layer_threshold_m2s2', 0.01))
     minimum = float(params.get('bl_min_depth_m', 100.0))
     maximum = float(
@@ -115,9 +117,32 @@ def tke_boundary_layer_depth(height, tke, params):
             params.get('bl_max_depth_m', 1500.0),
         )
     )
+    batch, levels = height.shape
     active = tke >= threshold
-    active_height = torch.where(active, height, torch.zeros_like(height))
-    return torch.max(active_height, dim=1).values.clamp(min=minimum, max=maximum)
+    boundary_depth = torch.full(
+        (batch,), minimum, device=height.device, dtype=height.dtype
+    )
+    unresolved = active[:, -1].clone()
+
+    for upper in range(levels - 2, -1, -1):
+        lower = upper + 1
+        crossing = unresolved & active[:, lower] & ~active[:, upper]
+        span = tke[:, lower] - tke[:, upper]
+        fraction = ((tke[:, lower] - threshold) / span.clamp(min=1.0e-12)).clamp(
+            min=0.0, max=1.0
+        )
+        crossing_height = height[:, lower] + fraction * (
+            height[:, upper] - height[:, lower]
+        )
+        boundary_depth = torch.where(crossing, crossing_height, boundary_depth)
+        unresolved = unresolved & active[:, upper]
+
+    boundary_depth = torch.where(
+        unresolved,
+        torch.full_like(boundary_depth, maximum),
+        boundary_depth,
+    )
+    return boundary_depth.clamp(min=minimum, max=maximum)
 
 
 def tke_mixing_length(height, params):
