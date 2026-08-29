@@ -32,6 +32,10 @@ The `mf_unified_edmf_v11` experiment combines local TKE diffusion and the nonloc
 
 The corrected three-day RCE screen is a substantial numerical improvement over v10: column-energy residual is -0.02 W m-2, no deep-convection tendency caps activate, and surface imbalance relaxes from -59 W m-2 after one day to -41 W m-2 after three days. It still fails production criteria because boundary-layer depth reaches 1.5 km, cloud precipitation remains 3.3 mm day-1, and the surface imbalance is large. The next controlled target is condensate detrainment and autoconversion, not another long equilibrium integration.
 
+The `mf_edmf_detrainment_v12` experiment makes the condensate handoff explicit. A bounded saturation solve replaces the former fixed-point plume partition, which oscillated between all-vapor and condensed states and could return zero liquid for an obviously saturated parcel. The plume now carries a liquid-water flux and deposits grid-mean condensate only where that flux decreases or terminates. Deposited liquid enters the existing prognostic cloud reservoir; the rest of the grid box is not saturation-adjusted merely because the fractional plume is cloudy. Total-water and moist-static-energy transport remain conservative.
+
+In one-hour BOMEX, v12 boundary-layer depths are 0.71, 0.73, and 0.74 km at 20, 40, and 80 levels. Cloud-water paths are 0.41, 0.49, and 0.43 kg m-2, demonstrating that detrainment now operates and is reasonably resolution-convergent, although the amount is too large for trade cumulus. In the three-day RCE screen, cloud precipitation falls from 3.3 to 0.86 mm day-1, but large-scale condensation rises to 3.54 mm day-1, surface imbalance is -58 W m-2, and boundary-layer depth still reaches 1.5 km. V12 therefore remains experimental. The next target is the magnitude and vertical distribution of plume moisture transport and detrainment, particularly the sharp source near 750 hPa.
+
 References:
 
 - Siebesma et al. (2003), *A Large Eddy Simulation Intercomparison Study of Shallow Cumulus Convection*.

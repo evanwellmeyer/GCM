@@ -7,13 +7,22 @@ from scm.thermo import Lv, cp, g, geopotential, kappa, p0, saturation_specific_h
 
 def partition_plume(theta_liquid, total_water, pressure):
     exner = (pressure / p0).clamp(min=1.0e-6) ** kappa
-    temperature = theta_liquid * exner
-    vapor = total_water
-    for _ in range(6):
-        saturation = saturation_specific_humidity(temperature, pressure)
-        vapor = torch.minimum(total_water, saturation)
+    def residual(vapor):
         condensate = torch.clamp(total_water - vapor, min=0.0)
         temperature = (theta_liquid + Lv * condensate / (cp * exner)) * exner
+        return vapor - saturation_specific_humidity(temperature, pressure)
+
+    saturated = residual(total_water) > 0.0
+    lower = torch.zeros_like(total_water)
+    upper = total_water
+    for _ in range(20):
+        middle = 0.5 * (lower + upper)
+        above = residual(middle) > 0.0
+        upper = torch.where(above, middle, upper)
+        lower = torch.where(above, lower, middle)
+    vapor = torch.where(saturated, 0.5 * (lower + upper), total_water)
+    condensate = torch.clamp(total_water - vapor, min=0.0)
+    temperature = (theta_liquid + Lv * condensate / (cp * exner)) * exner
     return temperature, vapor, condensate
 
 
@@ -55,6 +64,7 @@ def shallow_plume(state, grid, params):
     mse = cp * t + Lv * q + g * height
     mse_flux = torch.zeros(batch, levels + 1, device=t.device, dtype=t.dtype)
     water_flux = torch.zeros_like(mse_flux)
+    liquid_flux = torch.zeros_like(mse_flux)
     plume_cloud_fraction = torch.zeros_like(t)
     plume_condensate_profile = torch.zeros_like(t)
     cloud_mass_flux = torch.zeros(batch, device=t.device, dtype=t.dtype)
@@ -201,15 +211,23 @@ def shallow_plume(state, grid, params):
             )
             mse_flux[column, lower] = mass_flux * (plume_mse - environment_mse)
             water_flux[column, lower] = mass_flux * (plume_water - environment_water)
+            liquid_flux[column, lower] = mass_flux * plume_liquid
 
     mse_tendency = (mse_flux[:, 1:] - mse_flux[:, :-1]) / mass
     water_tendency = (water_flux[:, 1:] - water_flux[:, :-1]) / mass
+    condensate_detrainment = torch.clamp(
+        (liquid_flux[:, 1:] - liquid_flux[:, :-1]) / mass,
+        min=0.0,
+    )
     mse_new = mse + timestep * mse_tendency
     water_new = torch.clamp(total_water + timestep * water_tendency, min=1.0e-8)
     if params.get('shallow_plume_grid_saturation_adjustment', True):
         t_new, q_new, qc_new = partition_mse(water_new, mse_new, height, p)
     else:
-        qc_new = torch.minimum(qc, water_new)
+        qc_new = torch.minimum(
+            qc + timestep * condensate_detrainment,
+            water_new,
+        )
         q_new = water_new - qc_new
         t_new = (mse_new - Lv * q_new - g * height) / cp
     in_cloud_condensate = float(
@@ -242,6 +260,7 @@ def shallow_plume(state, grid, params):
         'cloud_base_mass_flux': cloud_mass_flux,
         'cloud_fraction': diagnosed_cloud_fraction,
         'plume_condensate': plume_condensate_profile,
+        'condensate_detrainment': condensate_detrainment,
         'water_residual': torch.sum(
             (q_new + qc_new - q - qc) * mass, dim=1
         ) / timestep,

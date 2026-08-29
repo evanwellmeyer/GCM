@@ -85,6 +85,7 @@ def edmf_boundary_layer(state, grid, params):
         'cloud_base_mass_flux': plume['cloud_base_mass_flux'],
         'cloud_fraction': plume['cloud_fraction'],
         'plume_condensate': plume['plume_condensate'],
+        'condensate_detrainment': plume['condensate_detrainment'],
         'water_residual': (final_water - expected_water) / timestep,
         'energy_residual': (final_mse - expected_mse) / timestep,
     }

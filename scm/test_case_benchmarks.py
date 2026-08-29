@@ -2,7 +2,7 @@ import torch
 
 from scm.case_benchmarks import run_bomex, run_dry_mixed_layer
 from scm.case_benchmarks import initialize_bomex
-from scm.shallow_plume_v2 import shallow_plume
+from scm.shallow_plume_v2 import partition_plume, shallow_plume
 from scm.boundary_layer_edmf_v3 import edmf_boundary_layer
 from scm.thermo import make_grid
 
@@ -82,3 +82,28 @@ def test_unified_edmf_bomex_depth_is_resolution_convergent():
         assert result['cloud_layer_max_rh'] <= 1.001
         assert result['cloud_water_path_kgm2'] < 0.1
     assert max(depths) - min(depths) < 75.0
+
+
+def test_plume_saturation_solver_produces_liquid_water():
+    temperature, vapor, liquid = partition_plume(
+        torch.tensor(300.0), torch.tensor(0.03), torch.tensor(90000.0)
+    )
+    assert 295.0 < float(temperature) < 305.0
+    assert float(vapor) < 0.03
+    assert float(liquid) > 0.0
+
+
+def test_edmf_detrainment_hands_cloud_water_to_the_grid():
+    paths = []
+    for levels in [20, 40, 80]:
+        result = run_bomex(
+            make_grid(levels),
+            hours=1.0,
+            use_shallow=False,
+            scheme='edmf',
+            parameter_updates={'shallow_plume_grid_saturation_adjustment': False},
+        )
+        paths.append(result['cloud_water_path_kgm2'])
+        assert result['cloud_layer_max_rh'] < 1.0
+        assert 0.0 < result['cloud_water_path_kgm2'] < 0.6
+    assert max(paths) - min(paths) < 0.1

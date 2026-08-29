@@ -176,7 +176,7 @@ def bomex_forcing(state, grid):
 
 def run_bomex(
     grid, hours=6.0, timestep=60.0, use_shallow=True,
-    scheme='richardson', shallow_scheme='legacy',
+    scheme='richardson', shallow_scheme='legacy', parameter_updates=None,
 ):
     state, params = initialize_bomex(grid)
     params.update({
@@ -201,6 +201,8 @@ def run_bomex(
         'shallow_max_dq_day': 1.5,
         'shallow_enforce_mse_conservation': True,
     })
+    if parameter_updates:
+        params.update(parameter_updates)
     steps = round(hours * 3600.0 / timestep)
     depth = torch.zeros(1)
     shallow_mass_flux = torch.zeros(1)
