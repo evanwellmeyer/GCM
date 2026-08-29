@@ -136,21 +136,37 @@ def cloud_microphysics_step(state, grid, params, cond_out, conv_out, shallow_out
     qc_unbounded = torch.clamp(qc_prev + source, min=0.0)
     overflow_sink = torch.clamp(qc_unbounded - qc_max, min=0.0)
     qc = torch.clamp(qc_unbounded, max=qc_max)
-    qc, autoconv_sink = _quadratic_autoconversion(qc, dt, params, batch, device, dtype)
     evaporation_scheme = params.get('cloud_evaporation_scheme', 'relative_humidity')
-    if evaporation_scheme == 'saturation_deficit':
-        qc, evaporation = _evaporate_to_saturation(q, qc, t, p)
-    elif evaporation_scheme == 'relative_humidity':
-        evap_tau = _to_col(params.get('cloud_evap_tau', 3600.0), batch, device, dtype)
-        rh_evap = _to_col(
-            params.get('cloud_rh_evap', 0.75), batch, device, dtype
-        ).clamp(min=1.0e-3)
-        dry_factor = torch.clamp((rh_evap - rh) / rh_evap, min=0.0, max=1.0)
-        qc_before_evaporation = qc
-        qc = qc * torch.exp(-(dt / evap_tau.clamp(min=1.0)) * dry_factor)
-        evaporation = qc_before_evaporation - qc
-    else:
+
+    def evaporate(condensate):
+        if evaporation_scheme == 'saturation_deficit':
+            return _evaporate_to_saturation(q, condensate, t, p)
+        if evaporation_scheme == 'relative_humidity':
+            evap_tau = _to_col(
+                params.get('cloud_evap_tau', 3600.0), batch, device, dtype
+            )
+            rh_evap = _to_col(
+                params.get('cloud_rh_evap', 0.75), batch, device, dtype
+            ).clamp(min=1.0e-3)
+            dry_factor = torch.clamp(
+                (rh_evap - rh) / rh_evap, min=0.0, max=1.0
+            )
+            remaining = condensate * torch.exp(
+                -(dt / evap_tau.clamp(min=1.0)) * dry_factor
+            )
+            return remaining, condensate - remaining
         raise ValueError(f'unknown cloud evaporation scheme: {evaporation_scheme}')
+
+    if params.get('cloud_evaporation_before_autoconversion', False):
+        qc, evaporation = evaporate(qc)
+        qc, autoconv_sink = _quadratic_autoconversion(
+            qc, dt, params, batch, device, dtype
+        )
+    else:
+        qc, autoconv_sink = _quadratic_autoconversion(
+            qc, dt, params, batch, device, dtype
+        )
+        qc, evaporation = evaporate(qc)
     vapor_adjustment = evaporation
     temperature_adjustment = -Lv / cp * evaporation
     q_after_evaporation = q + vapor_adjustment

@@ -653,6 +653,47 @@ def test_cloud_evaporation_conserves_water_and_energy(device):
     assert output['qc'].sum() < state['qc'].sum()
 
 
+def test_evaporation_before_autoconversion_reduces_rain_in_dry_air(device):
+    from scm.cloud_microphysics import cloud_microphysics_step, initialize_cloud_state
+    from scm.thermo import make_grid, pressure_at_full, dp_from_ps, saturation_specific_humidity
+
+    grid = make_grid(nlevels=20, device=device)
+    pressure = pressure_at_full(grid, torch.tensor([1.0e5], device=device))
+    layer_pressure = dp_from_ps(grid, torch.tensor([1.0e5], device=device))
+    temperature = torch.full_like(pressure, 285.0)
+    humidity = 0.7 * saturation_specific_humidity(temperature, pressure)
+    state = {
+        't': temperature,
+        'q': humidity,
+        'ts': torch.tensor([285.0], device=device),
+        'p': pressure,
+        'dp': layer_pressure,
+    }
+    state.update(initialize_cloud_state(1, grid, device=device))
+    state['qc'][:] = 1.0e-3
+    params = {
+        'cloud_microphysics_enabled': True,
+        'cloud_autoconv_tau': 1800.0,
+        'cloud_autoconv_qc_thresh': 2.0e-4,
+        'cloud_autoconv_qc_scale': 4.0e-4,
+        'cloud_autoconv_power': 2.0,
+        'cloud_evaporation_scheme': 'saturation_deficit',
+        'dt': 900.0,
+    }
+    zeros = torch.zeros_like(humidity)
+    forcing = {'cloud_source': zeros}
+    convection = {'precip': torch.zeros(1, device=device)}
+    conversion_first = cloud_microphysics_step(
+        state, grid, params, forcing, convection
+    )
+    params['cloud_evaporation_before_autoconversion'] = True
+    evaporation_first = cloud_microphysics_step(
+        state, grid, params, forcing, convection
+    )
+    assert evaporation_first['precip'][0] < conversion_first['precip'][0]
+    assert torch.sum(evaporation_first['dq']) > torch.sum(conversion_first['dq'])
+
+
 def test_shallow_convection(device):
     """verify the shallow scheme moistens just above the BL without precipitating."""
     print("=== shallow convection ===")
