@@ -267,6 +267,8 @@ def physics_step(state, grid, params, rad_cache=None, ls_forcing=None):
     state['t'] = state['t'] + bl_dt * dt
     state['q'] = state['q'] + bl_dq * dt
     state['qc'] = torch.clamp(state['qc'] + bl_dqc * dt, min=0.0)
+    if 'tke' in bl_out:
+        state['tke'] = bl_out['tke']
     atm_energy_after_bl = atmospheric_energy_content(state, grid)
 
     # --- shallow convection ---
@@ -278,8 +280,12 @@ def physics_step(state, grid, params, rad_cache=None, ls_forcing=None):
     check_nan('shallow dq', shallow_out['dq'])
     shallow_dt = torch.nan_to_num(shallow_out['dt'], nan=0.0).to(state['t'].dtype)
     shallow_dq = torch.nan_to_num(shallow_out['dq'], nan=0.0).to(state['q'].dtype)
+    shallow_dqc = torch.nan_to_num(
+        shallow_out.get('dqc', torch.zeros_like(state['qc'])), nan=0.0
+    ).to(state['qc'].dtype)
     state['t'] = state['t'] + shallow_dt * dt
     state['q'] = state['q'] + shallow_dq * dt
+    state['qc'] = torch.clamp(state['qc'] + shallow_dqc * dt, min=0.0)
     atm_energy_after_shallow = atmospheric_energy_content(state, grid)
 
     # --- convection ---
@@ -307,7 +313,9 @@ def physics_step(state, grid, params, rad_cache=None, ls_forcing=None):
 
     # --- cloud microphysics / cloud-radiative state ---
     qc_before_cloud = state['qc'].clone()
-    cloud_out = cloud_microphysics_step(state, grid, params, cond_out, conv_out)
+    cloud_out = cloud_microphysics_step(
+        state, grid, params, cond_out, conv_out, shallow_out=shallow_out
+    )
     state['t'] = state['t'] + cloud_out.get('dt', torch.zeros_like(state['t']))
     state['q'] = state['q'] + cloud_out.get('dq', torch.zeros_like(state['q']))
     state['qc'] = cloud_out['qc']

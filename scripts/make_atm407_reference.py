@@ -79,6 +79,8 @@ if sourcepath is not None:
     state['cloud_fraction'][0] = torch.as_tensor(
         reference['cloud_fraction'], dtype=state['cloud_fraction'].dtype
     )
+    if 'tke' in reference.files:
+        state['tke'] = torch.as_tensor(reference['tke'], dtype=state['t'].dtype).unsqueeze(0)
     state['ts'][0] = float(reference['ts'])
     state['ps'][0] = float(reference['ps'])
     state['slab_ts_ref'] = state['ts'].clone()
@@ -117,8 +119,7 @@ metrics = equilibrium_metrics(history, window=50)
 stats = equilibrium_stats(history, last_n=50)
 rh = relative_humidity(state['q'], state['t'], state['p'])[0]
 rh95mass = torch.sum((rh >= 0.95) * state['dp'][0] / g) / torch.sum(state['dp'][0] / g)
-np.savez_compressed(
-    referencepath,
+referencearrays = dict(
     sigma_full=grid['sigma_full'].cpu().numpy(),
     t=state['t'][0].cpu().numpy(),
     q=state['q'][0].cpu().numpy(),
@@ -127,6 +128,9 @@ np.savez_compressed(
     ts=np.array(state['ts'][0].item()),
     ps=np.array(state['ps'][0].item()),
 )
+if 'tke' in state:
+    referencearrays['tke'] = state['tke'][0].cpu().numpy()
+np.savez_compressed(referencepath, **referencearrays)
 
 metadata = {
     'description': 'Near-equilibrium ATM407 mass-flux SCM reference state',

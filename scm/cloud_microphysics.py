@@ -76,7 +76,7 @@ def _evaporate_to_saturation(q, qc, t, p):
     return qc - evaporation, evaporation
 
 
-def cloud_microphysics_step(state, grid, params, cond_out, conv_out):
+def cloud_microphysics_step(state, grid, params, cond_out, conv_out, shallow_out=None):
     """Very simple prognostic cloud condensate and cloud optics.
 
     This is intentionally lightweight: one total condensate reservoir `qc`
@@ -187,6 +187,9 @@ def cloud_microphysics_step(state, grid, params, cond_out, conv_out):
     cloud_fraction = (torch.pow(rh_cloud, rh_power) * torch.pow(qc_cloud, qc_power))
     cloud_fraction = cloud_fraction.clamp(min=0.0, max=cf_max)
     cloud_fraction = cloud_fraction * (qc > 1.0e-8).to(dtype)
+    if shallow_out is not None and 'cloud_fraction' in shallow_out:
+        plume_fraction = shallow_out['cloud_fraction'].to(device=device, dtype=dtype)
+        cloud_fraction = torch.maximum(cloud_fraction, plume_fraction).clamp(max=cf_max)
 
     k_liq_sw = float(params.get('cloud_k_liq_sw', 80.0))
     k_ice_sw = float(params.get('cloud_k_ice_sw', 40.0))

@@ -45,10 +45,15 @@ def test_shallow_plume_conserves_water_and_energy():
 
 def test_tke_plume_bomex_is_bounded_and_depth_convergent():
     depths = []
+    fine_cloud_fractions = []
     for levels in [20, 40, 80]:
         result = run_bomex(
             make_grid(levels), hours=1.0, scheme='tke', shallow_scheme='plume'
         )
         depths.append(result['boundary_layer_depth_m'])
         assert result['cloud_layer_max_rh'] <= 1.001
+        assert 0.0 <= result['maximum_cloud_fraction'] <= 0.15
+        if levels >= 40:
+            fine_cloud_fractions.append(result['maximum_cloud_fraction'])
     assert max(depths) - min(depths) < 50.0
+    assert max(fine_cloud_fractions) - min(fine_cloud_fractions) < 0.01

@@ -220,6 +220,8 @@ def run_bomex(
                 state['qc'] + shallow.get('dqc', torch.zeros_like(state['qc'])) * timestep,
                 min=0.0,
             )
+            if 'cloud_fraction' in shallow:
+                state['cloud_fraction'] = shallow['cloud_fraction']
             state = update_derived(state, grid)
 
     height = model_height(state, grid)[0]
@@ -234,4 +236,5 @@ def run_bomex(
         'cloud_layer_mean_rh': float(rh[cloud_layer].mean()),
         'levels_below_2000m': int(torch.count_nonzero(height <= 2000.0)),
         'cloud_water_path_kgm2': float(torch.sum(state['qc'][0] * state['dp'][0] / g)),
+        'maximum_cloud_fraction': float(torch.max(state['cloud_fraction'][0])),
     }

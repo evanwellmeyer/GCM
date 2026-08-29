@@ -1,0 +1,28 @@
+[run]
+label = "mf_tke_plume_cloud_v10"
+
+[radiation]
+scheme = "multiband_ozone_profile"
+
+[mass_flux]
+mse_correction_top_sigma = 0.20
+
+[composition]
+o3_peak_sigma = 0.08
+o3_width_sigma = 0.04
+
+[params]
+surface_flux_coupling = "boundary_layer"
+boundary_layer_scheme = "tke_v2"
+shallow_convection_scheme = "plume_v2"
+cloud_evaporation_scheme = "saturation_deficit"
+bl_min_depth_m = 100.0
+bl_max_depth_m = 1500.0
+tke_diffusivity_constant = 0.18
+tke_dissipation_constant = 0.70
+tke_mixing_length_max_m = 250.0
+tke_diffusivity_max_m2s = 100.0
+shallow_plume_entrainment_m1 = 1.5e-3
+shallow_plume_mass_flux_kgm2s = 0.03
+shallow_plume_in_cloud_condensate_kgkg = 3.0e-3
+shallow_plume_cloud_fraction_max = 0.30

@@ -11,10 +11,12 @@ from dataclasses import dataclass
 import torch
 
 from scm.boundary_layer import boundary_layer_mixing
+from scm.boundary_layer_tke_v2 import tke_boundary_layer
 from scm.condensation import condensation
 from scm.convection_bm import betts_miller
 from scm.convection_mf import mass_flux_convection
 from scm.convection_shallow import shallow_convection
+from scm.shallow_plume_v2 import shallow_plume
 from scm.radiation import radiation
 from scm.radiation_schemes.registry import available_radiation_schemes
 from scm.surface import surface_fluxes
@@ -154,8 +156,20 @@ register_physics_scheme(
     _boundary_layer_runner("constant"),
     "Legacy constant-K implicit diffusion.",
 )
+register_physics_scheme(
+    "boundary_layer",
+    "tke_v2",
+    tke_boundary_layer,
+    "Experimental one-equation TKE closure with flux-form scalar transport.",
+)
 
 register_physics_scheme("shallow_convection", "simple", shallow_convection, "Simple shallow convective adjustment.")
+register_physics_scheme(
+    "shallow_convection",
+    "plume_v2",
+    shallow_plume,
+    "Experimental cloud-aware entraining shallow plume.",
+)
 register_physics_scheme("shallow_convection", "none", _zero_shallow, "Disable shallow convection.")
 
 register_physics_scheme(
