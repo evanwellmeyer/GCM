@@ -4,6 +4,7 @@ from scm.case_benchmarks import run_bomex, run_dry_mixed_layer
 from scm.case_benchmarks import initialize_bomex
 from scm.shallow_plume_v2 import partition_plume, shallow_plume
 from scm.boundary_layer_edmf_v3 import edmf_boundary_layer
+from scm.boundary_layer_tke_v2 import tke_boundary_layer, tke_boundary_layer_depth
 from scm.thermo import make_grid
 
 
@@ -132,3 +133,33 @@ def test_distributed_detrainment_reduces_mass_flux_near_plume_top():
     baseline_active = baseline_active[baseline_active > 0.0]
     assert distributed_active.numel() >= 2
     assert distributed_active[0] < baseline_active[0]
+
+
+def test_semi_implicit_tke_is_bounded_at_long_physics_timestep():
+    grid = make_grid(40)
+    state, params = initialize_bomex(grid)
+    params.update({
+        'dt': 900.0,
+        '_surface_sensible_heat_flux': torch.tensor([10.0]),
+        '_surface_moisture_flux': torch.tensor([5.0e-5]),
+        'tke_time_integration': 'semi_implicit',
+        'tke_stability_factor_max': 1.5,
+    })
+    output = tke_boundary_layer(state, grid, params)
+    assert torch.max(output['tke']) < 1.0
+    assert torch.max(output['diffusivity']) < 100.0
+
+
+def test_tke_depth_diagnostic_uses_turbulent_layer_top():
+    height = torch.tensor([[2500.0, 1800.0, 1200.0, 600.0, 100.0]])
+    tke = torch.tensor([[1.0e-4, 5.0e-3, 2.0e-2, 0.1, 0.2]])
+    depth = tke_boundary_layer_depth(
+        height,
+        tke,
+        {
+            'tke_boundary_layer_threshold_m2s2': 0.01,
+            'bl_min_depth_m': 100.0,
+            'tke_boundary_layer_max_m': 4000.0,
+        },
+    )
+    assert torch.allclose(depth, torch.tensor([1200.0]))

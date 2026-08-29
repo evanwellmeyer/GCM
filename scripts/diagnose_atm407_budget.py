@@ -14,6 +14,8 @@ from scm.column_model import initial_state, run, update_derived
 from scm.configuration import extract_param_overrides, load_run_config
 from scm.ensemble import default_params
 from scm.thermo import g, make_grid, relative_humidity
+from scm.boundary_layer_tke_v2 import tke_diffusivity, tke_mixing_length
+from scm.thermo import geopotential
 
 
 parser = argparse.ArgumentParser()
@@ -89,6 +91,12 @@ pressure = state['p'][0] / 100
 rh = relative_humidity(state['q'], state['t'], state['p'])[0] * 100
 mass = state['dp'][0] / g
 rh95mass = torch.sum((rh >= 95.0) * mass) / torch.sum(mass)
+height = geopotential(state['t'], state['q'], state['p'], grid)
+mixinglength = tke_mixing_length(height, params)
+diffusivity, _ = tke_diffusivity(
+    state['t'], state['q'], state['u'], state['v'], state['p'],
+    height, state['tke'], mixinglength, params,
+)
 columnmoisture = {
     process: torch.sum(moisture[process] / 1000 * mass).item()
     for process in processes
@@ -102,6 +110,8 @@ result = {
     'temperature_k': state['t'][0].tolist(),
     'relative_humidity_percent': rh.tolist(),
     'cloud_condensate_gkg': (state['qc'][0] * 1000).tolist(),
+    'tke_m2s2': state['tke'][0].tolist(),
+    'diffusivity_m2s': diffusivity[0].tolist(),
     'temperature_tendency_kday': {
         process: temperature[process].tolist() for process in processes
     },
@@ -117,6 +127,8 @@ result = {
         'cape_jkg': meanvalue('cape').item(),
         'rh95_mass_fraction': rh95mass.item(),
         'boundary_layer_depth_m': meanvalue('boundary_layer_depth_m').item(),
+        'maximum_tke_m2s2': torch.max(state['tke']).item(),
+        'maximum_diffusivity_m2s': torch.max(diffusivity).item(),
         'deep_precipitation_mmday': meanvalue('precip_conv').item() * 86400,
         'large_scale_precipitation_mmday': meanvalue('precip_ls').item() * 86400,
         'cloud_precipitation_mmday': meanvalue('precip_cloud').item() * 86400,

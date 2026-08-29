@@ -44,7 +44,20 @@ def tke_boundary_layer(state, grid, params):
 
     dissipation_constant = float(params.get('tke_dissipation_constant', 0.7))
     dissipation = dissipation_constant * tke.pow(1.5) / mixing_length.clamp(min=1.0)
-    tke_new = tke + timestep * (production - dissipation)
+    if params.get('tke_time_integration', 'explicit') == 'semi_implicit':
+        produced = torch.clamp(
+            tke + timestep * production,
+            min=float(params.get('tke_min', 1.0e-4)),
+        )
+        damping = (
+            timestep
+            * dissipation_constant
+            * torch.sqrt(produced)
+            / mixing_length.clamp(min=1.0)
+        )
+        tke_new = produced / (1.0 + damping)
+    else:
+        tke_new = tke + timestep * (production - dissipation)
     tke_new = tke_new.clamp(
         min=float(params.get('tke_min', 1.0e-4)),
         max=float(params.get('tke_max', 10.0)),
@@ -71,14 +84,17 @@ def tke_boundary_layer(state, grid, params):
     mse_rhs[:, -1] = mse_rhs[:, -1] + timestep * energy_flux / mass[:, -1]
     mse_new = solve_scalar(mse, mse_rhs, coefficients)
     t_new = (mse_new - Lv * q_new - g * height) / cp
-    wind2 = u[:, -1].pow(2) + v[:, -1].pow(2) + 1.0
-    boundary_depth = diagnose_boundary_layer_depth(
-        height,
-        theta_v=t_new * (p0 / p.clamp(min=1.0)) ** kappa * (1.0 + 0.61 * q_new),
-        wind2=wind2,
-        ri_crit=torch.full_like(wind2, float(params.get('ri_crit', 0.25))),
-        params=params,
-    )
+    if params.get('tke_diagnose_boundary_layer_depth', False):
+        boundary_depth = tke_boundary_layer_depth(height, tke_new, params)
+    else:
+        wind2 = u[:, -1].pow(2) + v[:, -1].pow(2) + 1.0
+        boundary_depth = diagnose_boundary_layer_depth(
+            height,
+            theta_v=t_new * (p0 / p.clamp(min=1.0)) ** kappa * (1.0 + 0.61 * q_new),
+            wind2=wind2,
+            ri_crit=torch.full_like(wind2, float(params.get('ri_crit', 0.25))),
+            params=params,
+        )
 
     return {
         'dt': (t_new - t) / timestep,
@@ -88,6 +104,20 @@ def tke_boundary_layer(state, grid, params):
         'diffusivity': interface_diffusivity,
         'boundary_layer_depth_m': boundary_depth,
     }
+
+
+def tke_boundary_layer_depth(height, tke, params):
+    threshold = float(params.get('tke_boundary_layer_threshold_m2s2', 0.01))
+    minimum = float(params.get('bl_min_depth_m', 100.0))
+    maximum = float(
+        params.get(
+            'tke_boundary_layer_max_m',
+            params.get('bl_max_depth_m', 1500.0),
+        )
+    )
+    active = tke >= threshold
+    active_height = torch.where(active, height, torch.zeros_like(height))
+    return torch.max(active_height, dim=1).values.clamp(min=minimum, max=maximum)
 
 
 def tke_mixing_length(height, params):
@@ -115,6 +145,9 @@ def tke_diffusivity(t, q, u, v, p, height, tke, mixing_length, params):
     stable_factor = 1.0 / (1.0 + 5.0 * richardson.clamp(min=0.0))
     unstable_factor = torch.sqrt(1.0 + 8.0 * (-richardson).clamp(min=0.0))
     factor = torch.where(richardson >= 0.0, stable_factor, unstable_factor)
+    factor = factor.clamp(
+        max=float(params.get('tke_stability_factor_max', float('inf')))
+    )
     maximum = float(params.get('tke_diffusivity_max_m2s', 100.0))
     interface_diffusivity = (neutral * factor).clamp(min=0.0, max=maximum)
 
