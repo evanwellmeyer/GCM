@@ -36,6 +36,8 @@ The `mf_edmf_detrainment_v12` experiment makes the condensate handoff explicit. 
 
 In one-hour BOMEX, v12 boundary-layer depths are 0.71, 0.73, and 0.74 km at 20, 40, and 80 levels. Cloud-water paths are 0.41, 0.49, and 0.43 kg m-2, demonstrating that detrainment now operates and is reasonably resolution-convergent, although the amount is too large for trade cumulus. In the three-day RCE screen, cloud precipitation falls from 3.3 to 0.86 mm day-1, but large-scale condensation rises to 3.54 mm day-1, surface imbalance is -58 W m-2, and boundary-layer depth still reaches 1.5 km. V12 therefore remains experimental. The next target is the magnitude and vertical distribution of plume moisture transport and detrainment, particularly the sharp source near 750 hPa.
 
+The `mf_edmf_distributed_detrainment_v13` experiment replaces abrupt plume termination with a 500 m detrainment zone. Mass flux decreases continuously as the plume approaches its diagnosed top and also responds to negative buoyancy. This spreads the remaining vapor, heat, and liquid flux convergence over several layers instead of depositing it at one interface. In the three-day RCE screen, the 750 hPa vapor source falls from about 5.5 to 3.2 kg m-2 day-1 and the detrainment signal extends from roughly 615 to 810 hPa. TOA imbalance improves to 1.04 W m-2, surface imbalance to -51.9 W m-2, large-scale precipitation to 3.13 mm day-1, cloud precipitation to 0.78 mm day-1, and the column-water residual to 3.3e-7 kg m-2 s-1. The boundary layer still reaches 1.5 km and the surface imbalance remains unacceptable, so v13 is not a production candidate.
+
 References:
 
 - Siebesma et al. (2003), *A Large Eddy Simulation Intercomparison Study of Shallow Cumulus Convection*.

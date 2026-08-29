@@ -67,6 +67,7 @@ def shallow_plume(state, grid, params):
     liquid_flux = torch.zeros_like(mse_flux)
     plume_cloud_fraction = torch.zeros_like(t)
     plume_condensate_profile = torch.zeros_like(t)
+    plume_mass_flux_profile = torch.zeros_like(t)
     cloud_mass_flux = torch.zeros(batch, device=t.device, dtype=t.dtype)
     maximum_height = float(params.get('shallow_plume_top_m', 2500.0))
     temperature_excess = float(params.get('shallow_plume_temperature_excess_k', 0.15))
@@ -76,6 +77,11 @@ def shallow_plume(state, grid, params):
     velocity_buoyancy = float(params.get('shallow_plume_velocity_buoyancy', 4.0))
     vertical_step = float(params.get('shallow_plume_vertical_step_m', 50.0))
     surface_flux_fraction = float(params.get('shallow_plume_surface_flux_fraction', 0.25))
+    detrainment_depth = float(params.get('shallow_plume_detrainment_depth_m', 500.0))
+    detrainment_strength = float(params.get('shallow_plume_detrainment_strength', 0.0))
+    buoyancy_detrainment = float(
+        params.get('shallow_plume_buoyancy_detrainment_constant', 0.0)
+    )
     tke = state.get('tke', torch.full_like(t, 0.1))
 
     for column in range(batch):
@@ -166,6 +172,22 @@ def shallow_plume(state, grid, params):
                     1.0 + 0.61 * plume_vapor - plume_liquid
                 )
                 buoyancy = (plume_virtual - environment_virtual) / environment_virtual.clamp(min=150.0)
+                detrainment_start = maximum_height - detrainment_depth
+                terminal_fraction = torch.clamp(
+                    (subheight - detrainment_start) / max(detrainment_depth, 1.0),
+                    min=0.0,
+                    max=1.0,
+                )
+                terminal_detrainment = (
+                    detrainment_strength * terminal_fraction / max(detrainment_depth, 1.0)
+                )
+                negative_buoyancy_detrainment = (
+                    buoyancy_detrainment
+                    * torch.clamp(-g * buoyancy, min=0.0)
+                    / velocity_squared.clamp(min=0.01)
+                )
+                detrainment = terminal_detrainment + negative_buoyancy_detrainment
+                plume_mass_flux = plume_mass_flux * torch.exp(-detrainment * step_depth)
                 damping_rate = velocity_drag * entrainment
                 velocity_retained = torch.exp(-damping_rate * step_depth)
                 buoyancy_equilibrium = (
@@ -193,6 +215,7 @@ def shallow_plume(state, grid, params):
             )
             mass_flux = torch.minimum(plume_mass_flux, maximum_mass_flux)
             plume_mass_flux = mass_flux
+            plume_mass_flux_profile[column, upper] = mass_flux
             area_fraction = (
                 mass_flux / (plume_density * plume_velocity).clamp(min=1.0e-8)
             ).clamp(min=0.0, max=float(params.get('shallow_plume_area_max', 0.20)))
@@ -260,6 +283,7 @@ def shallow_plume(state, grid, params):
         'cloud_base_mass_flux': cloud_mass_flux,
         'cloud_fraction': diagnosed_cloud_fraction,
         'plume_condensate': plume_condensate_profile,
+        'plume_mass_flux_profile': plume_mass_flux_profile,
         'condensate_detrainment': condensate_detrainment,
         'water_residual': torch.sum(
             (q_new + qc_new - q - qc) * mass, dim=1

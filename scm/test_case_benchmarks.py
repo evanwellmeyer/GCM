@@ -107,3 +107,28 @@ def test_edmf_detrainment_hands_cloud_water_to_the_grid():
         assert result['cloud_layer_max_rh'] < 1.0
         assert 0.0 < result['cloud_water_path_kgm2'] < 0.6
     assert max(paths) - min(paths) < 0.1
+
+
+def test_distributed_detrainment_reduces_mass_flux_near_plume_top():
+    grid = make_grid(40)
+    state, params = initialize_bomex(grid)
+    params.update({
+        'dt': 60.0,
+        '_surface_sensible_heat_flux': torch.tensor([10.0]),
+        '_surface_moisture_flux': torch.tensor([5.0e-5]),
+        'shallow_plume_grid_saturation_adjustment': False,
+        'shallow_plume_detrainment_depth_m': 500.0,
+        'shallow_plume_detrainment_strength': 8.0,
+        'shallow_plume_buoyancy_detrainment_constant': 1.0,
+    })
+    distributed = edmf_boundary_layer(state, grid, params)
+    baseline_params = dict(params)
+    baseline_params['shallow_plume_detrainment_strength'] = 0.0
+    baseline_params['shallow_plume_buoyancy_detrainment_constant'] = 0.0
+    baseline = edmf_boundary_layer(state, grid, baseline_params)
+    distributed_active = distributed['plume_mass_flux_profile'][0]
+    distributed_active = distributed_active[distributed_active > 0.0]
+    baseline_active = baseline['plume_mass_flux_profile'][0]
+    baseline_active = baseline_active[baseline_active > 0.0]
+    assert distributed_active.numel() >= 2
+    assert distributed_active[0] < baseline_active[0]
