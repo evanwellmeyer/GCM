@@ -12,6 +12,7 @@ import torch
 
 from scm.boundary_layer import boundary_layer_mixing
 from scm.boundary_layer_tke_v2 import tke_boundary_layer
+from scm.boundary_layer_edmf_v3 import edmf_boundary_layer
 from scm.condensation import condensation
 from scm.convection_bm import betts_miller
 from scm.convection_mf import mass_flux_convection
@@ -161,6 +162,12 @@ register_physics_scheme(
     "tke_v2",
     tke_boundary_layer,
     "Experimental one-equation TKE closure with flux-form scalar transport.",
+)
+register_physics_scheme(
+    "boundary_layer",
+    "edmf_v3",
+    edmf_boundary_layer,
+    "Experimental unified TKE diffusion and shallow-plume transport.",
 )
 
 register_physics_scheme("shallow_convection", "simple", shallow_convection, "Simple shallow convective adjustment.")

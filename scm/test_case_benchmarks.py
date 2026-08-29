@@ -3,6 +3,7 @@ import torch
 from scm.case_benchmarks import run_bomex, run_dry_mixed_layer
 from scm.case_benchmarks import initialize_bomex
 from scm.shallow_plume_v2 import shallow_plume
+from scm.boundary_layer_edmf_v3 import edmf_boundary_layer
 from scm.thermo import make_grid
 
 
@@ -56,3 +57,28 @@ def test_tke_plume_bomex_is_bounded_and_mass_flux_convergent():
         assert 0.0 <= result['maximum_cloud_fraction'] <= 0.301
         assert 300.0 <= result['boundary_layer_depth_m'] <= 1600.0
     assert max(mass_fluxes) - min(mass_fluxes) < 0.015
+
+
+def test_unified_edmf_conserves_surface_water_and_energy():
+    grid = make_grid(40)
+    state, params = initialize_bomex(grid)
+    params.update({
+        'dt': 60.0,
+        '_surface_sensible_heat_flux': torch.tensor([10.0]),
+        '_surface_moisture_flux': torch.tensor([5.0e-5]),
+    })
+    output = edmf_boundary_layer(state, grid, params)
+    assert torch.max(torch.abs(output['water_residual'])) < 1.0e-7
+    assert torch.max(torch.abs(output['energy_residual'])) < 0.1
+
+
+def test_unified_edmf_bomex_depth_is_resolution_convergent():
+    depths = []
+    for levels in [20, 40, 80]:
+        result = run_bomex(
+            make_grid(levels), hours=1.0, use_shallow=False, scheme='edmf'
+        )
+        depths.append(result['boundary_layer_depth_m'])
+        assert result['cloud_layer_max_rh'] <= 1.001
+        assert result['cloud_water_path_kgm2'] < 0.1
+    assert max(depths) - min(depths) < 75.0

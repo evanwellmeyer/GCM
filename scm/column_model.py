@@ -277,6 +277,11 @@ def physics_step(state, grid, params, rad_cache=None, ls_forcing=None):
     shallow_out = run_physics_scheme(
         'shallow_convection', params.get('shallow_convection_scheme', 'simple'), state, grid, shallow_params
     )
+    if 'cloud_fraction' in bl_out:
+        shallow_out = dict(shallow_out)
+        shallow_out['cloud_fraction'] = bl_out['cloud_fraction']
+        shallow_out['plume_condensate'] = bl_out['plume_condensate']
+        shallow_out['cloud_base_mass_flux'] = bl_out['cloud_base_mass_flux']
     check_nan('shallow dt', shallow_out['dt'])
     check_nan('shallow dq', shallow_out['dq'])
     shallow_dt = torch.nan_to_num(shallow_out['dt'], nan=0.0).to(state['t'].dtype)

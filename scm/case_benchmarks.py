@@ -2,6 +2,7 @@ import torch
 
 from scm.boundary_layer import boundary_layer_mixing
 from scm.boundary_layer_tke_v2 import tke_boundary_layer
+from scm.boundary_layer_edmf_v3 import edmf_boundary_layer
 from scm.column_model import initial_state, update_derived
 from scm.convection_shallow import shallow_convection
 from scm.shallow_plume_v2 import shallow_plume
@@ -100,12 +101,17 @@ def apply_boundary_layer(state, grid, params, sensible_flux, moisture_flux, sche
     if scheme == 'tke':
         output = tke_boundary_layer(state, grid, local)
         state['tke'] = output['tke']
+    elif scheme == 'edmf':
+        output = edmf_boundary_layer(state, grid, local)
+        state['tke'] = output['tke']
     else:
         output = boundary_layer_mixing(state, grid, local)
     timestep = float(local['dt'])
     state['t'] = state['t'] + output['dt'] * timestep
     state['q'] = state['q'] + output['dq'] * timestep
     state['qc'] = torch.clamp(state['qc'] + output['dqc'] * timestep, min=0.0)
+    if 'cloud_fraction' in output:
+        state['cloud_fraction'] = output['cloud_fraction']
     return update_derived(state, grid), output
 
 
@@ -210,6 +216,7 @@ def run_bomex(
             state, grid, params, sensible_flux, moisture_flux, scheme=scheme
         )
         depth = output['boundary_layer_depth_m']
+        shallow_mass_flux = output.get('cloud_base_mass_flux', shallow_mass_flux)
         if use_shallow:
             params['_surface_sensible_heat_flux'] = torch.as_tensor(
                 [sensible_flux], device=state['t'].device, dtype=state['t'].dtype
