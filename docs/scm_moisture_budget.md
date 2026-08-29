@@ -78,3 +78,13 @@ python scripts/compare_atm407_resolutions.py \
   --days 100 \
   --surface-temperature 284.44
 ```
+
+## Fractional-optics v20 promotion gate
+
+The `mf_edmf_fractional_optics_v20.toml` configuration substantially improves the 20-level column but does not yet pass the native-grid promotion gate. Independent 50-day continuations at 10, 20, and 40 levels produced CAPE values of 1675, 1043, and 695 J kg-1 and total precipitation rates of 3.67, 3.36, and 3.48 mm day-1. The similar total rain hides a large change in its source: large-scale precipitation was 2.37, 0.66, and 1.25 mm day-1, respectively. Boundary-layer depth also changed from the imposed 4000 m upper limit at 10 levels to 3101 m at 20 levels and 3641 m at 40 levels in one-day continuation diagnostics.
+
+The 20- and 40-level radiative states were reasonably close to balance, but the 10-level state retained a TOA imbalance near -5 W m-2 and a surface imbalance near +5 W m-2. The 10-level clear-sky TOA balance also had the opposite sign from the 20- and 40-level results. All three cases conserved column water and avoided the mass-flux and tendency caps, so the disagreement is not explained by numerical clipping or a water leak.
+
+These results reject v20 as a resolution-converged default. The dominant unresolved behavior is the grid dependence of diagnosed boundary-layer depth, CAPE, condensation, and the partition between deep, large-scale, and cloud precipitation. The current production default and student checkpoint should remain unchanged while that coupling is corrected. The v20 20-level checkpoint remains useful as an experimental diagnostic case, not as a production initial condition.
+
+The reference generator now accepts `--levels`, conservatively remaps total water when a checkpoint is used to seed a different grid, and writes the native level count into the output name and metadata. The budget diagnostic infers its grid from the checkpoint and restores checkpoint TKE, which prevents a hidden turbulence reinitialization during continuation tests.

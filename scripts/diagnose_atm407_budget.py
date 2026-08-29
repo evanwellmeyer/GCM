@@ -26,7 +26,9 @@ parser.add_argument('--output', type=Path)
 args = parser.parse_args()
 
 device = torch.device('cpu')
-grid = make_grid(20, device=device)
+reference = np.load(args.reference)
+levels = len(reference['sigma_full'])
+grid = make_grid(levels, device=device)
 config = load_run_config(args.config)
 params = default_params(device=device)
 params.update(extract_param_overrides(config))
@@ -42,10 +44,13 @@ params.update({
     'profile_diagnostics': True,
 })
 
-reference = np.load(args.reference)
 state = initial_state(1, grid, params, device=device)
 for name in ('t', 'q', 'qc', 'cloud_fraction'):
     state[name][0] = torch.as_tensor(reference[name], dtype=state[name].dtype)
+if 'tke' in reference.files:
+    state['tke'] = torch.as_tensor(
+        reference['tke'], dtype=state['t'].dtype
+    ).unsqueeze(0)
 state['ts'][0] = float(reference['ts'])
 state['ps'][0] = float(reference['ps'])
 state['slab_ts_ref'] = state['ts'].clone()

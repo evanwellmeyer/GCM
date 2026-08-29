@@ -24,19 +24,22 @@ parser.add_argument('--adjustment-days', type=int, default=100)
 parser.add_argument('--config', type=Path)
 parser.add_argument('--output-label', default='')
 parser.add_argument('--initial-reference', type=Path)
+parser.add_argument('--levels', type=int, default=20)
 args = parser.parse_args()
 
 if args.output_label and not args.output_label.replace('_', '').isalnum():
     parser.error('--output-label may contain only letters, numbers, and underscores')
+if args.levels < 4:
+    parser.error('--levels must be at least 4')
 
 outputdir = root / 'notebooks' / 'data'
 outputdir.mkdir(parents=True, exist_ok=True)
 suffix = f'_{args.output_label}' if args.output_label else ''
-referencepath = outputdir / f'atm407_equilibrium_20level{suffix}.npz'
-metadatapath = outputdir / f'atm407_equilibrium_20level{suffix}.json'
+referencepath = outputdir / f'atm407_equilibrium_{args.levels}level{suffix}.npz'
+metadatapath = outputdir / f'atm407_equilibrium_{args.levels}level{suffix}.json'
 
 device = torch.device('cpu')
-grid = make_grid(20, device=device)
+grid = make_grid(args.levels, device=device)
 params = default_params(device=device)
 config = load_run_config(args.config)
 params.update(extract_param_overrides(config))
@@ -73,14 +76,39 @@ if sourcepath is not None:
     initialreference = previousmetadata.get('initial_reference', str(sourcepath))
     reference = np.load(sourcepath)
     state = initial_state(1, grid, params, device=device)
-    state['t'][0] = torch.as_tensor(reference['t'], dtype=state['t'].dtype)
-    state['q'][0] = torch.as_tensor(reference['q'], dtype=state['q'].dtype)
-    state['qc'][0] = torch.as_tensor(reference['qc'], dtype=state['qc'].dtype)
+    sourcesigma = np.asarray(reference['sigma_full'])
+    targetsigma = grid['sigma_full'].cpu().numpy()
+
+    def seedprofile(name):
+        values = np.asarray(reference[name])
+        if values.shape[0] == args.levels:
+            return values
+        return np.interp(targetsigma, sourcesigma, values)
+
+    temperature = seedprofile('t')
+    vapor = seedprofile('q')
+    condensate = seedprofile('qc')
+    cloudfraction = seedprofile('cloud_fraction')
+    if len(sourcesigma) != args.levels:
+        sourcegrid = make_grid(len(sourcesigma), device=device)
+        sourceweights = torch.diff(sourcegrid['sigma_half']).cpu().numpy()
+        targetweights = torch.diff(grid['sigma_half']).cpu().numpy()
+        sourcewater = np.sum((reference['q'] + reference['qc']) * sourceweights)
+        targetwater = np.sum((vapor + condensate) * targetweights)
+        waterscale = sourcewater / max(targetwater, 1.0e-12)
+        vapor = vapor * waterscale
+        condensate = condensate * waterscale
+
+    state['t'][0] = torch.as_tensor(temperature, dtype=state['t'].dtype)
+    state['q'][0] = torch.as_tensor(vapor, dtype=state['q'].dtype)
+    state['qc'][0] = torch.as_tensor(condensate, dtype=state['qc'].dtype)
     state['cloud_fraction'][0] = torch.as_tensor(
-        reference['cloud_fraction'], dtype=state['cloud_fraction'].dtype
+        cloudfraction, dtype=state['cloud_fraction'].dtype
     )
     if 'tke' in reference.files:
-        state['tke'] = torch.as_tensor(reference['tke'], dtype=state['t'].dtype).unsqueeze(0)
+        state['tke'] = torch.as_tensor(
+            seedprofile('tke'), dtype=state['t'].dtype
+        ).unsqueeze(0)
     state['ts'][0] = float(reference['ts'])
     state['ps'][0] = float(reference['ps'])
     state['slab_ts_ref'] = state['ts'].clone()
@@ -136,7 +164,7 @@ metadata = {
     'description': 'Near-equilibrium ATM407 mass-flux SCM reference state',
     'configuration_label': config['run']['label'],
     'initial_reference': initialreference,
-    'reference_levels': 20,
+    'reference_levels': args.levels,
     'accelerated_spinup_days': 500,
     'final_adjustment_days': previousadjustment + args.adjustment_days,
     'spinup_ocean_depth_m': 5.0,
