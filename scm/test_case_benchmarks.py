@@ -4,7 +4,12 @@ from scm.case_benchmarks import run_bomex, run_dry_mixed_layer
 from scm.case_benchmarks import initialize_bomex
 from scm.shallow_plume_v2 import partition_plume, shallow_plume
 from scm.boundary_layer_edmf_v3 import edmf_boundary_layer
-from scm.boundary_layer_tke_v2 import tke_boundary_layer, tke_boundary_layer_depth
+from scm.boundary_layer_tke_v2 import (
+    pressure_diffusion_coefficients,
+    solve_scalar,
+    tke_boundary_layer,
+    tke_boundary_layer_depth,
+)
 from scm.thermo import make_grid
 
 
@@ -148,6 +153,38 @@ def test_semi_implicit_tke_is_bounded_at_long_physics_timestep():
     output = tke_boundary_layer(state, grid, params)
     assert torch.max(output['tke']) < 1.0
     assert torch.max(output['diffusivity']) < 100.0
+
+
+def test_tke_vertical_transport_is_column_conservative():
+    grid = make_grid(20)
+    state, _ = initialize_bomex(grid)
+    diffusivity = torch.full((1, 19), 20.0)
+    coefficients = pressure_diffusion_coefficients(
+        diffusivity, state['t'], state['p'], state['dp'], 900.0
+    )
+    original = torch.linspace(0.02, 0.20, 20).unsqueeze(0)
+    transported = solve_scalar(original, original, coefficients)
+    mass = state['dp'] / 9.80665
+    before = torch.sum(original * mass, dim=1)
+    after = torch.sum(transported * mass, dim=1)
+    assert torch.allclose(after, before, rtol=1.0e-6, atol=1.0e-5)
+
+
+def test_tke_vertical_transport_reaches_surface_layer():
+    grid = make_grid(20)
+    state, params = initialize_bomex(grid)
+    state['tke'] = torch.full_like(state['t'], 1.0e-4)
+    state['tke'][:, -2] = 0.20
+    params.update({
+        'dt': 900.0,
+        'tke_time_integration': 'semi_implicit',
+        'tke_dissipation_constant': 0.0,
+        'tke_vertical_transport': True,
+    })
+    transported = tke_boundary_layer(state, grid, params)
+    params['tke_vertical_transport'] = False
+    local = tke_boundary_layer(state, grid, params)
+    assert transported['tke'][0, -1] > local['tke'][0, -1]
 
 
 def test_tke_depth_diagnostic_uses_turbulent_layer_top():

@@ -55,13 +55,32 @@ def tke_boundary_layer(state, grid, params):
             * torch.sqrt(produced)
             / mixing_length.clamp(min=1.0)
         )
-        tke_new = produced / (1.0 + damping)
+        provisional_tke = produced / (1.0 + damping)
     else:
-        tke_new = tke + timestep * (production - dissipation)
+        provisional_tke = tke + timestep * (production - dissipation)
+    provisional_tke = provisional_tke.clamp(
+        min=float(params.get('tke_min', 1.0e-4)),
+        max=float(params.get('tke_max', 10.0)),
+    )
+
+    provisional_diffusivity, _ = tke_diffusivity(
+        t, q, u, v, p, height, provisional_tke, mixing_length, params
+    )
+    transport_diffusivity = 0.5 * (diffusivity + provisional_diffusivity)
+    transport_coefficients = pressure_diffusion_coefficients(
+        transport_diffusivity, t, p, dp, timestep
+    )
+    if params.get('tke_vertical_transport', False):
+        tke_new = solve_scalar(
+            provisional_tke, provisional_tke, transport_coefficients
+        )
+    else:
+        tke_new = provisional_tke
     tke_new = tke_new.clamp(
         min=float(params.get('tke_min', 1.0e-4)),
         max=float(params.get('tke_max', 10.0)),
     )
+    tke_transport = (tke_new - provisional_tke) / timestep
 
     new_diffusivity, _ = tke_diffusivity(
         t, q, u, v, p, height, tke_new, mixing_length, params
@@ -103,6 +122,10 @@ def tke_boundary_layer(state, grid, params):
         'tke': tke_new,
         'diffusivity': interface_diffusivity,
         'boundary_layer_depth_m': boundary_depth,
+        'tke_production': production,
+        'tke_dissipation': dissipation,
+        'tke_transport': tke_transport,
+        'surface_buoyancy_flux_m2s3': surface_buoyancy,
     }
 
 

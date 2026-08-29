@@ -511,6 +511,9 @@ def physics_step(state, grid, params, rad_cache=None, ls_forcing=None):
         'boundary_layer_depth_m': bl_out.get(
             'boundary_layer_depth_m', torch.zeros_like(state['ts'])
         ),
+        'surface_buoyancy_flux_m2s3': bl_out.get(
+            'surface_buoyancy_flux_m2s3', torch.zeros_like(state['ts'])
+        ),
         'cloud_cover': 1.0 - torch.prod(
             1.0 - cloud_out['cloud_fraction'].clamp(min=0.0, max=1.0), dim=1
         ),
@@ -533,6 +536,9 @@ def physics_step(state, grid, params, rad_cache=None, ls_forcing=None):
             'boundary_layer_temperature_tendency': bl_out.get('mixing_dt', bl_dt) if flux_coupled else bl_dt,
             'boundary_layer_moisture_tendency': bl_out.get('mixing_dq', bl_dq) if flux_coupled else bl_dq,
             'boundary_layer_condensate_tendency': bl_out.get('mixing_dqc', bl_dqc) if flux_coupled else bl_dqc,
+            'tke_production': bl_out.get('tke_production', torch.zeros_like(state['t'])),
+            'tke_dissipation': bl_out.get('tke_dissipation', torch.zeros_like(state['t'])),
+            'tke_transport': bl_out.get('tke_transport', torch.zeros_like(state['t'])),
             'boundary_layer_total_water_tendency': (
                 bl_out.get('mixing_dq', bl_dq) + bl_out.get('mixing_dqc', bl_dqc)
                 if flux_coupled else bl_dq + bl_dqc

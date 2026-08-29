@@ -117,6 +117,9 @@ result = {
     'cloud_condensate_gkg': (state['qc'][0] * 1000).tolist(),
     'tke_m2s2': state['tke'][0].tolist(),
     'diffusivity_m2s': diffusivity[0].tolist(),
+    'tke_production_m2s3': meanprofile('tke_production').tolist(),
+    'tke_dissipation_m2s3': meanprofile('tke_dissipation').tolist(),
+    'tke_transport_m2s3': meanprofile('tke_transport').tolist(),
     'temperature_tendency_kday': {
         process: temperature[process].tolist() for process in processes
     },
@@ -140,6 +143,7 @@ result = {
         'cape_jkg': meanvalue('cape').item(),
         'rh95_mass_fraction': rh95mass.item(),
         'boundary_layer_depth_m': meanvalue('boundary_layer_depth_m').item(),
+        'surface_buoyancy_flux_m2s3': meanvalue('surface_buoyancy_flux_m2s3').item(),
         'maximum_tke_m2s2': torch.max(state['tke']).item(),
         'maximum_diffusivity_m2s': torch.max(diffusivity).item(),
         'deep_precipitation_mmday': meanvalue('precip_conv').item() * 86400,
