@@ -1,6 +1,8 @@
 import torch
 
 from scm.case_benchmarks import run_bomex, run_dry_mixed_layer
+from scm.case_benchmarks import initialize_bomex
+from scm.shallow_plume_v2 import shallow_plume
 from scm.thermo import make_grid
 
 
@@ -30,3 +32,23 @@ def test_tke_closure_improves_dry_mixed_layer_resolution_response():
 
     assert max(tke_spreads) < 0.5 * max(richardson_spreads)
     assert max(tke_spreads) - min(tke_spreads) < 0.25
+
+
+def test_shallow_plume_conserves_water_and_energy():
+    grid = make_grid(40)
+    state, params = initialize_bomex(grid)
+    params['dt'] = 60.0
+    output = shallow_plume(state, grid, params)
+    assert torch.max(torch.abs(output['water_residual'])) < 2.0e-8
+    assert torch.max(torch.abs(output['energy_residual'])) < 0.1
+
+
+def test_tke_plume_bomex_is_bounded_and_depth_convergent():
+    depths = []
+    for levels in [20, 40, 80]:
+        result = run_bomex(
+            make_grid(levels), hours=1.0, scheme='tke', shallow_scheme='plume'
+        )
+        depths.append(result['boundary_layer_depth_m'])
+        assert result['cloud_layer_max_rh'] <= 1.001
+    assert max(depths) - min(depths) < 50.0

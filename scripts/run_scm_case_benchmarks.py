@@ -22,6 +22,9 @@ for levels in [20, 40, 80]:
         'bomex_with_shallow': run_bomex(grid, use_shallow=True),
         'bomex_tke_only': run_bomex(grid, use_shallow=False, scheme='tke'),
         'bomex_tke_with_shallow': run_bomex(grid, use_shallow=True, scheme='tke'),
+        'bomex_tke_with_plume': run_bomex(
+            grid, use_shallow=True, scheme='tke', shallow_scheme='plume'
+        ),
     }
 
 output = root / 'outputs' / 'column' / 'benchmarks' / 'scm_case_benchmarks.json'

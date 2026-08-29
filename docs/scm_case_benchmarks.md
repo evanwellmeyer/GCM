@@ -18,6 +18,8 @@ The first baseline result shows that the current Richardson diffusion does not c
 
 The isolated one-equation TKE experiment uses flux-form pressure-coordinate transport, local buoyancy and shear production, dissipation, and a height-limited mixing length. It is not yet registered in the production physics suite. In the six-hour dry case, its diagnosed depth is 1.20, 1.25, and 1.22 km at 20, 40, and 80 levels. The mixed-layer potential-temperature spread is 0.64, 0.74, and 0.83 K. In BOMEX, its boundary-layer-only depth is 0.91, 0.96, and 0.97 km. These are substantial convergence improvements over the Richardson baseline, although the moist case still produces supersaturation at the finer resolutions and therefore needs a cloud-aware shallow-plume treatment before coupled integration.
 
+The cloud-aware plume transports total water and moist static energy conservatively while using an entraining liquid-water-potential-temperature plume to diagnose buoyancy and condensate. Combined with TKE, its six-hour BOMEX boundary-layer depths are 0.99, 1.02, and 1.00 km at 20, 40, and 80 levels. Maximum cloud-layer relative humidity is 0.93, 1.00, and 1.00, replacing the 1.12-1.14 supersaturation produced by TKE with the legacy shallow adjustment. The remaining liquid-water-path spread indicates that a subgrid cloud-fraction treatment is still needed before this experimental pair enters the production physics suite.
+
 References:
 
 - Siebesma et al. (2003), *A Large Eddy Simulation Intercomparison Study of Shallow Cumulus Convection*.

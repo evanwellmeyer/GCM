@@ -4,6 +4,7 @@ from scm.boundary_layer import boundary_layer_mixing
 from scm.boundary_layer_tke_v2 import tke_boundary_layer
 from scm.column_model import initial_state, update_derived
 from scm.convection_shallow import shallow_convection
+from scm.shallow_plume_v2 import shallow_plume
 from scm.ensemble import default_params
 from scm.thermo import Lv, Rd, cp, g, geopotential, kappa, p0, relative_humidity
 
@@ -167,7 +168,10 @@ def bomex_forcing(state, grid):
     return radiative - subsidence * theta_gradient, moisture_advection - subsidence * water_gradient
 
 
-def run_bomex(grid, hours=6.0, timestep=60.0, use_shallow=True, scheme='richardson'):
+def run_bomex(
+    grid, hours=6.0, timestep=60.0, use_shallow=True,
+    scheme='richardson', shallow_scheme='legacy',
+):
     state, params = initialize_bomex(grid)
     params.update({
         'dt': timestep,
@@ -206,9 +210,16 @@ def run_bomex(grid, hours=6.0, timestep=60.0, use_shallow=True, scheme='richards
         )
         depth = output['boundary_layer_depth_m']
         if use_shallow:
-            shallow = shallow_convection(state, grid, params)
+            if shallow_scheme == 'plume':
+                shallow = shallow_plume(state, grid, params)
+            else:
+                shallow = shallow_convection(state, grid, params)
             state['t'] = state['t'] + shallow['dt'] * timestep
             state['q'] = torch.clamp(state['q'] + shallow['dq'] * timestep, min=1.0e-7)
+            state['qc'] = torch.clamp(
+                state['qc'] + shallow.get('dqc', torch.zeros_like(state['qc'])) * timestep,
+                min=0.0,
+            )
             state = update_derived(state, grid)
 
     height = model_height(state, grid)[0]
@@ -222,4 +233,5 @@ def run_bomex(grid, hours=6.0, timestep=60.0, use_shallow=True, scheme='richards
         'cloud_layer_max_rh': float(rh[cloud_layer].max()),
         'cloud_layer_mean_rh': float(rh[cloud_layer].mean()),
         'levels_below_2000m': int(torch.count_nonzero(height <= 2000.0)),
+        'cloud_water_path_kgm2': float(torch.sum(state['qc'][0] * state['dp'][0] / g)),
     }
