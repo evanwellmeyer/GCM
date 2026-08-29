@@ -1,6 +1,7 @@
 import torch
 
 from scm.boundary_layer import boundary_layer_mixing
+from scm.boundary_layer_tke_v2 import tke_boundary_layer
 from scm.column_model import initial_state, update_derived
 from scm.convection_shallow import shallow_convection
 from scm.ensemble import default_params
@@ -86,7 +87,7 @@ def initialize_bomex(grid):
     return state, params
 
 
-def apply_boundary_layer(state, grid, params, sensible_flux, moisture_flux):
+def apply_boundary_layer(state, grid, params, sensible_flux, moisture_flux, scheme='richardson'):
     local = dict(params)
     local['_surface_sensible_heat_flux'] = torch.as_tensor(
         [sensible_flux], device=state['t'].device, dtype=state['t'].dtype
@@ -95,7 +96,11 @@ def apply_boundary_layer(state, grid, params, sensible_flux, moisture_flux):
         [moisture_flux], device=state['t'].device, dtype=state['t'].dtype
     )
     local['_surface_energy_flux'] = local['_surface_sensible_heat_flux'] + Lv * local['_surface_moisture_flux']
-    output = boundary_layer_mixing(state, grid, local)
+    if scheme == 'tke':
+        output = tke_boundary_layer(state, grid, local)
+        state['tke'] = output['tke']
+    else:
+        output = boundary_layer_mixing(state, grid, local)
     timestep = float(local['dt'])
     state['t'] = state['t'] + output['dt'] * timestep
     state['q'] = state['q'] + output['dq'] * timestep
@@ -103,7 +108,7 @@ def apply_boundary_layer(state, grid, params, sensible_flux, moisture_flux):
     return update_derived(state, grid), output
 
 
-def run_dry_mixed_layer(grid, hours=6.0, timestep=60.0):
+def run_dry_mixed_layer(grid, hours=6.0, timestep=60.0, scheme='richardson'):
     state, params = initialize_dry_mixed_layer(grid)
     params.update({
         'dt': timestep,
@@ -120,7 +125,7 @@ def run_dry_mixed_layer(grid, hours=6.0, timestep=60.0):
     steps = round(hours * 3600.0 / timestep)
     depth = torch.zeros(1)
     for _ in range(steps):
-        state, output = apply_boundary_layer(state, grid, params, 100.0, 0.0)
+        state, output = apply_boundary_layer(state, grid, params, 100.0, 0.0, scheme=scheme)
         depth = output['boundary_layer_depth_m']
 
     theta = state['t'] * (p0 / state['p']) ** kappa
@@ -162,7 +167,7 @@ def bomex_forcing(state, grid):
     return radiative - subsidence * theta_gradient, moisture_advection - subsidence * water_gradient
 
 
-def run_bomex(grid, hours=6.0, timestep=60.0, use_shallow=True):
+def run_bomex(grid, hours=6.0, timestep=60.0, use_shallow=True, scheme='richardson'):
     state, params = initialize_bomex(grid)
     params.update({
         'dt': timestep,
@@ -197,7 +202,7 @@ def run_bomex(grid, hours=6.0, timestep=60.0, use_shallow=True):
         sensible_flux = float((density * cp * 8.0e-3)[0])
         moisture_flux = float((density * 5.2e-5)[0])
         state, output = apply_boundary_layer(
-            state, grid, params, sensible_flux, moisture_flux
+            state, grid, params, sensible_flux, moisture_flux, scheme=scheme
         )
         depth = output['boundary_layer_depth_m']
         if use_shallow:

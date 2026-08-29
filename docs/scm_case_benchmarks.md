@@ -16,6 +16,8 @@ The output compares 20, 40, and 80 full-atmosphere levels. For BOMEX it runs bot
 
 The first baseline result shows that the current Richardson diffusion does not converge in the dry mixed-layer case: diagnosed depth grows from about 1.55 km at 20 levels to 2.33 km at 80 levels, while the potential-temperature spread also increases. In BOMEX, shallow convection slightly reduces diagnosed boundary-layer depth but raises maximum cloud-layer relative humidity toward saturation. These results identify boundary-layer transport as the primary development target and the shallow closure as a secondary target.
 
+The isolated one-equation TKE experiment uses flux-form pressure-coordinate transport, local buoyancy and shear production, dissipation, and a height-limited mixing length. It is not yet registered in the production physics suite. In the six-hour dry case, its diagnosed depth is 1.20, 1.25, and 1.22 km at 20, 40, and 80 levels. The mixed-layer potential-temperature spread is 0.64, 0.74, and 0.83 K. In BOMEX, its boundary-layer-only depth is 0.91, 0.96, and 0.97 km. These are substantial convergence improvements over the Richardson baseline, although the moist case still produces supersaturation at the finer resolutions and therefore needs a cloud-aware shallow-plume treatment before coupled integration.
+
 References:
 
 - Siebesma et al. (2003), *A Large Eddy Simulation Intercomparison Study of Shallow Cumulus Convection*.

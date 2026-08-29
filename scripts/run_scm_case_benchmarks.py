@@ -17,8 +17,11 @@ for levels in [20, 40, 80]:
     grid = make_grid(levels)
     results[str(levels)] = {
         'dry_mixed_layer': run_dry_mixed_layer(grid),
+        'dry_mixed_layer_tke': run_dry_mixed_layer(grid, scheme='tke'),
         'bomex_boundary_layer_only': run_bomex(grid, use_shallow=False),
         'bomex_with_shallow': run_bomex(grid, use_shallow=True),
+        'bomex_tke_only': run_bomex(grid, use_shallow=False, scheme='tke'),
+        'bomex_tke_with_shallow': run_bomex(grid, use_shallow=True, scheme='tke'),
     }
 
 output = root / 'outputs' / 'column' / 'benchmarks' / 'scm_case_benchmarks.json'
