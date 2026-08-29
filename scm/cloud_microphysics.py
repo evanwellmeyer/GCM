@@ -52,6 +52,30 @@ def _quadratic_autoconversion(qc, dt, params, batch, device, dtype):
     return qc - sink, sink
 
 
+def _evaporate_to_saturation(q, qc, t, p):
+    """Evaporate available condensate toward saturation at fixed moist energy."""
+
+    saturation = saturation_specific_humidity(t, p)
+    maximum = torch.minimum(qc, torch.clamp(saturation - q, min=0.0))
+
+    def residual(evaporation):
+        cooled = t - Lv / cp * evaporation
+        return q + evaporation - saturation_specific_humidity(cooled, p)
+
+    lower = torch.zeros_like(q)
+    upper = maximum
+    reaches_saturation = residual(upper) >= 0.0
+    for _ in range(16):
+        middle = 0.5 * (lower + upper)
+        above_saturation = residual(middle) >= 0.0
+        upper = torch.where(above_saturation, middle, upper)
+        lower = torch.where(above_saturation, lower, middle)
+
+    saturation_limited = 0.5 * (lower + upper)
+    evaporation = torch.where(reaches_saturation, saturation_limited, maximum)
+    return qc - evaporation, evaporation
+
+
 def cloud_microphysics_step(state, grid, params, cond_out, conv_out):
     """Very simple prognostic cloud condensate and cloud optics.
 
@@ -108,24 +132,39 @@ def cloud_microphysics_step(state, grid, params, cond_out, conv_out):
 
     source = ls_source + conv_source
 
-    evap_tau = _to_col(params.get('cloud_evap_tau', 3600.0), batch, device, dtype)
-    rh_evap = _to_col(params.get('cloud_rh_evap', 0.75), batch, device, dtype).clamp(min=1.0e-3)
-
     qc_max = float(params.get('cloud_qc_max', 0.01))
     qc_unbounded = torch.clamp(qc_prev + source, min=0.0)
     overflow_sink = torch.clamp(qc_unbounded - qc_max, min=0.0)
     qc = torch.clamp(qc_unbounded, max=qc_max)
     qc, autoconv_sink = _quadratic_autoconversion(qc, dt, params, batch, device, dtype)
-    dry_factor = torch.clamp((rh_evap - rh) / rh_evap, min=0.0, max=1.0)
-    qc_before_evaporation = qc
-    qc = qc * torch.exp(-(dt / evap_tau.clamp(min=1.0)) * dry_factor)
-    evaporation = qc_before_evaporation - qc
+    evaporation_scheme = params.get('cloud_evaporation_scheme', 'relative_humidity')
+    if evaporation_scheme == 'saturation_deficit':
+        qc, evaporation = _evaporate_to_saturation(q, qc, t, p)
+    elif evaporation_scheme == 'relative_humidity':
+        evap_tau = _to_col(params.get('cloud_evap_tau', 3600.0), batch, device, dtype)
+        rh_evap = _to_col(
+            params.get('cloud_rh_evap', 0.75), batch, device, dtype
+        ).clamp(min=1.0e-3)
+        dry_factor = torch.clamp((rh_evap - rh) / rh_evap, min=0.0, max=1.0)
+        qc_before_evaporation = qc
+        qc = qc * torch.exp(-(dt / evap_tau.clamp(min=1.0)) * dry_factor)
+        evaporation = qc_before_evaporation - qc
+    else:
+        raise ValueError(f'unknown cloud evaporation scheme: {evaporation_scheme}')
     vapor_adjustment = evaporation
     temperature_adjustment = -Lv / cp * evaporation
+    q_after_evaporation = q + vapor_adjustment
+    t_after_evaporation = t + temperature_adjustment
+    qs_after_evaporation = saturation_specific_humidity(t_after_evaporation, p)
+    rh = q_after_evaporation / qs_after_evaporation.clamp(min=1.0e-8)
 
     t_liq = float(params.get('cloud_liquid_temp', 273.15))
     t_ice = float(params.get('cloud_ice_temp', 258.15))
-    liquid_fraction = torch.clamp((t - t_ice) / max(t_liq - t_ice, 1.0e-3), min=0.0, max=1.0)
+    liquid_fraction = torch.clamp(
+        (t_after_evaporation - t_ice) / max(t_liq - t_ice, 1.0e-3),
+        min=0.0,
+        max=1.0,
+    )
 
     lwp = qc * liquid_fraction * dp / g
     iwp = qc * (1.0 - liquid_fraction) * dp / g

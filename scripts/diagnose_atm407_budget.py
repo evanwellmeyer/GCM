@@ -101,6 +101,7 @@ result = {
     'pressure_hpa': pressure.tolist(),
     'temperature_k': state['t'][0].tolist(),
     'relative_humidity_percent': rh.tolist(),
+    'cloud_condensate_gkg': (state['qc'][0] * 1000).tolist(),
     'temperature_tendency_kday': {
         process: temperature[process].tolist() for process in processes
     },

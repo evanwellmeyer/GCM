@@ -612,6 +612,47 @@ def test_quadratic_autoconversion(device):
     print("quadratic autoconversion: PASS\n")
 
 
+def test_cloud_evaporation_conserves_water_and_energy(device):
+    """Verify subsaturated condensate evaporates without changing moist energy."""
+    from scm.thermo import make_grid, pressure_at_full, dp_from_ps, saturation_specific_humidity, cp, Lv
+    from scm.cloud_microphysics import initialize_cloud_state, cloud_microphysics_step
+
+    grid = make_grid(nlevels=20, device=device)
+    ps = torch.full((1,), 1.0e5, device=device)
+    p = pressure_at_full(grid, ps)
+    dp = dp_from_ps(grid, ps)
+    sigma = grid['sigma_full'].unsqueeze(0)
+    t = torch.clamp(292.0 * sigma ** 0.18, min=210.0)
+    qs = saturation_specific_humidity(t, p)
+    q = 0.9 * qs
+    state = {'t': t, 'q': q, 'ts': torch.tensor([292.0], device=device), 'p': p, 'dp': dp}
+    state.update(initialize_cloud_state(1, grid, device=device))
+    state['qc'][:] = 2.0e-3
+
+    params = {
+        'cloud_microphysics_enabled': True,
+        'cloud_autoconv_tau': 1.0e12,
+        'cloud_autoconv_qc_thresh': 1.0,
+        'cloud_qc_max': 1.0,
+        'cloud_evaporation_scheme': 'saturation_deficit',
+        'dt': 900.0,
+    }
+    zeros = torch.zeros_like(q)
+    output = cloud_microphysics_step(
+        state, grid, params, {'cloud_source': zeros}, {'precip': torch.zeros(1, device=device)}
+    )
+    qnew = q + output['dq']
+    tnew = t + output['dt']
+    water_change = qnew + output['qc'] - q - state['qc']
+    energy_change = cp * output['dt'] + Lv * output['dq']
+    qsnew = saturation_specific_humidity(tnew, p)
+
+    assert torch.allclose(water_change, torch.zeros_like(water_change), atol=2.0e-8)
+    assert torch.allclose(energy_change, torch.zeros_like(energy_change), atol=2.0e-3)
+    assert torch.all(qnew <= qsnew + 2.0e-7)
+    assert output['qc'].sum() < state['qc'].sum()
+
+
 def test_shallow_convection(device):
     """verify the shallow scheme moistens just above the BL without precipitating."""
     print("=== shallow convection ===")
