@@ -565,6 +565,21 @@ def physics_step(state, grid, params, rad_cache=None, ls_forcing=None):
             'boundary_layer_temperature_tendency': bl_out.get('mixing_dt', bl_dt) if flux_coupled else bl_dt,
             'boundary_layer_moisture_tendency': bl_out.get('mixing_dq', bl_dq) if flux_coupled else bl_dq,
             'boundary_layer_condensate_tendency': bl_out.get('mixing_dqc', bl_dqc) if flux_coupled else bl_dqc,
+            'boundary_layer_local_moisture_tendency': bl_out.get(
+                'local_dq', torch.zeros_like(state['q'])
+            ),
+            'boundary_layer_plume_moisture_tendency': bl_out.get(
+                'plume_dq', torch.zeros_like(state['q'])
+            ),
+            'boundary_layer_correction_moisture_tendency': bl_out.get(
+                'correction_dq', torch.zeros_like(state['q'])
+            ),
+            'boundary_layer_local_condensate_tendency': bl_out.get(
+                'local_dqc', torch.zeros_like(state['qc'])
+            ),
+            'boundary_layer_plume_condensate_tendency': bl_out.get(
+                'plume_dqc', torch.zeros_like(state['qc'])
+            ),
             'tke_production': bl_out.get('tke_production', torch.zeros_like(state['t'])),
             'tke_dissipation': bl_out.get('tke_dissipation', torch.zeros_like(state['t'])),
             'tke_transport': bl_out.get('tke_transport', torch.zeros_like(state['t'])),

@@ -44,6 +44,7 @@ def edmf_boundary_layer(state, grid, params):
     ).reshape(-1)
     expected_water = initial_water + timestep * moisture_flux
     water_error = final_water - expected_water
+    uncorrected_q = final_q
     final_q = final_q.clone()
     final_q[:, -1] = final_q[:, -1] - water_error / mass[:, -1].clamp(min=1.0e-8)
 
@@ -65,6 +66,7 @@ def edmf_boundary_layer(state, grid, params):
         dim=1,
     )
     energy_error = final_mse - expected_mse
+    uncorrected_t = final_t
     final_t = final_t.clone()
     final_t[:, -1] = final_t[:, -1] - energy_error / (
         cp * mass[:, -1].clamp(min=1.0e-8)
@@ -79,6 +81,14 @@ def edmf_boundary_layer(state, grid, params):
         'dt': (final_t - state['t']) / timestep,
         'dq': (final_q - state['q']) / timestep,
         'dqc': (final_qc - state.get('qc', torch.zeros_like(state['q']))) / timestep,
+        'local_dt': local['dt'],
+        'local_dq': local['dq'],
+        'local_dqc': local['dqc'],
+        'plume_dt': plume['dt'],
+        'plume_dq': plume['dq'],
+        'plume_dqc': plume['dqc'],
+        'correction_dt': (final_t - uncorrected_t) / timestep,
+        'correction_dq': (final_q - uncorrected_q) / timestep,
         'tke': local['tke'],
         'diffusivity': local['diffusivity'],
         'boundary_layer_depth_m': local['boundary_layer_depth_m'],
@@ -94,6 +104,8 @@ def edmf_boundary_layer(state, grid, params):
         'plume_top_height_m': plume['plume_top_height_m'],
         'plume_cloud_base_height_m': plume['plume_cloud_base_height_m'],
         'maximum_plume_condensate_kgkg': plume['maximum_plume_condensate_kgkg'],
+        'water_correction_kgm2s': water_error / timestep,
+        'energy_correction_wm2': energy_error / timestep,
         'water_residual': (final_water - expected_water) / timestep,
         'energy_residual': (final_mse - expected_mse) / timestep,
     }

@@ -28,6 +28,7 @@ parser.add_argument('--levels', type=int, default=20)
 parser.add_argument('--cloud-ls-precip-fraction', type=float)
 parser.add_argument('--cloud-autoconv-tau', type=float)
 parser.add_argument('--cloud-autoconv-path-threshold', type=float)
+parser.add_argument('--edmf-plume-fraction', type=float)
 args = parser.parse_args()
 
 if args.output_label and not args.output_label.replace('_', '').isalnum():
@@ -58,6 +59,10 @@ if args.cloud_autoconv_path_threshold is not None:
     if args.cloud_autoconv_path_threshold < 0.0:
         parser.error('--cloud-autoconv-path-threshold must be nonnegative')
     params['cloud_autoconv_path_thresh_kgm2'] = args.cloud_autoconv_path_threshold
+if args.edmf_plume_fraction is not None:
+    if not 0.0 <= args.edmf_plume_fraction <= 1.0:
+        parser.error('--edmf-plume-fraction must be between 0 and 1')
+    params['edmf_plume_fraction'] = args.edmf_plume_fraction
 params.update({
     'dt': 1800.0,
     'ps0': 100000.0,
@@ -205,6 +210,7 @@ metadata = {
     'cloud_autoconv_path_threshold_kgm2': float(
         params.get('cloud_autoconv_path_thresh_kgm2', 0.02)
     ),
+    'edmf_plume_fraction': float(params.get('edmf_plume_fraction', 0.0)),
     'mass_flux_cap_fraction': stats['mass_flux_cap_active_mean'][0].item(),
     'temperature_cap_fraction': stats['temperature_cap_fraction_mean'][0].item(),
     'moisture_cap_fraction': stats['moisture_cap_fraction_mean'][0].item(),

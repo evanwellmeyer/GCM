@@ -74,6 +74,8 @@ def test_unified_edmf_conserves_surface_water_and_energy():
         '_surface_moisture_flux': torch.tensor([5.0e-5]),
     })
     output = edmf_boundary_layer(state, grid, params)
+    assert torch.max(torch.abs(output['water_correction_kgm2s'])) < 1.0e-7
+    assert torch.max(torch.abs(output['energy_correction_wm2'])) < 5.0
     assert torch.max(torch.abs(output['water_residual'])) < 1.0e-7
     assert torch.max(torch.abs(output['energy_residual'])) < 0.1
 

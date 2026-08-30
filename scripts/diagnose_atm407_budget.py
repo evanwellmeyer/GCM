@@ -149,6 +149,22 @@ result = {
         'deep_precipitation_mmday': meanvalue('precip_conv').item() * 86400,
         'large_scale_precipitation_mmday': meanvalue('precip_ls').item() * 86400,
         'cloud_precipitation_mmday': meanvalue('precip_cloud').item() * 86400,
+        'plume_condensate_source_mmday': meanvalue(
+            'plume_condensate_source_kgm2s'
+        ).item() * 86400,
+        'large_scale_cloud_source_mmday': meanvalue(
+            'ls_cloud_source_kgm2s'
+        ).item() * 86400,
+        'convective_cloud_source_mmday': meanvalue(
+            'conv_cloud_source_kgm2s'
+        ).item() * 86400,
+        'cloud_evaporation_mmday': meanvalue(
+            'cloud_evaporation_kgm2s'
+        ).item() * 86400,
+        'cloud_autoconversion_mmday': meanvalue(
+            'cloud_autoconversion_kgm2s'
+        ).item() * 86400,
+        'cloud_storage_mmday': meanvalue('cloud_storage_kgm2s').item() * 86400,
         'mass_flux_cap_fraction': meanvalue('mass_flux_cap_active').item(),
         'temperature_cap_fraction': meanvalue('temperature_cap_fraction').item(),
         'moisture_cap_fraction': meanvalue('moisture_cap_fraction').item(),
@@ -161,6 +177,21 @@ result = {
     ).tolist(),
     'cloud_total_water_tendency_gkgday': (
         meanprofile('cloud_total_water_tendency') * 86400 * 1000
+    ).tolist(),
+    'boundary_layer_local_moisture_tendency_gkgday': (
+        meanprofile('boundary_layer_local_moisture_tendency') * 86400 * 1000
+    ).tolist(),
+    'boundary_layer_plume_moisture_tendency_gkgday': (
+        meanprofile('boundary_layer_plume_moisture_tendency') * 86400 * 1000
+    ).tolist(),
+    'boundary_layer_correction_moisture_tendency_gkgday': (
+        meanprofile('boundary_layer_correction_moisture_tendency') * 86400 * 1000
+    ).tolist(),
+    'boundary_layer_local_condensate_tendency_gkgday': (
+        meanprofile('boundary_layer_local_condensate_tendency') * 86400 * 1000
+    ).tolist(),
+    'boundary_layer_plume_condensate_tendency_gkgday': (
+        meanprofile('boundary_layer_plume_condensate_tendency') * 86400 * 1000
     ).tolist(),
 }
 
