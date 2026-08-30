@@ -115,6 +115,32 @@ def test_edmf_detrainment_hands_cloud_water_to_the_grid():
     assert max(paths) - min(paths) < 0.1
 
 
+def test_internal_launch_layer_preserves_resolved_bomex():
+    baseline = run_bomex(
+        make_grid(40),
+        hours=1.0,
+        use_shallow=False,
+        scheme='edmf',
+        parameter_updates={'shallow_plume_grid_saturation_adjustment': False},
+    )
+    launched = run_bomex(
+        make_grid(40),
+        hours=1.0,
+        use_shallow=False,
+        scheme='edmf',
+        parameter_updates={
+            'shallow_plume_grid_saturation_adjustment': False,
+            'shallow_plume_launch_height_m': 350.0,
+        },
+    )
+    assert abs(
+        launched['cloud_water_path_kgm2'] - baseline['cloud_water_path_kgm2']
+    ) < 1.0e-5
+    assert abs(
+        launched['shallow_mass_flux_kgm2s'] - baseline['shallow_mass_flux_kgm2s']
+    ) < 1.0e-5
+
+
 def test_distributed_detrainment_reduces_mass_flux_near_plume_top():
     grid = make_grid(40)
     state, params = initialize_bomex(grid)

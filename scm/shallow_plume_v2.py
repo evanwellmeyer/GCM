@@ -79,6 +79,7 @@ def shallow_plume(state, grid, params):
     velocity_drag = float(params.get('shallow_plume_velocity_drag', 2.0))
     velocity_buoyancy = float(params.get('shallow_plume_velocity_buoyancy', 4.0))
     vertical_step = float(params.get('shallow_plume_vertical_step_m', 50.0))
+    launch_height = float(params.get('shallow_plume_launch_height_m', 0.0))
     surface_flux_fraction = float(params.get('shallow_plume_surface_flux_fraction', 0.25))
     detrainment_depth = float(params.get('shallow_plume_detrainment_depth_m', 500.0))
     detrainment_strength = float(params.get('shallow_plume_detrainment_strength', 0.0))
@@ -209,8 +210,13 @@ def shallow_plume(state, grid, params):
                     + (1.0 - velocity_retained) * buoyancy_equilibrium
                 )
                 if velocity_squared <= 0.0:
-                    active = False
-                    break
+                    if subheight < launch_height:
+                        velocity_squared = torch.as_tensor(
+                            0.01, device=t.device, dtype=t.dtype
+                        )
+                    else:
+                        active = False
+                        break
 
             if not active:
                 break
