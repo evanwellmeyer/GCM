@@ -25,6 +25,9 @@ parser.add_argument('--config', type=Path)
 parser.add_argument('--output-label', default='')
 parser.add_argument('--initial-reference', type=Path)
 parser.add_argument('--levels', type=int, default=20)
+parser.add_argument('--cloud-ls-precip-fraction', type=float)
+parser.add_argument('--cloud-autoconv-tau', type=float)
+parser.add_argument('--cloud-autoconv-path-threshold', type=float)
 args = parser.parse_args()
 
 if args.output_label and not args.output_label.replace('_', '').isalnum():
@@ -43,6 +46,18 @@ grid = make_grid(args.levels, device=device)
 params = default_params(device=device)
 config = load_run_config(args.config)
 params.update(extract_param_overrides(config))
+if args.cloud_ls_precip_fraction is not None:
+    if not 0.0 <= args.cloud_ls_precip_fraction <= 1.0:
+        parser.error('--cloud-ls-precip-fraction must be between 0 and 1')
+    params['cloud_ls_precip_fraction'] = args.cloud_ls_precip_fraction
+if args.cloud_autoconv_tau is not None:
+    if args.cloud_autoconv_tau <= 0.0:
+        parser.error('--cloud-autoconv-tau must be positive')
+    params['cloud_autoconv_tau'] = args.cloud_autoconv_tau
+if args.cloud_autoconv_path_threshold is not None:
+    if args.cloud_autoconv_path_threshold < 0.0:
+        parser.error('--cloud-autoconv-path-threshold must be nonnegative')
+    params['cloud_autoconv_path_thresh_kgm2'] = args.cloud_autoconv_path_threshold
 params.update({
     'dt': 1800.0,
     'ps0': 100000.0,
@@ -147,6 +162,7 @@ metrics = equilibrium_metrics(history, window=50)
 stats = equilibrium_stats(history, last_n=50)
 rh = relative_humidity(state['q'], state['t'], state['p'])[0]
 rh95mass = torch.sum((rh >= 0.95) * state['dp'][0] / g) / torch.sum(state['dp'][0] / g)
+cloudwaterpath = torch.sum(state['qc'][0] * state['dp'][0] / g)
 referencearrays = dict(
     sigma_full=grid['sigma_full'].cpu().numpy(),
     t=state['t'][0].cpu().numpy(),
@@ -180,9 +196,15 @@ metadata = {
     'deep_precipitation_mmday': stats['precip_conv_mean'][0].item() * 86400,
     'large_scale_precipitation_mmday': stats['precip_ls_mean'][0].item() * 86400,
     'cloud_precipitation_mmday': stats['precip_cloud_mean'][0].item() * 86400,
+    'cloud_water_path_kgm2': cloudwaterpath.item(),
     'cape_jkg': stats['cape_mean'][0].item(),
     'rh95_mass_fraction': rh95mass.item(),
     'cloud_base_mass_flux_kgm2s': stats['cloud_base_mass_flux_mean'][0].item(),
+    'cloud_ls_precip_fraction': float(params.get('cloud_ls_precip_fraction', 0.0)),
+    'cloud_autoconv_tau_s': float(params.get('cloud_autoconv_tau', 7200.0)),
+    'cloud_autoconv_path_threshold_kgm2': float(
+        params.get('cloud_autoconv_path_thresh_kgm2', 0.02)
+    ),
     'mass_flux_cap_fraction': stats['mass_flux_cap_active_mean'][0].item(),
     'temperature_cap_fraction': stats['temperature_cap_fraction_mean'][0].item(),
     'moisture_cap_fraction': stats['moisture_cap_fraction_mean'][0].item(),
