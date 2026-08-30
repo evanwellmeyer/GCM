@@ -52,6 +52,27 @@ def _quadratic_autoconversion(qc, dt, params, batch, device, dtype):
     return qc - sink, sink
 
 
+def _column_path_autoconversion(qc, dp, dt, params, batch, device, dtype):
+    """Convert excess column condensate and distribute the sink by cloud mass."""
+
+    tau = _to_col(
+        params.get('cloud_autoconv_tau', 7200.0), batch, device, dtype
+    ).squeeze(1).clamp(min=1.0)
+    threshold = _to_col(
+        params.get('cloud_autoconv_path_thresh_kgm2', 0.02),
+        batch,
+        device,
+        dtype,
+    ).squeeze(1).clamp(min=0.0)
+    layer_path = qc * dp / g
+    total_path = torch.sum(layer_path, dim=1)
+    excess_path = torch.clamp(total_path - threshold, min=0.0)
+    sink_path = torch.minimum((dt / tau) * excess_path, total_path)
+    fraction = sink_path / total_path.clamp(min=1.0e-12)
+    sink = qc * fraction.unsqueeze(1)
+    return qc - sink, sink
+
+
 def _evaporate_to_saturation(q, qc, t, p):
     """Evaporate available condensate toward saturation at fixed moist energy."""
 
@@ -157,15 +178,20 @@ def cloud_microphysics_step(state, grid, params, cond_out, conv_out, shallow_out
             return remaining, condensate - remaining
         raise ValueError(f'unknown cloud evaporation scheme: {evaporation_scheme}')
 
+    def autoconvert(condensate):
+        if params.get('cloud_autoconversion_scheme', 'local') == 'column_path':
+            return _column_path_autoconversion(
+                condensate, dp, dt, params, batch, device, dtype
+            )
+        return _quadratic_autoconversion(
+            condensate, dt, params, batch, device, dtype
+        )
+
     if params.get('cloud_evaporation_before_autoconversion', False):
         qc, evaporation = evaporate(qc)
-        qc, autoconv_sink = _quadratic_autoconversion(
-            qc, dt, params, batch, device, dtype
-        )
+        qc, autoconv_sink = autoconvert(qc)
     else:
-        qc, autoconv_sink = _quadratic_autoconversion(
-            qc, dt, params, batch, device, dtype
-        )
+        qc, autoconv_sink = autoconvert(qc)
         qc, evaporation = evaporate(qc)
     vapor_adjustment = evaporation
     temperature_adjustment = -Lv / cp * evaporation

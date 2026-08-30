@@ -1227,6 +1227,37 @@ def test_condensation(device):
     print("condensation: PASS\n")
 
 
+def test_column_path_autoconversion_conserves_water_across_grids(device):
+    from scm.cloud_microphysics import _column_path_autoconversion
+    from scm.thermo import g, make_grid
+
+    removed = []
+    for levels in (20, 40, 80):
+        grid = make_grid(levels, device=device)
+        dp = torch.diff(grid['sigma_half']).unsqueeze(0) * 100000.0
+        qc = torch.full((1, levels), 2.0e-4, device=device)
+        updated, sink = _column_path_autoconversion(
+            qc,
+            dp,
+            900.0,
+            {
+                'cloud_autoconv_tau': 5400.0,
+                'cloud_autoconv_path_thresh_kgm2': 0.02,
+            },
+            1,
+            device,
+            qc.dtype,
+        )
+        before = torch.sum(qc * dp / g)
+        after = torch.sum(updated * dp / g)
+        rain = torch.sum(sink * dp / g)
+        assert torch.allclose(before - after, rain, rtol=1.0e-5, atol=1.0e-7)
+        removed.append(rain)
+
+    removed = torch.stack(removed)
+    assert torch.max(removed) - torch.min(removed) < 1.0e-6
+
+
 def test_convection_bm(device):
     """verify betts-miller activates for unstable columns."""
     print("=== convection (betts-miller) ===")
