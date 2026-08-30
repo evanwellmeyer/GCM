@@ -244,6 +244,11 @@ def cloud_microphysics_step(state, grid, params, cond_out, conv_out, shallow_out
         cloud_sw_tau_layer = cloud_fraction * cloud_sw_tau_layer
         cloud_lw_tau_layer = cloud_fraction * cloud_lw_tau_layer
     precip = torch.sum((overflow_sink + autoconv_sink) * dp / g, dim=1)
+    ls_cloud_source = torch.sum(ls_source * dp / g, dim=1) / dt
+    conv_cloud_source = torch.sum(conv_source * dp / g, dim=1) / dt
+    cloud_evaporation = torch.sum(evaporation * dp / g, dim=1) / dt
+    cloud_autoconversion = torch.sum(autoconv_sink * dp / g, dim=1) / dt
+    cloud_storage = torch.sum((qc - qc_prev) * dp / g, dim=1) / dt
 
     return {
         'qc': qc,
@@ -255,4 +260,9 @@ def cloud_microphysics_step(state, grid, params, cond_out, conv_out, shallow_out
         'precip': precip,
         'dq': vapor_adjustment,
         'dt': temperature_adjustment,
+        'ls_cloud_source_kgm2s': ls_cloud_source,
+        'conv_cloud_source_kgm2s': conv_cloud_source,
+        'cloud_evaporation_kgm2s': cloud_evaporation,
+        'cloud_autoconversion_kgm2s': cloud_autoconversion,
+        'cloud_storage_kgm2s': cloud_storage,
     }

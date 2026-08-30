@@ -514,6 +514,35 @@ def physics_step(state, grid, params, rad_cache=None, ls_forcing=None):
         'surface_buoyancy_flux_m2s3': bl_out.get(
             'surface_buoyancy_flux_m2s3', torch.zeros_like(state['ts'])
         ),
+        'plume_condensate_source_kgm2s': torch.sum(
+            bl_out.get('condensate_detrainment', torch.zeros_like(state['qc']))
+            * state['dp'] / g,
+            dim=1,
+        ),
+        'plume_top_height_m': bl_out.get(
+            'plume_top_height_m', torch.zeros_like(state['ts'])
+        ),
+        'plume_cloud_base_height_m': bl_out.get(
+            'plume_cloud_base_height_m', torch.zeros_like(state['ts'])
+        ),
+        'maximum_plume_condensate_kgkg': bl_out.get(
+            'maximum_plume_condensate_kgkg', torch.zeros_like(state['ts'])
+        ),
+        'ls_cloud_source_kgm2s': cloud_out.get(
+            'ls_cloud_source_kgm2s', torch.zeros_like(state['ts'])
+        ),
+        'conv_cloud_source_kgm2s': cloud_out.get(
+            'conv_cloud_source_kgm2s', torch.zeros_like(state['ts'])
+        ),
+        'cloud_evaporation_kgm2s': cloud_out.get(
+            'cloud_evaporation_kgm2s', torch.zeros_like(state['ts'])
+        ),
+        'cloud_autoconversion_kgm2s': cloud_out.get(
+            'cloud_autoconversion_kgm2s', torch.zeros_like(state['ts'])
+        ),
+        'cloud_storage_kgm2s': cloud_out.get(
+            'cloud_storage_kgm2s', torch.zeros_like(state['ts'])
+        ),
         'cloud_cover': 1.0 - torch.prod(
             1.0 - cloud_out['cloud_fraction'].clamp(min=0.0, max=1.0), dim=1
         ),

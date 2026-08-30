@@ -78,6 +78,24 @@ for nlevels in args.levels:
         'large_scale_precipitation_mmday': stats['precip_ls_mean'][0].item() * 86400,
         'cloud_precipitation_mmday': stats['precip_cloud_mean'][0].item() * 86400,
         'total_precipitation_mmday': stats['precip_total_mean'][0].item() * 86400,
+        'plume_condensate_source_mmday': torch.stack([
+            item['plume_condensate_source_kgm2s'][0] for item in history[-window:]
+        ]).mean().item() * 86400,
+        'large_scale_cloud_source_mmday': torch.stack([
+            item['ls_cloud_source_kgm2s'][0] for item in history[-window:]
+        ]).mean().item() * 86400,
+        'convective_cloud_source_mmday': torch.stack([
+            item['conv_cloud_source_kgm2s'][0] for item in history[-window:]
+        ]).mean().item() * 86400,
+        'cloud_evaporation_mmday': torch.stack([
+            item['cloud_evaporation_kgm2s'][0] for item in history[-window:]
+        ]).mean().item() * 86400,
+        'cloud_autoconversion_mmday': torch.stack([
+            item['cloud_autoconversion_kgm2s'][0] for item in history[-window:]
+        ]).mean().item() * 86400,
+        'cloud_storage_mmday': torch.stack([
+            item['cloud_storage_kgm2s'][0] for item in history[-window:]
+        ]).mean().item() * 86400,
         'toa_net_wm2': stats['toa_net_mean'][0].item(),
         'surface_total_flux_wm2': stats['surface_total_flux_mean'][0].item(),
         'atmospheric_energy_residual_wm2': stats['atmos_energy_residual_mean'][0].item(),
@@ -87,6 +105,15 @@ for nlevels in args.levels:
             item['boundary_layer_depth_m'][0] for item in history[-window:]
         ]).mean().item(),
         'cloud_base_mass_flux_kgm2s': stats['cloud_base_mass_flux_mean'][0].item(),
+        'plume_top_height_m': torch.stack([
+            item['plume_top_height_m'][0] for item in history[-window:]
+        ]).mean().item(),
+        'plume_cloud_base_height_m': torch.stack([
+            item['plume_cloud_base_height_m'][0] for item in history[-window:]
+        ]).mean().item(),
+        'maximum_plume_condensate_gkg': torch.stack([
+            item['maximum_plume_condensate_kgkg'][0] for item in history[-window:]
+        ]).mean().item() * 1000,
         'mass_flux_cap_fraction': stats['mass_flux_cap_active_mean'][0].item(),
         'temperature_cap_fraction': stats['temperature_cap_fraction_mean'][0].item(),
         'moisture_cap_fraction': stats['moisture_cap_fraction_mean'][0].item(),

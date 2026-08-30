@@ -69,6 +69,9 @@ def shallow_plume(state, grid, params):
     plume_condensate_profile = torch.zeros_like(t)
     plume_mass_flux_profile = torch.zeros_like(t)
     cloud_mass_flux = torch.zeros(batch, device=t.device, dtype=t.dtype)
+    plume_top_height = torch.zeros(batch, device=t.device, dtype=t.dtype)
+    plume_cloud_base_height = torch.zeros_like(plume_top_height)
+    maximum_plume_condensate = torch.zeros_like(plume_top_height)
     maximum_height = float(params.get('shallow_plume_top_m', 2500.0))
     temperature_excess = float(params.get('shallow_plume_temperature_excess_k', 0.15))
     updraft_area = float(params.get('shallow_plume_updraft_area', 0.13))
@@ -86,11 +89,11 @@ def shallow_plume(state, grid, params):
 
     for column in range(batch):
         source = levels - 1
-        velocity_squared = torch.clamp(
-            (2.0 / 3.0) * tke[column, source], min=0.01
-        )
         source_density = p[column, source] / (
             287.0 * t[column, source].clamp(min=150.0)
+        )
+        velocity_squared = torch.clamp(
+            (2.0 / 3.0) * tke[column, source], min=0.01
         )
         area_fraction = torch.as_tensor(
             updraft_area, device=t.device, dtype=t.dtype
@@ -165,6 +168,14 @@ def shallow_plume(state, grid, params):
                 plume_temperature, plume_vapor, plume_liquid = partition_plume(
                     plume_theta, plume_water, subpressure
                 )
+                plume_top_height[column] = torch.maximum(
+                    plume_top_height[column], subheight
+                )
+                maximum_plume_condensate[column] = torch.maximum(
+                    maximum_plume_condensate[column], plume_liquid
+                )
+                if plume_liquid > 0.0 and plume_cloud_base_height[column] == 0.0:
+                    plume_cloud_base_height[column] = subheight
                 environment_virtual = environment_temperature * (
                     1.0 + 0.61 * environment_vapor - environment_liquid
                 )
@@ -285,6 +296,9 @@ def shallow_plume(state, grid, params):
         'plume_condensate': plume_condensate_profile,
         'plume_mass_flux_profile': plume_mass_flux_profile,
         'condensate_detrainment': condensate_detrainment,
+        'plume_top_height_m': plume_top_height,
+        'plume_cloud_base_height_m': plume_cloud_base_height,
+        'maximum_plume_condensate_kgkg': maximum_plume_condensate,
         'water_residual': torch.sum(
             (q_new + qc_new - q - qc) * mass, dim=1
         ) / timestep,
