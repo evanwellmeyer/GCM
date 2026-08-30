@@ -1,0 +1,41 @@
+[run]
+label = "mf_tke_edmf_v6"
+# Experimental only. Short SCM screens do not support promotion to defaults.
+
+[radiation]
+scheme = "multiband_ozone_profile"
+
+[mass_flux]
+mse_correction_top_sigma = 0.20
+
+[composition]
+o3_peak_sigma = 0.08
+o3_width_sigma = 0.04
+
+[shallow_convection]
+enabled = false
+
+[params]
+boundary_layer_scheme = "tke_edmf"
+bl_diagnose_depth = true
+bl_min_depth_m = 100.0
+bl_max_depth_m = 900.0
+tke_initial_m2s2 = 0.05
+tke_diffusivity_coefficient = 0.05
+tke_dissipation_coefficient = 1.50
+tke_prandtl_number = 1.0
+tke_min_mixing_length_m = 10.0
+tke_max_mixing_length_m = 100.0
+tke_max_diffusivity_m2s = 20.0
+tke_surface_source_depth_m = 250.0
+tke_surface_source_coefficient = 1.0
+tke_updraft_area_fraction = 0.005
+tke_updraft_tau_min_s = 3600.0
+tke_updraft_tau_max_s = 172800.0
+edmf_source_depth_m = 250.0
+edmf_overshoot_depth_m = 200.0
+edmf_mse_scale_jkg = 8000.0
+edmf_water_transport_fraction = 1.0
+edmf_detrain_rh = 0.85
+edmf_max_dt_day = 10.0
+edmf_max_dq_day = 10.0

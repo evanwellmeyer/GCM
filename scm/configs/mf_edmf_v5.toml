@@ -1,0 +1,30 @@
+[run]
+label = "mf_edmf_v5"
+
+[radiation]
+scheme = "multiband_ozone_profile"
+
+[mass_flux]
+mse_correction_top_sigma = 0.20
+
+[composition]
+o3_peak_sigma = 0.08
+o3_width_sigma = 0.04
+
+[shallow_convection]
+enabled = false
+
+[params]
+boundary_layer_scheme = "edmf"
+bl_mix_moist_static_energy = true
+bl_diagnose_depth = true
+bl_min_depth_m = 100.0
+bl_max_depth_m = 900.0
+edmf_source_depth_m = 250.0
+edmf_overshoot_depth_m = 200.0
+edmf_updraft_tau_s = 86400.0
+edmf_mse_scale_jkg = 8000.0
+edmf_water_transport_fraction = 1.0
+edmf_detrain_rh = 0.85
+edmf_max_dt_day = 10.0
+edmf_max_dq_day = 10.0
