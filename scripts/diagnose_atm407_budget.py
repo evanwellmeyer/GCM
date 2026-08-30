@@ -23,6 +23,7 @@ parser.add_argument('--reference', type=Path, required=True)
 parser.add_argument('--config', type=Path, required=True)
 parser.add_argument('--days', type=int, default=10)
 parser.add_argument('--output', type=Path)
+parser.add_argument('--production-gates', action='store_true')
 args = parser.parse_args()
 
 device = torch.device('cpu')
@@ -97,11 +98,15 @@ rh = relative_humidity(state['q'], state['t'], state['p'])[0] * 100
 mass = state['dp'][0] / g
 rh95mass = torch.sum((rh >= 95.0) * mass) / torch.sum(mass)
 height = geopotential(state['t'], state['q'], state['p'], grid)
-mixinglength = tke_mixing_length(height, params)
-diffusivity, _ = tke_diffusivity(
-    state['t'], state['q'], state['u'], state['v'], state['p'],
-    height, state['tke'], mixinglength, params,
-)
+if 'tke' in state:
+    mixinglength = tke_mixing_length(height, params)
+    diffusivity, _ = tke_diffusivity(
+        state['t'], state['q'], state['u'], state['v'], state['p'],
+        height, state['tke'], mixinglength, params,
+    )
+else:
+    state['tke'] = torch.zeros_like(state['t'])
+    diffusivity = torch.zeros_like(state['t'])
 columnmoisture = {
     process: torch.sum(moisture[process] / 1000 * mass).item()
     for process in processes
@@ -210,3 +215,32 @@ print('pressure  rh    surface      bl shallow    deep condensation cloud')
 for level in range(grid['nlevels']):
     values = ' '.join(f'{moisture[process][level].item():8.3f}' for process in processes[1:])
     print(f'{pressure[level].item():7.1f} {rh[level].item():5.1f} {values}')
+
+if args.production_gates:
+    summary = result['summary']
+    totalprecipitation = (
+        summary['deep_precipitation_mmday']
+        + summary['large_scale_precipitation_mmday']
+        + summary['cloud_precipitation_mmday']
+    )
+    checks = {
+        'surface temperature drift': abs(summary['surface_temperature_drift_k']) <= 0.02,
+        'TOA balance': abs(summary['toa_net_wm2']) <= 1.0,
+        'surface balance': abs(summary['surface_total_flux_wm2']) <= 1.0,
+        'total precipitation': 1.0 <= totalprecipitation <= 4.0,
+        'deep precipitation fraction': (
+            summary['deep_precipitation_mmday'] / max(totalprecipitation, 1.0e-12)
+        ) >= 0.5,
+        'CAPE': 500.0 <= summary['cape_jkg'] <= 2500.0,
+        'saturated mass': summary['rh95_mass_fraction'] <= 0.10,
+        'energy closure': abs(summary['column_energy_residual_wm2']) <= 0.2,
+        'MSE closure': abs(summary['column_mse_residual_wm2']) <= 0.2,
+        'water closure': abs(summary['column_water_residual_kgm2s']) <= 1.0e-8,
+        'mass-flux cap': summary['mass_flux_cap_fraction'] == 0.0,
+        'temperature cap': summary['temperature_cap_fraction'] == 0.0,
+        'moisture cap': summary['moisture_cap_fraction'] == 0.0,
+    }
+    failed = [name for name, passed in checks.items() if not passed]
+    if failed:
+        raise SystemExit('production gates failed: ' + ', '.join(failed))
+    print('production gates: PASS')
