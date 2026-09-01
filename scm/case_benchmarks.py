@@ -2,9 +2,11 @@ import torch
 
 from scm.boundary_layer import boundary_layer_mixing
 from scm.boundary_layer_tke_v2 import tke_boundary_layer
+from scm.boundary_layer_uw import uw_moist_turbulence
 from scm.boundary_layer_edmf_v3 import edmf_boundary_layer
 from scm.column_model import initial_state, update_derived
 from scm.convection_shallow import shallow_convection
+from scm.convection_uw import uw_shallow_convection
 from scm.shallow_plume_v2 import shallow_plume
 from scm.ensemble import default_params
 from scm.thermo import Lv, Rd, cp, g, geopotential, kappa, p0, relative_humidity
@@ -104,14 +106,21 @@ def apply_boundary_layer(state, grid, params, sensible_flux, moisture_flux, sche
     elif scheme == 'edmf':
         output = edmf_boundary_layer(state, grid, local)
         state['tke'] = output['tke']
+    elif scheme == 'uw':
+        output = uw_moist_turbulence(state, grid, local)
+        state['tke'] = output['tke']
     else:
         output = boundary_layer_mixing(state, grid, local)
     timestep = float(local['dt'])
     state['t'] = state['t'] + output['dt'] * timestep
     state['q'] = state['q'] + output['dq'] * timestep
     state['qc'] = torch.clamp(state['qc'] + output['dqc'] * timestep, min=0.0)
+    state['u'] = state['u'] + output.get('du', torch.zeros_like(state['u'])) * timestep
+    state['v'] = state['v'] + output.get('dv', torch.zeros_like(state['v'])) * timestep
     if 'cloud_fraction' in output:
         state['cloud_fraction'] = output['cloud_fraction']
+    if 'boundary_layer_depth_m' in output:
+        state['boundary_layer_depth_m'] = output['boundary_layer_depth_m']
     return update_derived(state, grid), output
 
 
@@ -228,6 +237,8 @@ def run_bomex(
             )
             if shallow_scheme == 'plume':
                 shallow = shallow_plume(state, grid, params)
+            elif shallow_scheme == 'uw':
+                shallow = uw_shallow_convection(state, grid, params)
             else:
                 shallow = shallow_convection(state, grid, params)
             state['t'] = state['t'] + shallow['dt'] * timestep

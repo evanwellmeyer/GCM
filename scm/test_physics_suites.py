@@ -27,6 +27,7 @@ def test_registry(device):
     assert "mass_flux" in schemes["convection"]
     assert "betts_miller" in schemes["convection"]
     assert "none" in schemes["convection"]
+    assert "uw_moist" in schemes["boundary_layer"]
     assert "mass_flux_default" in available_physics_suites()
     assert "legacy_betts_miller" in available_physics_suites()
     assert physics_suite_components("legacy_betts_miller")["convection_scheme"] == "betts_miller"
@@ -58,4 +59,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

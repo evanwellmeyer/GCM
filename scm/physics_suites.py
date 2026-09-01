@@ -12,11 +12,13 @@ import torch
 
 from scm.boundary_layer import boundary_layer_mixing
 from scm.boundary_layer_tke_v2 import tke_boundary_layer
+from scm.boundary_layer_uw import uw_moist_turbulence
 from scm.boundary_layer_edmf_v3 import edmf_boundary_layer
 from scm.condensation import condensation
 from scm.convection_bm import betts_miller
 from scm.convection_mf import mass_flux_convection
 from scm.convection_shallow import shallow_convection
+from scm.convection_uw import uw_shallow_convection
 from scm.shallow_plume_v2 import shallow_plume
 from scm.radiation import radiation
 from scm.radiation_schemes.registry import available_radiation_schemes
@@ -190,6 +192,12 @@ register_physics_scheme(
     edmf_boundary_layer,
     "Experimental unified TKE diffusion and shallow-plume transport.",
 )
+register_physics_scheme(
+    "boundary_layer",
+    "uw_moist",
+    uw_moist_turbulence,
+    "UW diagnostic-TKE moist turbulence on conserved water and energy variables.",
+)
 
 register_physics_scheme("shallow_convection", "simple", shallow_convection, "Simple shallow convective adjustment.")
 register_physics_scheme(
@@ -197,6 +205,12 @@ register_physics_scheme(
     "plume_v2",
     shallow_plume,
     "Experimental cloud-aware entraining shallow plume.",
+)
+register_physics_scheme(
+    "shallow_convection",
+    "uw_shallow",
+    uw_shallow_convection,
+    "UW CIN-closed entraining shallow plume.",
 )
 register_physics_scheme("shallow_convection", "none", _zero_shallow, "Disable shallow convection.")
 

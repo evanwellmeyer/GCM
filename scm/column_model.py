@@ -264,11 +264,21 @@ def physics_step(state, grid, params, rad_cache=None, ls_forcing=None):
     bl_dqc = torch.nan_to_num(
         bl_out.get('dqc', torch.zeros_like(state['qc'])), nan=0.0
     ).to(state['qc'].dtype)
+    bl_du = torch.nan_to_num(
+        bl_out.get('du', torch.zeros_like(state['u'])), nan=0.0
+    ).to(state['u'].dtype)
+    bl_dv = torch.nan_to_num(
+        bl_out.get('dv', torch.zeros_like(state['v'])), nan=0.0
+    ).to(state['v'].dtype)
     state['t'] = state['t'] + bl_dt * dt
     state['q'] = state['q'] + bl_dq * dt
     state['qc'] = torch.clamp(state['qc'] + bl_dqc * dt, min=0.0)
+    state['u'] = state['u'] + bl_du * dt
+    state['v'] = state['v'] + bl_dv * dt
     if 'tke' in bl_out:
         state['tke'] = bl_out['tke']
+    if 'boundary_layer_depth_m' in bl_out:
+        state['boundary_layer_depth_m'] = bl_out['boundary_layer_depth_m']
     atm_energy_after_bl = atmospheric_energy_content(state, grid)
 
     # --- shallow convection ---
@@ -295,6 +305,12 @@ def physics_step(state, grid, params, rad_cache=None, ls_forcing=None):
     state['t'] = state['t'] + shallow_dt * dt
     state['q'] = state['q'] + shallow_dq * dt
     state['qc'] = torch.clamp(state['qc'] + shallow_dqc * dt, min=0.0)
+    state['u'] = state['u'] + torch.nan_to_num(
+        shallow_out.get('du', torch.zeros_like(state['u'])), nan=0.0
+    ).to(state['u'].dtype) * dt
+    state['v'] = state['v'] + torch.nan_to_num(
+        shallow_out.get('dv', torch.zeros_like(state['v'])), nan=0.0
+    ).to(state['v'].dtype) * dt
     atm_energy_after_shallow = atmospheric_energy_content(state, grid)
 
     # --- convection ---
@@ -565,6 +581,8 @@ def physics_step(state, grid, params, rad_cache=None, ls_forcing=None):
             'boundary_layer_temperature_tendency': bl_out.get('mixing_dt', bl_dt) if flux_coupled else bl_dt,
             'boundary_layer_moisture_tendency': bl_out.get('mixing_dq', bl_dq) if flux_coupled else bl_dq,
             'boundary_layer_condensate_tendency': bl_out.get('mixing_dqc', bl_dqc) if flux_coupled else bl_dqc,
+            'boundary_layer_zonal_momentum_tendency': bl_du,
+            'boundary_layer_meridional_momentum_tendency': bl_dv,
             'boundary_layer_local_moisture_tendency': bl_out.get(
                 'local_dq', torch.zeros_like(state['q'])
             ),
