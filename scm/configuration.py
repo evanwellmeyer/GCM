@@ -55,6 +55,15 @@ def extract_param_overrides(config):
     """flatten structured config sections into the params dict expected by the SCM."""
 
     params = dict(config.get("params", {}))
+    physics_grid = config.get("physics_grid", {})
+    if physics_grid:
+        params.update(_non_null_items({
+            "physics_grid_enabled": physics_grid.get("enabled"),
+            "physics_grid_sublevels": physics_grid.get("sublevels"),
+            "physics_grid_top": physics_grid.get("top"),
+            "physics_grid_categories": physics_grid.get("categories"),
+        }))
+
     radiation = config.get("radiation", {})
     if radiation:
         params.update(_non_null_items({

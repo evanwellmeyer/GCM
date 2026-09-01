@@ -20,6 +20,7 @@ from scm.convection_shallow import shallow_convection
 from scm.shallow_plume_v2 import shallow_plume
 from scm.radiation import radiation
 from scm.radiation_schemes.registry import available_radiation_schemes
+from scm.physics_grid import make_physics_grid
 from scm.surface import surface_fluxes
 
 
@@ -131,7 +132,27 @@ def run_physics_scheme(category, name, state, grid, params):
     except KeyError as exc:
         valid = ", ".join(available_physics_schemes(category))
         raise ValueError(f"unknown {category} scheme: {name} (valid: {valid})") from exc
-    return scheme.runner(state, grid, params)
+    if not params.get("physics_grid_enabled", False):
+        return scheme.runner(state, grid, params)
+
+    categories = params.get(
+        "physics_grid_categories",
+        ("boundary_layer", "shallow_convection"),
+    )
+    if isinstance(categories, str):
+        categories = (categories,)
+    if category not in categories:
+        return scheme.runner(state, grid, params)
+
+    mapping = make_physics_grid(
+        grid,
+        state["ps"],
+        sublevels=int(params.get("physics_grid_sublevels", 4)),
+        top=float(params.get("physics_grid_top", 0.70)),
+    )
+    physics_state = mapping.state_to_physics(state)
+    physics_output = scheme.runner(physics_state, mapping.grid, params)
+    return mapping.output_to_host(physics_output)
 
 
 for _name in available_radiation_schemes():

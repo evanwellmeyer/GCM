@@ -38,6 +38,7 @@ So, if the future goal is a GCM, this code is currently the **physics column com
 
 - `scm/column_model.py` - time stepping, state updates, and physics dispatch
 - `scm/thermo.py` - thermodynamics, vertical grid, CAPE, and moist adiabat utilities
+- `scm/physics_grid.py` - conservative internal vertical refinement for parameterizations
 - `scm/radiation.py` - semi-gray and multiband radiation solvers
 - `scm/surface.py` - surface fluxes and slab ocean update
 - `scm/surface_context.py` - dycore-facing surface-type/state/exchange contract helpers
@@ -57,6 +58,7 @@ So, if the future goal is a GCM, this code is currently the **physics column com
 - `scm/run_scm.py` - experiment driver for spinup and CO2 perturbation runs
 - `scm/test_components.py` - standalone component checks
 - `docs/surface_system_plan.md` - land, sea-ice, ocean, and surface-coupler roadmap
+- `docs/scm_physics_suite_plan.md` - PyTorch physics-suite implementation and validation plan
 
 ## Model Architecture
 
