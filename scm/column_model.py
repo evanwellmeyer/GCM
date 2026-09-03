@@ -23,6 +23,7 @@ from scm.surface_context import (
     surface_context_diagnostics,
 )
 from scm.cloud_microphysics import initialize_cloud_state, cloud_microphysics_step
+from scm.dry_adjustment import dry_adjustment
 from scm.convection_bm import betts_miller
 from scm.convection_mf import mass_flux_convection
 
@@ -279,6 +280,26 @@ def physics_step(state, grid, params, rad_cache=None, ls_forcing=None):
         state['tke'] = bl_out['tke']
     if 'boundary_layer_depth_m' in bl_out:
         state['boundary_layer_depth_m'] = bl_out['boundary_layer_depth_m']
+
+    # --- dry convective adjustment ---
+    # boundary layer mixing stops at bl_top_sigma, so a statically unstable
+    # interface just above it is coupled to nothing and cannot be removed.
+    # this acts only where theta_v decreases upward, and conserves cp*T and
+    # water exactly, so it is inert in a stably stratified column.
+    dry_dt = torch.zeros_like(state['t'])
+    dry_dq = torch.zeros_like(state['q'])
+    dry_dqc = torch.zeros_like(state['qc'])
+    if params.get('dry_adjustment_enabled', False):
+        state = update_derived(state, grid)
+        dry_out = dry_adjustment(state, grid, params)
+        check_nan('dry adjustment dt', dry_out['dt'])
+        dry_dt = torch.nan_to_num(dry_out['dt'], nan=0.0).to(state['t'].dtype)
+        dry_dq = torch.nan_to_num(dry_out['dq'], nan=0.0).to(state['q'].dtype)
+        dry_dqc = torch.nan_to_num(dry_out['dqc'], nan=0.0).to(state['qc'].dtype)
+        state['t'] = state['t'] + dry_dt * dt
+        state['q'] = torch.clamp(state['q'] + dry_dq * dt, min=0.0)
+        state['qc'] = torch.clamp(state['qc'] + dry_dqc * dt, min=0.0)
+
     atm_energy_after_bl = atmospheric_energy_content(state, grid)
 
     # --- shallow convection ---
@@ -588,6 +609,8 @@ def physics_step(state, grid, params, rad_cache=None, ls_forcing=None):
             'surface_temperature_tendency': bl_out.get('surface_dt', sfc_dt) if flux_coupled else sfc_dt,
             'surface_moisture_tendency': bl_out.get('surface_dq', sfc_dq) if flux_coupled else sfc_dq,
             'boundary_layer_temperature_tendency': bl_out.get('mixing_dt', bl_dt) if flux_coupled else bl_dt,
+            'dry_adjustment_temperature_tendency': dry_dt,
+            'dry_adjustment_moisture_tendency': dry_dq,
             'boundary_layer_moisture_tendency': bl_out.get('mixing_dq', bl_dq) if flux_coupled else bl_dq,
             'boundary_layer_condensate_tendency': bl_out.get('mixing_dqc', bl_dqc) if flux_coupled else bl_dqc,
             'boundary_layer_zonal_momentum_tendency': bl_du,

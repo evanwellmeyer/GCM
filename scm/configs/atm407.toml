@@ -198,6 +198,13 @@ surface_net_flux = 10.0
 
 [params]
 convection_scheme = "mass_flux"
+# boundary layer mixing stops at bl_top_sigma, so a statically unstable
+# interface just above it is coupled to nothing and cannot be removed. without
+# this the equilibrium carried a 9 K theta_v inversion across 910/945 hPa at
+# roughly four times the dry adiabatic lapse rate. see scm/dry_adjustment.py.
+dry_adjustment_enabled = true
+dry_adjustment_tolerance = 1.0
+dry_adjustment_tau = 1800.0
 ocean_depth = 50.0
 wind_speed = 5.0
 use_slab_ocean = true
