@@ -19,7 +19,7 @@
 
 import torch
 from scm.boundary_layer import tridiag_solve
-from scm.thermo import g, kappa, p0
+from scm.thermo import Rd, g, kappa, p0
 
 
 def _mix_implicit(field, layer_mass, exchange, timestep):
@@ -55,14 +55,22 @@ def dry_adjustment(state, grid, params):
     timestep = params.get('dt', 900.0)
     tau = float(params.get('dry_adjustment_tau', 1800.0))
     # this is a safety net for pathological layers, not a convection scheme.
-    # a moist-convecting column carries theta_v wiggles of a few tenths of a
-    # kelvin between levels, and neutralizing those sets off a mixing cascade:
-    # each neutralized interface warms the layer above it and destabilizes the
-    # next one up, which ends with the whole lower troposphere mixed to a
-    # dry-neutral slab. the tolerance keeps the scheme off that structure and
-    # aimed only at genuinely unphysical layers. it is a per-interface value,
-    # so it is tied to the level spacing of the grid it was tuned on.
-    tolerance = float(params.get('dry_adjustment_tolerance', 1.0))
+    # a moist-convecting column carries small theta_v wiggles between levels,
+    # and neutralizing those sets off a mixing cascade: each neutralized
+    # interface warms the layer above it and destabilizes the next one up,
+    # which ends with the whole lower troposphere mixed to a dry-neutral slab.
+    # the trigger keeps the scheme off that structure and aimed only at
+    # genuinely unphysical layers.
+    #
+    # it is expressed as a lapse rate excess over the dry adiabat in K/km, so
+    # it means the same thing on any vertical grid. a fixed per-interface
+    # theta_v threshold would not: theta_v deficit scales with layer
+    # thickness, so the same threshold lets a finer grid tolerate a far
+    # steeper lapse rate. a moist adiabat sits well below the dry adiabat and
+    # so never triggers this at any positive setting.
+    max_excess = float(
+        params.get('dry_adjustment_max_lapse_excess', 3.0)
+    ) / 1000.0
 
     zero = torch.zeros_like(t)
     if tau <= 0.0:
@@ -75,7 +83,20 @@ def dry_adjustment(state, grid, params):
     # interface i couples level i (above) with level i+1 (below). the column is
     # statically unstable there when theta_v decreases upward.
     deficit = theta_v[:, 1:] - theta_v[:, :-1]
-    unstable = (deficit > tolerance).to(t.dtype)
+
+    # convert the K/km trigger into the theta_v deficit it corresponds to
+    # across this particular interface. for a layer of thickness dz,
+    # d(theta)/dz = (theta / T) * (dry adiabatic lapse rate - actual), so the
+    # deficit that matches a given lapse excess scales with (theta / T) * dz.
+    t_mean = 0.5 * (t[:, :-1] + t[:, 1:]).clamp(min=1.0)
+    theta_v_mean = 0.5 * (theta_v[:, :-1] + theta_v[:, 1:])
+    thickness = (
+        Rd * t_mean / g
+        * torch.log((p[:, 1:] / p[:, :-1].clamp(min=1.0)).clamp(min=1.0 + 1.0e-9))
+    ).clamp(min=1.0)
+    allowed = (theta_v_mean / t_mean) * max_excess * thickness
+
+    unstable = (deficit > allowed).to(t.dtype)
 
     mass = dp / g
     # exner-weighted mass: mixing theta against these weights conserves cp*T.

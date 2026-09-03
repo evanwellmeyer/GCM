@@ -289,7 +289,7 @@ def physics_step(state, grid, params, rad_cache=None, ls_forcing=None):
     dry_dt = torch.zeros_like(state['t'])
     dry_dq = torch.zeros_like(state['q'])
     dry_dqc = torch.zeros_like(state['qc'])
-    if params.get('dry_adjustment_enabled', False):
+    if params.get('dry_adjustment_enabled', True):
         state = update_derived(state, grid)
         dry_out = dry_adjustment(state, grid, params)
         check_nan('dry adjustment dt', dry_out['dt'])

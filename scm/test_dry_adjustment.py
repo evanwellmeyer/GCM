@@ -3,7 +3,7 @@ import torch
 from scm.column_model import initial_state, physics_step, update_derived
 from scm.dry_adjustment import dry_adjustment
 from scm.ensemble import default_params
-from scm.thermo import cp, g, kappa, make_grid, p0
+from scm.thermo import Rd, cp, g, kappa, make_grid, p0
 
 
 def _column(nlevels=20):
@@ -44,7 +44,7 @@ def test_dry_adjustment_removes_a_superadiabatic_layer():
 
     after = _worst_deficit(state)
     assert after < before
-    assert after <= params.get('dry_adjustment_tolerance', 1.0) + 0.5
+    assert after <= 2.0
 
 
 def test_dry_adjustment_conserves_enthalpy_and_water():
@@ -70,12 +70,49 @@ def test_dry_adjustment_conserves_enthalpy_and_water():
 
 def test_dry_adjustment_is_inert_in_a_stable_column():
     grid, params, state = _column()
-    assert _worst_deficit(state) <= params.get('dry_adjustment_tolerance', 1.0)
+    assert _worst_deficit(state) <= 1.0
 
     output = dry_adjustment(state, grid, params)
 
     assert torch.allclose(output['dt'], torch.zeros_like(output['dt']))
     assert torch.allclose(output['dq'], torch.zeros_like(output['dq']))
+
+
+def _constant_lapse_column(nlevels, lapse_k_per_km):
+    """column with a single uniform lapse rate, so every interface carries the
+    same lapse rate excess no matter how many levels resolve it."""
+
+    grid = make_grid(nlevels)
+    params = default_params()
+    params['dt'] = 900.0
+    state = initial_state(1, grid, params)
+    state = update_derived(state, grid)
+    surface = 290.0
+    state['t'] = surface * (state['p'] / state['p'][:, -1:]) ** (
+        Rd * lapse_k_per_km * 1.0e-3 / g
+    )
+    state['q'] = torch.full_like(state['q'], 1.0e-6)
+    state['qc'] = torch.zeros_like(state['qc'])
+    return grid, params, state
+
+
+def test_trigger_is_resolution_independent():
+    # 15 K/km is ~5.2 K/km past the dry adiabat, so it must be caught on any
+    # grid. a fixed per-interface threshold would miss it once the levels are
+    # thin enough, which is the portability bug this normalization removes.
+    for nlevels in (20, 40, 80):
+        grid, params, state = _constant_lapse_column(nlevels, 15.0)
+        output = dry_adjustment(state, grid, params)
+        assert output['dry_adjustment_active'].max().item() > 0.0, nlevels
+        assert output['dt'].abs().max().item() > 0.0, nlevels
+
+    # 6.5 K/km sits below the dry adiabat, so it is stable and must be left
+    # alone on every grid.
+    for nlevels in (20, 40, 80):
+        grid, params, state = _constant_lapse_column(nlevels, 6.5)
+        output = dry_adjustment(state, grid, params)
+        assert output['dry_adjustment_active'].max().item() == 0.0, nlevels
+        assert torch.allclose(output['dt'], torch.zeros_like(output['dt'])), nlevels
 
 
 def test_physics_step_leaves_column_unchanged_when_adjustment_disabled():
