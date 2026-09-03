@@ -357,9 +357,9 @@ def physics_step(state, grid, params, rad_cache=None, ls_forcing=None):
     precip_conv = conv_out.get('precip', torch.zeros_like(state['ts']))
     precip_ls = cond_out.get('precip', torch.zeros_like(state['ts'])) / dt
     precip_cloud = cloud_out.get('precip', torch.zeros_like(state['ts'])) / dt
-    precip_total = (precip_shallow + precip_conv + precip_ls + precip_cloud).clamp(
-        max=100.0 / 86400.0
-    )
+    precip_total = (
+        precip_shallow + precip_conv + precip_ls + precip_cloud
+    ).clamp(min=0.0)
     land_out = update_soil_bucket(
         state,
         params,
@@ -480,7 +480,16 @@ def physics_step(state, grid, params, rad_cache=None, ls_forcing=None):
         'rad_energy_tendency': rad_energy_tendency,
         'surface_energy_tendency': surface_energy_tendency,
         'bl_energy_tendency': bl_energy_tendency,
+        'boundary_layer_water_residual': bl_out.get(
+            'water_residual', torch.zeros_like(state['ts'])
+        ),
+        'boundary_layer_energy_residual': bl_out.get(
+            'energy_residual', torch.zeros_like(state['ts'])
+        ),
         'shallow_energy_tendency': shallow_energy_tendency,
+        'shallow_water_residual': shallow_out.get(
+            'water_residual', torch.zeros_like(state['ts'])
+        ),
         'conv_energy_tendency': conv_energy_tendency,
         'condensation_energy_tendency': condensation_energy_tendency,
         'cloud_energy_tendency': cloud_energy_tendency,

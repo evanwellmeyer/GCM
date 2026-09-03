@@ -69,6 +69,31 @@ def make_grid(nlevels=20, device='cpu', dtype=None, p_top=0.0):
     return grid
 
 
+def make_smooth_test_grid(device='cpu', dtype=None, p_top=0.0):
+    """Build the experimental 20-level grid used for thickness tests.
+
+    The grid keeps the historical model top and level count while limiting
+    layer pressure thicknesses to 20--70 hPa. It is deliberately separate
+    from ``make_grid`` so experiments cannot change the production grid.
+    """
+
+    sigma_half = torch.tensor([
+        0.0, 0.02, 0.05, 0.10, 0.15, 0.20, 0.27, 0.34,
+        0.41, 0.48, 0.55, 0.62, 0.69, 0.75, 0.81, 0.86,
+        0.90, 0.93, 0.96, 0.98, 1.0,
+    ], device=device, dtype=dtype)
+    top = torch.as_tensor(float(p_top), device=device, dtype=sigma_half.dtype)
+    grid = grid_from_hybrid_coefficients(
+        top * (1.0 - sigma_half),
+        sigma_half,
+        device=device,
+        dtype=sigma_half.dtype,
+    )
+    grid['p_top'] = top
+    grid['experimental_grid_label'] = 'smooth_20level_v1'
+    return grid
+
+
 def grid_from_hybrid_coefficients(a_half, b_half, device='cpu', dtype=None):
     """Build a dycore-supplied hybrid grid.
 

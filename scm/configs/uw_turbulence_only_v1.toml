@@ -1,0 +1,21 @@
+[run]
+label = "uw_turbulence_only_v1"
+
+[radiation]
+scheme = "multiband_ozone_profile"
+
+[radiation.diagnostics]
+clear_sky_fluxes = true
+
+[composition]
+o3_peak_sigma = 0.08
+o3_width_sigma = 0.04
+
+[params]
+surface_flux_coupling = "boundary_layer"
+boundary_layer_scheme = "uw_moist"
+shallow_convection_scheme = "simple"
+bl_min_depth_m = 50.0
+bl_max_depth_m = 3000.0
+uw_maximum_turbulent_height_m = 5000.0
+uw_diffusivity_max_m2s = 200.0

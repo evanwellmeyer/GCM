@@ -127,9 +127,38 @@ def uw_shallow_convection(state, grid, params):
         params,
     )
     water_tendency = water_tendency - outputs["precipitation_source"] / mass + evaporation / mass
-    water_new = torch.clamp(total_water + timestep * water_tendency, min=1.0e-8)
+    limiter = conservative_positivity_factor(total_water, water_tendency, timestep)
+    water_tendency = water_tendency * limiter.unsqueeze(1)
+    mse_tendency = mse_tendency * limiter.unsqueeze(1)
+    u_tendency = u_tendency * limiter.unsqueeze(1)
+    v_tendency = v_tendency * limiter.unsqueeze(1)
+    evaporation = evaporation * limiter.unsqueeze(1)
+    precipitation = precipitation * limiter
+    for name in (
+        "mass_flux_profile",
+        "plume_condensate",
+        "cloud_fraction",
+        "precipitation_source",
+        "mse_flux",
+        "water_flux",
+        "u_flux",
+        "v_flux",
+        "liquid_flux",
+    ):
+        outputs[name] = outputs[name] * limiter.unsqueeze(1)
+    outputs["cloud_base_mass_flux"] = outputs["cloud_base_mass_flux"] * limiter
+    water_new = total_water + timestep * water_tendency
     mse_new = mse + timestep * mse_tendency
-    t_new, q_new, qc_new = partition_mse(water_new, mse_new, height, p)
+    if bool(params.get("uw_shallow_layer_mean_saturation", False)):
+        t_new, q_new, qc_new = partition_layer_mean(
+            water_new,
+            mse_new,
+            height,
+            p,
+            dp,
+        )
+    else:
+        t_new, q_new, qc_new = partition_mse(water_new, mse_new, height, p)
 
     active = height <= float(params.get("uw_shallow_maximum_height_m", 4000.0))
     t_new = torch.where(active, t_new, t)
@@ -176,6 +205,75 @@ def uw_shallow_convection(state, grid, params):
         "mse_residual": energy_residual,
         "precipitation_evaporation": evaporation / mass,
     }
+
+
+def conservative_positivity_factor(total_water, tendency, timestep, minimum=1.0e-8):
+    """Scale a column update so no layer crosses the total-water floor."""
+
+    available = (total_water - float(minimum)).clamp(min=0.0)
+    required = (-float(timestep) * tendency).clamp(min=0.0)
+    layer_factor = torch.where(
+        required > 0.0,
+        available / required.clamp(min=1.0e-20),
+        torch.ones_like(required),
+    ).clamp(min=0.0, max=1.0)
+    return torch.min(layer_factor, dim=1).values
+
+
+def limited_pressure_slope(value, pressure):
+    """Reconstruct a monotone pressure slope at each model level."""
+
+    slope = torch.zeros_like(value)
+    downward = (value[:, 1:-1] - value[:, :-2]) / (
+        pressure[:, 1:-1] - pressure[:, :-2]
+    ).clamp(min=1.0)
+    upward = (value[:, 2:] - value[:, 1:-1]) / (
+        pressure[:, 2:] - pressure[:, 1:-1]
+    ).clamp(min=1.0)
+    same_sign = downward * upward > 0.0
+    magnitude = torch.minimum(downward.abs(), upward.abs())
+    slope[:, 1:-1] = torch.where(
+        same_sign,
+        torch.sign(downward) * magnitude,
+        torch.zeros_like(magnitude),
+    )
+    return slope
+
+
+def partition_layer_mean(total_water, mse, height, pressure, dp):
+    """Saturation-adjust reconstructed sublayer states and average them.
+
+    Two symmetric pressure points represent each layer. Their conserved-state
+    means equal the supplied layer means, avoiding dependence on saturation at
+    one full-level sample while preserving total water and moist static energy.
+    """
+
+    water_slope = limited_pressure_slope(total_water, pressure)
+    mse_slope = limited_pressure_slope(mse, pressure)
+    height_slope = limited_pressure_slope(height, pressure)
+    quarter_dp = 0.25 * dp
+
+    water_top = torch.clamp(total_water - water_slope * quarter_dp, min=1.0e-8)
+    water_bottom = torch.clamp(total_water + water_slope * quarter_dp, min=1.0e-8)
+    water_correction = total_water - 0.5 * (water_top + water_bottom)
+    water_top = water_top + water_correction
+    water_bottom = water_bottom + water_correction
+
+    mse_top = mse - mse_slope * quarter_dp
+    mse_bottom = mse + mse_slope * quarter_dp
+    height_top = height - height_slope * quarter_dp
+    height_bottom = height + height_slope * quarter_dp
+    pressure_top = (pressure - quarter_dp).clamp(min=1.0)
+    pressure_bottom = pressure + quarter_dp
+
+    top = partition_mse(water_top, mse_top, height_top, pressure_top)
+    bottom = partition_mse(
+        water_bottom,
+        mse_bottom,
+        height_bottom,
+        pressure_bottom,
+    )
+    return tuple(0.5 * (top_value + bottom_value) for top_value, bottom_value in zip(top, bottom))
 
 
 def precipitation_evaporation(source, q, t, p, mass, params):

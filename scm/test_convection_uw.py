@@ -3,11 +3,13 @@ import torch
 from scm.case_benchmarks import initialize_bomex, run_bomex
 from scm.convection_uw import (
     cloud_base_mass_flux,
+    conservative_positivity_factor,
     implicit_cin_factor,
     lateral_mixing_rate,
+    partition_layer_mean,
     uw_shallow_convection,
 )
-from scm.thermo import make_grid
+from scm.thermo import Lv, cp, g, geopotential, make_grid
 
 
 def test_uw_lateral_mixing_weakens_with_height():
@@ -47,6 +49,16 @@ def test_uw_mass_flux_responds_to_cin_and_implicit_stabilization():
     assert torch.all(explicit >= 0.0)
 
 
+def test_uw_positivity_factor_scales_the_whole_column():
+    water = torch.tensor([[2.0e-3, 1.0e-4]])
+    tendency = torch.tensor([[1.0e-6, -2.0e-6]])
+    factor = conservative_positivity_factor(water, tendency, 100.0)
+    updated = water + factor.unsqueeze(1) * tendency * 100.0
+
+    assert 0.0 < factor[0] < 1.0
+    assert torch.all(updated >= 0.99e-8)
+
+
 def test_uw_closures_preserve_torch_gradients():
     tke = torch.tensor([1.0], dtype=torch.float64, requires_grad=True)
     mass_flux = cloud_base_mass_flux(
@@ -72,6 +84,26 @@ def test_uw_shallow_step_conserves_water_and_energy():
         assert torch.max(torch.abs(output["energy_residual"])) < 0.1
         assert torch.all(output["precip"] >= 0.0)
         assert torch.all((output["cloud_fraction"] >= 0.0) & (output["cloud_fraction"] <= 1.0))
+
+
+def test_layer_mean_partition_preserves_water_and_mse():
+    grid = make_grid(20)
+    state, _ = initialize_bomex(grid)
+    water = state['q'] + state['qc']
+    height = geopotential(state['t'], state['q'], state['p'], grid)
+    mse = cp * state['t'] + Lv * state['q'] + g * height
+
+    temperature, vapor, liquid = partition_layer_mean(
+        water,
+        mse,
+        height,
+        state['p'],
+        state['dp'],
+    )
+
+    assert torch.max(torch.abs(vapor + liquid - water)) < 2.0e-8
+    reconstructed = cp * temperature + Lv * vapor + g * height
+    assert torch.max(torch.abs(reconstructed - mse)) < 0.2
 
 
 def test_uw_bomex_long_timestep_is_bounded_at_development_resolutions():

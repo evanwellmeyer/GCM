@@ -176,6 +176,16 @@ result = {
         'column_energy_residual_wm2': meanvalue('column_energy_residual').item(),
         'column_mse_residual_wm2': meanvalue('column_mse_residual').item(),
         'column_water_residual_kgm2s': meanvalue('column_water_residual').item(),
+        'boundary_layer_water_residual_kgm2s': meanvalue(
+            'boundary_layer_water_residual'
+        ).item(),
+        'boundary_layer_energy_residual_wm2': meanvalue(
+            'boundary_layer_energy_residual'
+        ).item(),
+        'shallow_mse_residual_wm2': meanvalue('shallow_mse_residual').item(),
+        'shallow_water_residual_kgm2s': meanvalue(
+            'shallow_water_residual'
+        ).item(),
     },
     'cloud_condensate_tendency_gkgday': (
         meanprofile('cloud_condensate_tendency') * 86400 * 1000

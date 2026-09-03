@@ -118,10 +118,10 @@ def cloud_microphysics_step(state, grid, params, cond_out, conv_out, shallow_out
 
     if not params.get('cloud_microphysics_enabled', False):
         return {
-            'qc': zeros,
-            'cloud_fraction': zeros,
-            'cloud_sw_tau_layer': zeros,
-            'cloud_lw_tau_layer': zeros,
+            'qc': qc_prev,
+            'cloud_fraction': state.get('cloud_fraction', zeros),
+            'cloud_sw_tau_layer': state.get('cloud_sw_tau_layer', zeros),
+            'cloud_lw_tau_layer': state.get('cloud_lw_tau_layer', zeros),
             'lwp': zeros,
             'iwp': zeros,
             'precip': torch.zeros(batch, device=device, dtype=dtype),
