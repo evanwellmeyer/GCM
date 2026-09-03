@@ -1,8 +1,7 @@
-# ATM407 test configuration: Betts-Miller with the default multiband radiation.
-# This candidate is not a validated equilibrium or a replacement reference state.
+# ATM407 test configuration: mass-flux convection with the default multiband radiation.
 [run]
 mode = "full"
-scheme = "bm"
+scheme = "mf"
 sampling = "fixed"
 spinup_days = 100
 perturb_days = 10
@@ -198,9 +197,7 @@ surface_net_flux = 10.0
 # co2_base_tau = [1.00, 1.50]
 
 [params]
-convection_scheme = "betts_miller"
-tau_bm = 7200.0
-rhbm = 0.7
+convection_scheme = "mass_flux"
 ocean_depth = 50.0
 wind_speed = 5.0
 use_slab_ocean = true
