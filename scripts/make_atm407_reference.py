@@ -13,7 +13,7 @@ if str(root) not in sys.path:
 
 from scm.column_model import initial_state, run
 from scm.configuration import extract_param_overrides, load_run_config
-from scm.diagnostics import equilibrium_metrics, equilibrium_stats
+from scm.diagnostics import check_equilibrium, equilibrium_metrics, equilibrium_stats
 from scm.ensemble import default_params
 from scm.thermo import g, make_grid, relative_humidity
 
@@ -71,7 +71,9 @@ params.update({
     'zenith_factor': 0.25,
     'ocean_depth': 5.0,
     'wind_speed': 5.0,
-    'convection_scheme': 'mass_flux',
+    'convection_scheme': config.get('params', {}).get('convection_scheme') or {
+        'mf': 'mass_flux', 'bm': 'betts_miller',
+    }[config['run']['scheme']],
     'use_slab_ocean': True,
 })
 
@@ -182,17 +184,20 @@ if 'tke' in state:
 np.savez_compressed(referencepath, **referencearrays)
 
 metadata = {
-    'description': 'Near-equilibrium ATM407 mass-flux SCM reference state',
+    'description': 'ATM407 candidate reference state; check equilibrium diagnostics before use',
     'configuration_label': config['run']['label'],
     'initial_reference': initialreference,
     'reference_levels': args.levels,
-    'accelerated_spinup_days': 500,
+    'accelerated_spinup_days': (
+        previousmetadata.get('accelerated_spinup_days', 0)
+        if sourcepath is not None else 500
+    ),
     'final_adjustment_days': previousadjustment + args.adjustment_days,
     'spinup_ocean_depth_m': 5.0,
     'final_ocean_depth_m': 50.0,
     'final_dt_s': 900.0,
     'radiation_scheme': params['radiation_scheme'],
-    'convection_scheme': 'mass_flux',
+    'convection_scheme': params['convection_scheme'],
     'surface_albedo': params['albedo'],
     'surface_temperature_k': stats['ts_mean'][0].item(),
     'toa_net_wm2': stats['toa_net_mean'][0].item(),
@@ -216,6 +221,7 @@ metadata = {
     'moisture_cap_fraction': stats['moisture_cap_fraction_mean'][0].item(),
     'column_water_residual_kgm2s': stats['column_water_residual_mean'][0].item(),
     'equilibrium_metrics': metrics,
+    'equilibrium_passed': check_equilibrium(history, window=50),
     'generation_runtime_s': time.perf_counter() - start,
 }
 
