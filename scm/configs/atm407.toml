@@ -56,7 +56,7 @@ lw_band_co2_base_tau = [0.00, 0.15, 0.65, 0.35]
 # lets the lab's numbers be compared against published estimates. this term is
 # multiplied by log(co2 / co2_ref) and the control runs at co2 = co2_ref, so it
 # has no effect whatsoever on the equilibrium state -- only on the forcing.
-lw_band_co2_log_factor = [0.00, 0.018, 0.215, 0.107]
+lw_band_co2_log_factor = [0.00, 0.0191, 0.2279, 0.1134]
 lw_band_trace_scale = [0.00, 0.20, 0.60, 0.20]
 sw_band_weights = [0.55, 0.30, 0.15]
 sw_band_wv_kappa = [0.00, 0.015, 0.00]

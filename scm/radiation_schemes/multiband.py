@@ -77,6 +77,18 @@ def compute_longwave_multiband(state, grid, params, force_clear_sky=False, ozone
     if ozone_profile:
         trace_tau = (trace_tau - o3_lw_tau).clamp(min=0.0)
 
+    # CO2 and the trace gases are well mixed, so their optical depth belongs to
+    # the mass of each layer rather than to the layer count. Dividing by nlevels
+    # handed a thin near-surface layer the same absorption as a thick
+    # mid-tropospheric one -- on the standard 20-level grid the bottom 5 hPa
+    # layer took ten times its share -- which made the radiative answer depend
+    # on how the levels happen to be distributed. Weighting by mass keeps the
+    # column total identical, so the tuned band coefficients still mean the same
+    # thing; only the vertical distribution changes. Ozone is deliberately left
+    # out of this: it is not well mixed, and `ozone_profile` is the path that
+    # gives it a proper vertical structure.
+    mass_fraction = dp / dp.sum(dim=1, keepdim=True).clamp(min=1.0e-8)
+
     heating = torch.zeros_like(t)
     lw_down_sfc = torch.zeros(batch, device=device, dtype=dtype)
     olr = torch.zeros(batch, device=device, dtype=dtype)
@@ -86,8 +98,8 @@ def compute_longwave_multiband(state, grid, params, force_clear_sky=False, ozone
         tau_co2 = (
             band_co2_base[band]
             + band_co2_log[band] * torch.log(co2_ratio.clamp(min=0.01))
-        ) / nlevels
-        tau_trace = band_trace_scale[band] * trace_tau / nlevels
+        ) * mass_fraction
+        tau_trace = band_trace_scale[band] * trace_tau * mass_fraction
         if ozone_profile:
             tau_trace = tau_trace + band_o3_scale[band] * o3_lw_tau * o3_profile
         dtau = tau_wv + tau_co2 + tau_trace + cloud_lw_tau
