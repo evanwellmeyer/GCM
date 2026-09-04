@@ -229,6 +229,18 @@ def cloud_microphysics_step(state, grid, params, cond_out, conv_out, shallow_out
     cloud_fraction = (torch.pow(rh_cloud, rh_power) * torch.pow(qc_cloud, qc_power))
     cloud_fraction = cloud_fraction.clamp(min=0.0, max=cf_max)
     cloud_fraction = cloud_fraction * (qc > 1.0e-8).to(dtype)
+
+    # When condensation runs off a subgrid distribution it already knows what
+    # fraction of the layer is cloudy, because that is the same distribution it
+    # condensed from. Prefer that over the independent diagnostic above, which
+    # is fitted against condensate amounts this column does not reach and so
+    # reports a nearly clear sky for layers that are actually at cloud.
+    # Carrying two disagreeing definitions of cloud fraction in one model is
+    # the thing to avoid here.
+    pdf_fraction = cond_out.get('condensation_cloud_fraction', None)
+    if pdf_fraction is not None and bool(params.get('cloud_fraction_from_condensation', True)):
+        pdf_fraction = pdf_fraction.to(device=device, dtype=dtype).clamp(min=0.0, max=1.0)
+        cloud_fraction = torch.maximum(cloud_fraction, pdf_fraction * (qc > 1.0e-8).to(dtype))
     if shallow_out is not None and 'cloud_fraction' in shallow_out:
         plume_fraction = shallow_out['cloud_fraction'].to(device=device, dtype=dtype)
         cloud_fraction = torch.maximum(cloud_fraction, plume_fraction).clamp(max=cf_max)

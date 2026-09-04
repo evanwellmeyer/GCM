@@ -24,15 +24,43 @@ def condensation(state, grid, params):
     precip_frac = params.get('ls_precip_fraction', 0.1)
     cloud_microphysics = bool(params.get('cloud_microphysics_enabled', False))
 
+    # Condensation begins before the grid mean reaches saturation. A model
+    # layer is not uniform: part of it is cloudy and saturated while the rest
+    # is clear, so cloud forms once the mean crosses a critical humidity below
+    # 1. Sundqvist-type schemes and the assumed-PDF closures that CESM2 and
+    # GFDL use both work this way. With a hard grid-mean adjustment instead,
+    # any layer that keeps receiving moisture is driven to exactly 100% and
+    # stays there, which is what this column was doing between 685 and 865 hPa.
+    rh_crit = float(params.get('condensation_rh_crit', 1.0))
+    rh_crit = min(max(rh_crit, 0.5), 1.0)
+
     qs = saturation_specific_humidity(t, p)
 
     # find the excess above saturation
     t_new = t.clone()
     q_new = q.clone()
 
+    # Subgrid distribution. Total water in a layer is spread uniformly about
+    # its mean over a half width of (1 - rh_crit) * qs, so the layer starts to
+    # condense once the mean passes rh_crit and is fully cloudy only once it
+    # passes saturation by that same margin. Condensing the part of the
+    # distribution that lies above qs gives a condensate that grows
+    # quadratically from the onset rather than in a straight line, which is
+    # what lets the grid mean settle somewhere between rh_crit and 1 instead
+    # of being pinned to either. The cloud fraction below comes out of the
+    # same distribution, so the two can no longer disagree.
+    cloud_fraction_diag = torch.zeros_like(q)
     for _ in range(3):
         qs_current = saturation_specific_humidity(t_new, p)
-        excess = torch.clamp(q_new - qs_current, min=0.0)
+        half_width = ((1.0 - rh_crit) * qs_current).clamp(min=1.0e-12)
+        above = q_new + half_width - qs_current
+        cloud_fraction_diag = (above / (2.0 * half_width)).clamp(min=0.0, max=1.0)
+        partial = (above.clamp(min=0.0) ** 2) / (4.0 * half_width)
+        saturated_excess = (q_new - qs_current).clamp(min=0.0)
+        # once the whole layer is cloudy the distribution no longer matters and
+        # this reduces to the ordinary saturation adjustment.
+        excess = torch.where(cloud_fraction_diag >= 1.0, saturated_excess, partial)
+        excess = torch.clamp(excess, min=0.0)
 
         dqsdt = Lv * qs_current / (461.5 * t_new * t_new)
         correction = 1.0 + Lv / cp * dqsdt
@@ -77,7 +105,10 @@ def condensation(state, grid, params):
         cloud_source = torch.zeros_like(q)
         precip = torch.sum(condensate * dp / g, dim=1)
 
+    result_cloud_fraction = cloud_fraction_diag
+
     return {
+        'condensation_cloud_fraction': result_cloud_fraction,
         'dt': dt_tend,
         'dq': dq_tend,
         'precip': precip,

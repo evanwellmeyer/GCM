@@ -157,6 +157,10 @@ def mass_flux_convection(state, grid, params):
     detrain_rh = _column_param(params, 'mf_detrain_rh', 0.7, t, batch)
     mb_max = _column_param(params, 'mf_mb_max', 0.05, t, batch)
     bl_export_fraction = _column_param(params, 'mf_bl_export_fraction', 0.02, t, batch)
+    # Compensating-subsidence drying of the environment. On by default because
+    # it is half of a matched pair with the subsidence warming below; the
+    # switch exists so the two can be compared directly.
+    subsidence_drying = bool(params.get('mf_subsidence_drying', True))
     max_dt_day = _column_param(params, 'mf_max_dt_day', 10.0, t, batch)
     max_dq_day = _column_param(params, 'mf_max_dq_day', 5.0, t, batch)
     cond_retain = _column_param(params, 'mf_condensate_retention', 0.25, t, batch)
@@ -207,92 +211,200 @@ def mass_flux_convection(state, grid, params):
         tau_cape_eff = tau_cape * rh_factor * cape_factor
         tau_cape_eff = torch.maximum(torch.minimum(tau_cape_eff, tau_max), tau_min)
 
-    # march the plume upward
-    t_plume = t[:, -1].clone()
-    q_plume = q[:, -1].clone()
-    qc_plume = torch.zeros(batch, device=t.device, dtype=t.dtype)
-    fallout_keep = 1.0 - cond_fallout.clamp(min=0.0, max=1.0)
-    cond_retain = cond_retain.clamp(min=0.0, max=1.0)
-
+    # A single bulk plume detrains all of its mass over a narrow depth, which
+    # piles the detrained moisture into one or two layers. Real schemes avoid
+    # that by carrying a spectrum: Zhang-McFarlane follows Arakawa-Schubert in
+    # launching plumes across a range of entrainment rates, and the GFDL scheme
+    # runs a shallow and a deep plume. Weakly entraining plumes stay buoyant
+    # and detrain high, strongly entraining ones dilute and detrain low, so the
+    # detrainment is spread through the depth of the cloud layer instead of
+    # landing in a single layer.
     dt_norm = torch.zeros_like(t)
     dq_norm = torch.zeros_like(q)
-    # track the plume mass flux profile normalized by cloud-base mass flux.
-    # it grows from entrainment and shrinks from detrainment.
-    mf_profile = torch.ones(batch, device=t.device)
-
-    for k in range(nlevels - 2, -1, -1):
-        p_here = p[:, k]
-        dp_layer = dp[:, k]
-        dp_step = (p[:, k + 1] - p[:, k]).abs()
-
-        # entrainment
-        mix = 1.0 - torch.exp(-(entrainment * dp_step).clamp(min=0.0, max=5.0))
-        t_plume = (1.0 - mix) * t_plume + mix * t[:, k]
-        q_plume = (1.0 - mix) * q_plume + mix * q[:, k]
-        qc_plume = (1.0 - mix) * qc_plume
-
-        # Use the pressure-coordinate solution for plume-mass growth so that
-        # splitting a layer does not change cumulative entrainment.
-        mf_profile = mf_profile * torch.exp((entrainment * dp_step).clamp(max=5.0))
-
-        # adiabatic cooling
-        qs_p = saturation_specific_humidity(t_plume, p_here)
-        saturated = (q_plume >= qs_p).float()
-        gamma_dry = Rd * t_plume / (cp * p_here)
-        num = (Rd * t_plume / (cp * p_here)) * (1.0 + Lv * qs_p / (Rd * t_plume))
-        den = 1.0 + Lv * Lv * qs_p / (cp * Rv * t_plume * t_plume)
-        gamma_moist = num / den
-        gamma = (1.0 - saturated) * gamma_dry + saturated * gamma_moist
-
-        dp_rise = p_here - p[:, k + 1]
-        t_plume = t_plume + gamma * dp_rise
-
-        # condense
-        qs_p = saturation_specific_humidity(t_plume, p_here)
-        condensate = torch.clamp(q_plume - qs_p, min=0.0)
-        q_plume = q_plume - condensate
-        t_plume = t_plume + Lv / cp * condensate
-        qc_plume = fallout_keep * (qc_plume + cond_retain * condensate)
-
-        # buoyancy
-        tv_plume = loaded_virtual_temperature(t_plume, q_plume, qc_plume)
-        tv_env = virtual_temperature(t[:, k], q[:, k])
-        buoyant = torch.sigmoid((tv_plume - tv_env) * 5.0)
-
-        # Detrainment and plume decay are rates per pascal. The previous
-        # fixed fraction per model level changed when the same layer was
-        # divided into two thinner layers.
-        detrain_factor = (
-            (1.0 - buoyancy_detrainment)
-            + buoyancy_detrainment * (1.0 - buoyant)
+    plume_count = max(int(params.get("mf_plume_count", 1)), 1)
+    entrainment_spread = float(params.get("mf_plume_entrainment_spread", 3.0))
+    if plume_count > 1 and entrainment_spread > 1.0:
+        plume_scales = torch.logspace(
+            -1.0, 1.0, plume_count, base=entrainment_spread,
+            device=t.device, dtype=t.dtype,
         )
-        detrain_exponent = detrainment * detrain_factor * dp_step
-        detrain_frac = 1.0 - torch.exp(-detrain_exponent.clamp(min=0.0, max=5.0))
-        mf_detrained = mf_profile * detrain_frac
-        mf_profile = mf_profile * (1.0 - detrain_frac)
+    else:
+        plume_scales = torch.ones(plume_count, device=t.device, dtype=t.dtype)
+    plume_weight = 1.0 / plume_count
+    entrainment_base = entrainment
 
-        # detrainment replaces a fraction of the layer with plume air.
-        detrain_rate = mf_detrained * g / dp_layer  # 1/s per unit Mb
+    for plume_index in range(plume_count):
+        entrainment = entrainment_base * plume_scales[plume_index]
+        dt_member = torch.zeros_like(t)
+        dq_member = torch.zeros_like(q)
+        # march the plume upward
+        t_plume = t[:, -1].clone()
+        q_plume = q[:, -1].clone()
+        qc_plume = torch.zeros(batch, device=t.device, dtype=t.dtype)
+        fallout_keep = 1.0 - cond_fallout.clamp(min=0.0, max=1.0)
+        cond_retain = cond_retain.clamp(min=0.0, max=1.0)
 
-        # temperature tendency: warming from plume air mixing in
-        dt_norm[:, k] = detrain_rate * (t_plume - t[:, k])
+        # track the plume mass flux profile normalized by cloud-base mass flux.
+        # it grows from entrainment and shrinks from detrainment.
+        mf_profile = torch.ones(batch, device=t.device)
 
-        # moisture tendency: detrain plume air, but cap its humidity to a
-        # realistic anvil-layer RH target so the scheme cannot fill the free
-        # troposphere to saturation. unlike the earlier formulation, this
-        # can moisten or dry depending on the local environment.
-        qs_env = saturation_specific_humidity(t[:, k], p_here)
-        q_detrain = torch.minimum(q_plume, detrain_rh * qs_env)
-        dq_norm[:, k] = detrain_rate * (q_detrain - q[:, k])
+        for k in range(nlevels - 2, -1, -1):
+            p_here = p[:, k]
+            dp_layer = dp[:, k]
+            dp_step = (p[:, k + 1] - p[:, k]).abs()
 
-        # compensating subsidence is tied to actual mass-flux divergence,
-        # not the entrainment coefficient alone.
-        if k < nlevels - 2:
-            subsidence_rate = mf_detrained * g / dp_layer
-            dt_norm[:, k] = dt_norm[:, k] + subsidence_rate * (t[:, k + 1] - t[:, k])
+            # entrainment
+            mix = 1.0 - torch.exp(-(entrainment * dp_step).clamp(min=0.0, max=5.0))
+            t_plume = (1.0 - mix) * t_plume + mix * t[:, k]
+            q_plume = (1.0 - mix) * q_plume + mix * q[:, k]
+            qc_plume = (1.0 - mix) * qc_plume
 
-        decay_exponent = plume_decay * (1.0 - buoyant) * dp_step
-        mf_profile = mf_profile * torch.exp(-decay_exponent.clamp(min=0.0, max=5.0))
+            # Use the pressure-coordinate solution for plume-mass growth so that
+            # splitting a layer does not change cumulative entrainment.
+            mf_profile = mf_profile * torch.exp((entrainment * dp_step).clamp(max=5.0))
+
+            # adiabatic cooling
+            qs_p = saturation_specific_humidity(t_plume, p_here)
+            saturated = (q_plume >= qs_p).float()
+            gamma_dry = Rd * t_plume / (cp * p_here)
+            num = (Rd * t_plume / (cp * p_here)) * (1.0 + Lv * qs_p / (Rd * t_plume))
+            den = 1.0 + Lv * Lv * qs_p / (cp * Rv * t_plume * t_plume)
+            gamma_moist = num / den
+            gamma = (1.0 - saturated) * gamma_dry + saturated * gamma_moist
+
+            dp_rise = p_here - p[:, k + 1]
+            t_plume = t_plume + gamma * dp_rise
+
+            # condense
+            qs_p = saturation_specific_humidity(t_plume, p_here)
+            condensate = torch.clamp(q_plume - qs_p, min=0.0)
+            q_plume = q_plume - condensate
+            t_plume = t_plume + Lv / cp * condensate
+            qc_plume = fallout_keep * (qc_plume + cond_retain * condensate)
+
+            # buoyancy
+            tv_plume = loaded_virtual_temperature(t_plume, q_plume, qc_plume)
+            tv_env = virtual_temperature(t[:, k], q[:, k])
+            buoyant = torch.sigmoid((tv_plume - tv_env) * 5.0)
+
+            # Detrainment and plume decay are rates per pascal. The previous
+            # fixed fraction per model level changed when the same layer was
+            # divided into two thinner layers.
+            detrain_factor = (
+                (1.0 - buoyancy_detrainment)
+                + buoyancy_detrainment * (1.0 - buoyant)
+            )
+            detrain_exponent = detrainment * detrain_factor * dp_step
+            detrain_frac = 1.0 - torch.exp(-detrain_exponent.clamp(min=0.0, max=5.0))
+            mf_detrained = mf_profile * detrain_frac
+            mf_profile = mf_profile * (1.0 - detrain_frac)
+
+            # detrainment replaces a fraction of the layer with plume air.
+            detrain_rate = mf_detrained * g / dp_layer  # 1/s per unit Mb
+
+            # temperature tendency: warming from plume air mixing in
+            dt_member[:, k] = detrain_rate * (t_plume - t[:, k])
+
+            # moisture tendency: detrain plume air, but cap its humidity to a
+            # realistic anvil-layer RH target so the scheme cannot fill the free
+            # troposphere to saturation. unlike the earlier formulation, this
+            # can moisten or dry depending on the local environment.
+            qs_env = saturation_specific_humidity(t[:, k], p_here)
+            q_detrain = torch.minimum(q_plume, detrain_rh * qs_env)
+            dq_member[:, k] = detrain_rate * (q_detrain - q[:, k])
+
+            # compensating subsidence is tied to actual mass-flux divergence,
+            # not the entrainment coefficient alone.
+            if k < nlevels - 2:
+                subsidence_rate = mf_detrained * g / dp_layer
+                dt_member[:, k] = dt_member[:, k] + subsidence_rate * (t[:, k + 1] - t[:, k])
+                # The same descending environmental motion advects moisture as well
+                # as heat. Water vapour falls off with height, so air arriving from
+                # above is drier and the layer dries: dq/dt = -g * M * dq/dp. In
+                # Zhang-McFarlane, and in the schemes CESM and GFDL run, the heat
+                # and moisture tendencies are a matched pair driven by the same
+                # mass flux; they differ in sign only because s and q have opposite
+                # vertical gradients. Carrying the warming without the drying left
+                # the free troposphere with no way to dry at all, which is what
+                # kept 685-865 hPa pinned at saturation. Unlike the temperature
+                # term above there is no compression to account for here, so this
+                # is plain advection.
+                if subsidence_drying:
+                    # Written as a transport, not as a local gradient. A bare
+                    # -g*M*dq/dp term integrates over the column to -M*(q_sfc -
+                    # q_top), so it destroys water rather than moving it. Here the
+                    # moisture the descending environment removes from this layer
+                    # is deposited in the layer beneath it, upwind-differenced, so
+                    # the pair is mass-weighted zero-sum and the column budget
+                    # closes exactly. Free-tropospheric layers still dry, because
+                    # the drier layer above sends down less than they give up.
+                    moisture_transport = subsidence_rate * q[:, k]
+                    dq_member[:, k] = dq_member[:, k] - moisture_transport
+                    dq_member[:, k + 1] = dq_member[:, k + 1] + (
+                        moisture_transport * dp_layer / dp[:, k + 1]
+                    )
+
+            decay_exponent = plume_decay * (1.0 - buoyant) * dp_step
+            mf_profile = mf_profile * torch.exp(-decay_exponent.clamp(min=0.0, max=5.0))
+
+        dt_norm = dt_norm + plume_weight * dt_member
+        dq_norm = dq_norm + plume_weight * dq_member
+
+    entrainment = entrainment_base
+
+    # Convective downdrafts. A downdraft starts in the mid troposphere, where
+    # the air is cool and dry, and sinks. Compression warms it, entrainment
+    # mixes in its surroundings, and evaporating rain cools it back toward
+    # saturation. It arrives in the subcloud layer with much lower moist static
+    # energy than the air already there, so detraining it cools and dries the
+    # boundary layer. This is the process the `mf_bl_export_fraction` term was
+    # standing in for, and the reason a downdraft needs rain to evaporate into
+    # it: without `mf_rain_evap_coefficient` above zero the draft warms
+    # adiabatically on the way down and does almost nothing.
+    downdraft_fraction = _column_param(params, 'mf_downdraft_fraction', 0.0, t, batch)
+    if bool(torch.any(downdraft_fraction > 0.0)):
+        start_sigma = float(params.get('mf_downdraft_start_sigma', 0.60))
+        dd_entrain = float(params.get('mf_downdraft_entrainment', 0.05))
+        dd_detrain = float(params.get('mf_downdraft_detrainment', 0.25))
+        sigma_full_dd = full_level_coordinate(grid, state=state, device=t.device, dtype=t.dtype)
+        start_level = int(torch.argmin((sigma_full_dd[0] - start_sigma).abs()).item())
+
+        dd_rain_share = float(params.get('mf_downdraft_rain_share', 0.5))
+        # rain generated above the starting level is what the draft can draw on
+        rain_available = (
+            (-dq_norm[:, :start_level + 1]).clamp(min=0.0) * dp[:, :start_level + 1] / g
+        ).sum(dim=1)
+
+        t_dd = t[:, start_level].clone()
+        q_dd = q[:, start_level].clone()
+        md = downdraft_fraction.clone()
+        for k in range(start_level, nlevels - 1):
+            # sink one layer: compress, then mix with the surroundings
+            t_dd = t_dd * (p[:, k + 1] / p[:, k].clamp(min=1.0)) ** (Rd / cp)
+            t_dd = (1.0 - dd_entrain) * t_dd + dd_entrain * t[:, k + 1]
+            q_dd = (1.0 - dd_entrain) * q_dd + dd_entrain * q[:, k + 1]
+            md = md * (1.0 + dd_entrain)
+
+            # Evaporate rain into the draft. The uptake has to be drawn from
+            # the rain that is actually falling, not conjured to force the
+            # draft to saturation: a draft that is topped up without limit
+            # arrives warm and moist and does the opposite of what a downdraft
+            # is for. Its defining property is the low moist static energy it
+            # keeps from the level it started at, so the entrainment that
+            # dilutes that signature is also kept small.
+            qs_dd = saturation_specific_humidity(t_dd, p[:, k + 1])
+            demand = (qs_dd - q_dd).clamp(min=0.0)
+            available = (rain_available * dd_rain_share / md.clamp(min=1.0e-8))
+            uptake = torch.minimum(demand, available.clamp(min=0.0))
+            q_dd = q_dd + uptake
+            t_dd = t_dd - (Lv / cp) * uptake
+            rain_available = (rain_available - uptake * md).clamp(min=0.0)
+
+            # detrain draft air into the layer it is passing through
+            rate = dd_detrain * md * g / dp[:, k + 1]
+            dt_norm[:, k + 1] = dt_norm[:, k + 1] + rate * (t_dd - t[:, k + 1])
+            dq_norm[:, k + 1] = dq_norm[:, k + 1] + rate * (q_dd - q[:, k + 1])
+            md = md * (1.0 - dd_detrain)
 
     # Modest subcloud moisture export over a fixed sigma depth. Normalizing by
     # the selected layer mass keeps the column sink independent of level count.
@@ -398,6 +510,33 @@ def mass_flux_convection(state, grid, params):
         dt_tend = _conserve_mse(dt_tend, dq_tend, dp, correction_region)
         dt_tend = torch.maximum(torch.minimum(dt_tend, max_dt), -max_dt)
         mse_residual = torch.sum((cp * dt_tend + Lv * dq_tend) * dp / g, dim=1)
+
+    # Convective rain falls through the column rather than teleporting to the
+    # surface. In unsaturated layers some of it evaporates, which moistens and
+    # cools the air it passes through -- the main exchange between the plume's
+    # precipitation and the environment in Zhang-McFarlane and in the GFDL
+    # scheme, and the process that makes convective downdrafts possible. Both
+    # budgets close by construction: what leaves the rain flux enters the
+    # layer, and the cooling is exactly the latent heat of what evaporated, so
+    # the column moist enthalpy is untouched.
+    rain_evap = _column_param(params, 'mf_rain_evap_coefficient', 0.0, t, batch)
+    evaporated = torch.zeros_like(dq_tend)
+    if bool(torch.any(rain_evap > 0.0)):
+        layer_mass_full = dp / g
+        rain_flux = torch.zeros(batch, device=t.device, dtype=t.dtype)
+        for k in range(nlevels):
+            rain_flux = rain_flux + (-dq_tend[:, k]).clamp(min=0.0) * layer_mass_full[:, k]
+            qs_here = saturation_specific_humidity(t[:, k], p[:, k])
+            subsaturation = (1.0 - q[:, k] / qs_here.clamp(min=1.0e-12)).clamp(min=0.0, max=1.0)
+            take = (rain_evap * subsaturation * rain_flux).clamp(min=0.0)
+            # cannot evaporate more rain than is falling, nor more than the
+            # layer can hold before it saturates.
+            capacity = ((qs_here - q[:, k]).clamp(min=0.0) * layer_mass_full[:, k] / model_dt)
+            take = torch.minimum(torch.minimum(take, rain_flux), capacity)
+            evaporated[:, k] = take / layer_mass_full[:, k]
+            rain_flux = rain_flux - take
+        dq_tend = dq_tend + evaporated
+        dt_tend = dt_tend - (Lv / cp) * evaporated
 
     # By default all net convective drying reaches the surface as rain. A
     # retained-condensate path is available for experiments, but it requires

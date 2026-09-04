@@ -208,20 +208,24 @@ convection_scheme = "mass_flux"
 # roughly four times the dry adiabatic lapse rate. see scm/dry_adjustment.py.
 # trigger is a lapse rate excess over the dry adiabat in K/km, so it carries
 # across vertical grids. enabled by default in code; stated here for the lab.
+# Condensation uses a subgrid distribution rather than a grid-mean saturation
+# adjustment, so a layer that keeps receiving moisture forms partial cloud and
+# settles below saturation instead of being pinned at 100% RH. See
+# scm/condensation.py.
+condensation_rh_crit = 0.90
 dry_adjustment_enabled = true
 dry_adjustment_max_lapse_excess = 3.0
 dry_adjustment_tau = 1800.0
 ocean_depth = 50.0
 wind_speed = 5.0
 use_slab_ocean = true
-# non-radiation parameter overrides can go here. the richer default path uses
-# a shallower surface-coupling stencil and a Richardson-based boundary layer
-# so the lowest model level stays better coupled to the slab surface.
+# richardson is also the code default; stated here for the lab.
 boundary_layer_scheme = "richardson"
-surface_heat_levels = 2
-surface_moisture_levels = 1
-surface_heat_sigma_depth = 0.02
-surface_moisture_sigma_depth = 0.005
+# The surface-flux stencil is inherited from scm/configs/default.toml
+# (surface_moisture_sigma_depth = 0.005). Widening it to the spans the code
+# defaults to was tried and measurably regressed the column: saturated mass
+# fraction 19% -> 26%, surface imbalance 0.02 -> 0.23 W/m2, and surface
+# temperature drift 9x larger. The narrow stencil is kept for that reason.
 bl_top_sigma = 0.94
 mf_bl_export_top_sigma = 0.96
 include_precip_enthalpy_flux = true

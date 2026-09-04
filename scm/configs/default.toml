@@ -200,6 +200,11 @@ surface_net_flux = 10.0
 # a shallower surface-coupling stencil and a Richardson-based boundary layer
 # so the lowest model level stays better coupled to the slab surface.
 boundary_layer_scheme = "richardson"
+# Condensation works from a subgrid distribution instead of a grid-mean
+# saturation adjustment. Without it any layer that keeps receiving moisture is
+# driven to exactly 100% RH and held there, which produced a permanently
+# saturated slab between 685 and 865 hPa. See scm/condensation.py.
+condensation_rh_crit = 0.90
 surface_heat_levels = 2
 surface_moisture_levels = 1
 surface_heat_sigma_depth = 0.02
