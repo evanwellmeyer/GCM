@@ -365,7 +365,9 @@ def mass_flux_convection(state, grid, params):
     if bool(torch.any(downdraft_fraction > 0.0)):
         start_sigma = float(params.get('mf_downdraft_start_sigma', 0.60))
         dd_entrain = float(params.get('mf_downdraft_entrainment', 0.05))
-        dd_detrain = float(params.get('mf_downdraft_detrainment', 0.25))
+        dd_detrain = float(params.get('mf_downdraft_detrainment', 0.05))
+        dd_release = float(params.get('mf_downdraft_release', 0.45))
+        dd_release_sigma = float(params.get('mf_downdraft_release_sigma', 0.90))
         sigma_full_dd = full_level_coordinate(grid, state=state, device=t.device, dtype=t.dtype)
         start_level = int(torch.argmin((sigma_full_dd[0] - start_sigma).abs()).item())
 
@@ -400,11 +402,16 @@ def mass_flux_convection(state, grid, params):
             t_dd = t_dd - (Lv / cp) * uptake
             rain_available = (rain_available - uptake * md).clamp(min=0.0)
 
-            # detrain draft air into the layer it is passing through
-            rate = dd_detrain * md * g / dp[:, k + 1]
+            # Detrain draft air into the layer it is passing through. Most of
+            # a downdraft's mass is delivered below cloud base rather than
+            # bled off on the way down, so detrainment stays weak until the
+            # draft is under the cloud layer and then releases what is left.
+            below_base = sigma_full_dd[0, k + 1] >= dd_release_sigma
+            local_detrain = dd_release if bool(below_base) else dd_detrain
+            rate = local_detrain * md * g / dp[:, k + 1]
             dt_norm[:, k + 1] = dt_norm[:, k + 1] + rate * (t_dd - t[:, k + 1])
             dq_norm[:, k + 1] = dq_norm[:, k + 1] + rate * (q_dd - q[:, k + 1])
-            md = md * (1.0 - dd_detrain)
+            md = md * (1.0 - local_detrain)
 
     # Modest subcloud moisture export over a fixed sigma depth. Normalizing by
     # the selected layer mass keeps the column sink independent of level count.

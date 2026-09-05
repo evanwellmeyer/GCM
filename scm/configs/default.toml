@@ -204,7 +204,7 @@ boundary_layer_scheme = "richardson"
 # saturation adjustment. Without it any layer that keeps receiving moisture is
 # driven to exactly 100% RH and held there, which produced a permanently
 # saturated slab between 685 and 865 hPa. See scm/condensation.py.
-condensation_rh_crit = 0.90
+condensation_rh_crit = 1.0
 surface_heat_levels = 2
 surface_moisture_levels = 1
 surface_heat_sigma_depth = 0.02

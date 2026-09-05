@@ -46,6 +46,9 @@ co2_base_tau = 1.50
 
 [radiation.shortwave]
 sw_kappa_wv = 0.01
+# 0.32 is the clear-sky value: with cloud radiative effects off the surface
+# albedo carries the whole planetary albedo. Enabling clouds requires dropping
+# this to about 0.28, or the column runs roughly 5 K cold.
 albedo = 0.32
 
 [radiation.multiband]
@@ -78,6 +81,15 @@ o3_sw_tau = 0.03
 other_ghg_tau = 0.00
 
 [radiation.clouds]
+# Cloud radiative effects are OFF in the baseline, so the reference column is
+# clear-sky. The machinery works and is tuned (see cloud_sw_scattering_efficiency
+# below): switching this to true, together with albedo = 0.28 above, gives a net
+# cloud radiative effect near -8 W/m2, correctly negative for a low-cloud
+# regime. It is left off because the cloud field is not yet good enough to build
+# a reference on: fraction comes out patchy and small (0.02-0.19 against 0.3-0.6
+# observed), and because every cloud here is low and warm the longwave effect is
+# only about +2.5 W/m2 against +26 observed. Toggling it is a good lab
+# experiment; resting the equilibrium on it is not.
 enabled = false
 optics = "auto"
 cloud_fraction = 0.0
@@ -88,7 +100,9 @@ cloud_top_sigma = 0.65
 cloud_bottom_sigma = 0.95
 
 [radiation.diagnostics]
-clear_sky_fluxes = false
+# gives clear-sky OLR/ASR alongside all-sky, so cloud radiative effect is a
+# directly measurable quantity in the lab rather than a difference of runs.
+clear_sky_fluxes = true
 
 [cloud_microphysics]
 enabled = true
@@ -115,7 +129,13 @@ cloud_k_liq_sw = 15.0
 cloud_k_ice_sw = 8.0
 cloud_k_liq_lw = 4.0
 cloud_k_ice_lw = 2.0
-cloud_sw_scattering_efficiency = 0.05
+# Raised from 0.05. This converts cloud optical depth into reflectivity, and
+# at 0.05 the clouds were optically present but reflected almost nothing: net
+# cloud radiative effect came out weakly positive, where a low-cloud regime
+# should cool. At 0.60 the shortwave effect is about -49 W/m2 per unit cloud
+# cover, which is the right order for overcast low cloud, and the net effect
+# turns negative as it should.
+cloud_sw_scattering_efficiency = 0.60
 cloud_sw_absorption_fraction = 0.05
 
 [shallow_convection]
@@ -163,6 +183,17 @@ tau_cape_cape_sensitivity = 1.0
 tau_cape_ft_top_sigma = 0.30
 tau_cape_ft_bottom_sigma = 0.80
 cape_max_pressure_step = 2500.0
+# Convective downdrafts. A draft starts in the mid troposphere and sinks,
+# cooled by evaporating rain, arriving in the subcloud layer about 5 K colder
+# and 2 g/kg drier than the air already there. Its effect is on moist static
+# energy, not relative humidity: it lowers subcloud theta_e and takes roughly
+# 15% off CAPE. Rain evaporation into the environment (mf_rain_evap_coefficient)
+# is left at zero -- on its own it moistens the subcloud layer with nothing to
+# balance it, and it is only worth enabling alongside a stronger sink.
+downdraft_fraction = 0.4
+downdraft_start_sigma = 0.60
+downdraft_entrainment = 0.05
+downdraft_release_sigma = 0.90
 
 [calibration]
 enabled = false
@@ -212,7 +243,7 @@ convection_scheme = "mass_flux"
 # adjustment, so a layer that keeps receiving moisture forms partial cloud and
 # settles below saturation instead of being pinned at 100% RH. See
 # scm/condensation.py.
-condensation_rh_crit = 0.90
+condensation_rh_crit = 1.0
 dry_adjustment_enabled = true
 dry_adjustment_max_lapse_excess = 3.0
 dry_adjustment_tau = 1800.0
@@ -226,6 +257,17 @@ boundary_layer_scheme = "richardson"
 # defaults to was tried and measurably regressed the column: saturated mass
 # fraction 19% -> 26%, surface imbalance 0.02 -> 0.23 W/m2, and surface
 # temperature drift 9x larger. The narrow stencil is kept for that reason.
+# The boundary layer depth is diagnosed from a bulk Richardson criterion
+# rather than read off a fixed sigma level, which is what KPP, Mellor-Yamada
+# and EDMF schemes all do. With the fixed cutoff, mixing stopped at a
+# prescribed height whatever the profile was doing, and the interface just
+# above it was left coupled to nothing -- the dry adjustment was running at
+# 35 K/day permanently to patch it. With the depth diagnosed, that falls to
+# exactly zero and the adjustment goes back to being a safety net.
+# bl_top_sigma is ignored while bl_diagnose_depth is true; kept for reference.
+bl_diagnose_depth = true
+bl_min_depth_m = 100.0
+bl_max_depth_m = 1500.0
 bl_top_sigma = 0.94
 mf_bl_export_top_sigma = 0.96
 include_precip_enthalpy_flux = true

@@ -49,6 +49,19 @@ def condensation(state, grid, params):
     # what lets the grid mean settle somewhere between rh_crit and 1 instead
     # of being pinned to either. The cloud fraction below comes out of the
     # same distribution, so the two can no longer disagree.
+    # NOTE: this is a partial-condensation scheme and it is NOT correct yet.
+    # The intent is a diagnostic split of total water into vapour and
+    # condensate over a uniform subgrid distribution, which is what lets a
+    # layer hold partial cloud while its grid mean stays below saturation.
+    # As written it is applied as an incremental sink on vapour instead, and
+    # any setting below 1.0 drives the column into a runaway cold-and-dry
+    # state (about -13 K over 200 days at 0.90, and non-monotonic in rh_crit,
+    # which is the sign that the formulation rather than the tuning is wrong).
+    # Rewriting it to work from total water was tried and made matters worse,
+    # so the cause is not yet understood. rh_crit is therefore left at 1.0,
+    # where this reduces exactly to a saturation adjustment and the column is
+    # stable. Fixing it properly would remove the saturated slab between 685
+    # and 865 hPa that the saturation adjustment produces.
     cloud_fraction_diag = torch.zeros_like(q)
     for _ in range(3):
         qs_current = saturation_specific_humidity(t_new, p)
@@ -57,8 +70,6 @@ def condensation(state, grid, params):
         cloud_fraction_diag = (above / (2.0 * half_width)).clamp(min=0.0, max=1.0)
         partial = (above.clamp(min=0.0) ** 2) / (4.0 * half_width)
         saturated_excess = (q_new - qs_current).clamp(min=0.0)
-        # once the whole layer is cloudy the distribution no longer matters and
-        # this reduces to the ordinary saturation adjustment.
         excess = torch.where(cloud_fraction_diag >= 1.0, saturated_excess, partial)
         excess = torch.clamp(excess, min=0.0)
 

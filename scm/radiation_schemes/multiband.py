@@ -1,7 +1,7 @@
 import torch
 
 from scm.cloud_optics import cloud_optical_properties
-from scm.thermo import full_level_coordinate
+from scm.thermo import eps, full_level_coordinate, p0
 from scm.radiation_schemes.common import (
     as_batch_tensor,
     band_vector,
@@ -27,6 +27,7 @@ def compute_longwave_multiband(state, grid, params, force_clear_sky=False, ozone
     q = state["q"]
     ts = state["ts"]
     dp = state["dp"]
+    p_full = state["p"]
     batch, nlevels = t.shape
 
     device = t.device
@@ -44,6 +45,19 @@ def compute_longwave_multiband(state, grid, params, force_clear_sky=False, ozone
     band_wv_kappa = band_vector(
         params.get("lw_band_wv_kappa"),
         [0.0, 0.05, 0.12, 0.22],
+        device, dtype,
+    )
+    # Water-vapour continuum. Line absorption above is linear in specific
+    # humidity, but a real atmosphere also absorbs through the continuum, whose
+    # self-broadened part scales with the product of vapour amount and vapour
+    # pressure -- so it grows roughly as the square of humidity and is what
+    # closes the 8-12 micron window in moist air. RRTMG, used by both CESM and
+    # GFDL, carries this as MT_CKD. Without it the greenhouse effect is far too
+    # weak a function of humidity: a column that dries loses its trapping
+    # almost in proportion, with nothing to arrest a cold-and-dry descent.
+    band_wv_continuum = band_vector(
+        params.get("lw_band_wv_continuum"),
+        [0.0, 0.0, 0.0, 0.0],
         device, dtype,
     )
     band_co2_base = band_vector(
@@ -95,6 +109,12 @@ def compute_longwave_multiband(state, grid, params, force_clear_sky=False, ozone
 
     for band in range(band_weights.shape[0]):
         tau_wv = band_wv_kappa[band] * q * dp / g
+        # vapour pressure e = q * p / (eps + (1 - eps) q); the continuum path is
+        # proportional to q * e, hence quadratic in humidity.
+        vapour_pressure = q * p_full / (eps + (1.0 - eps) * q.clamp(min=0.0))
+        tau_wv = tau_wv + (
+            band_wv_continuum[band] * q * (vapour_pressure / p0) * dp / g
+        )
         tau_co2 = (
             band_co2_base[band]
             + band_co2_log[band] * torch.log(co2_ratio.clamp(min=0.01))
