@@ -6,13 +6,16 @@
 
 import torch
 from scm.thermo import (
-    cp, Lv, g, cape, saturation_specific_humidity,
-    moist_adiabat_profile
+    cp, Lv, g, Rd, cape, saturation_specific_humidity,
+    moist_adiabat_profile, virtual_temperature,
 )
+from scm.convection_mf import parcel_ascent
 
 
 def betts_miller(state, grid, params):
     """betts-miller convective adjustment."""
+    if params.get('bm_conserve_enthalpy', False):
+        return conservative_adjustment(state, grid, params)
 
     t = state['t']
     q = state['q']
@@ -94,3 +97,66 @@ def betts_miller(state, grid, params):
         'precip': precip,
         'cape': cape_val,
     }
+
+
+def conservative_adjustment(state, grid, params):
+    """Relax a buoyant column toward a reference with equal moist enthalpy."""
+    temperature, vapor, pressure, thickness = (state[key] for key in ('t', 'q', 'p', 'dp'))
+    mass = thickness / g
+    timestep = float(params.get('dt', 900.0))
+    reference = torch.zeros_like(temperature)
+    parcelvapor = torch.zeros_like(vapor)
+    reference[:, -1] = temperature[:, -1]
+    parcelvapor[:, -1] = vapor[:, -1]
+    for level in range(temperature.shape[1] - 2, -1, -1):
+        reference[:, level], parcelvapor[:, level], unused = parcel_ascent(
+            reference[:, level + 1], parcelvapor[:, level + 1],
+            pressure[:, level + 1], pressure[:, level])
+
+    parcelvirtual = virtual_temperature(reference, parcelvapor)
+    environmentvirtual = virtual_temperature(temperature, vapor)
+    buoyancy = (parcelvirtual - environmentvirtual) / environmentvirtual
+    layercape = Rd * environmentvirtual[:, :-1] * buoyancy[:, :-1].clamp(min=0)
+    layercape = layercape * torch.log(pressure[:, 1:] / pressure[:, :-1].clamp(min=1))
+    capacity = layercape.sum(dim=1)
+    buoyant = buoyancy > 0
+    # Include the source layers below the highest buoyant model level.
+    mask = buoyant.to(temperature.dtype).cumsum(dim=1) > 0
+    weights = mass * mask
+    humidity = torch.as_tensor(params.get('rhbm', 0.7), device=temperature.device, dtype=temperature.dtype).reshape(-1, 1)
+    # Frierson's standard environmental-saturation option avoids using the
+    # warmer parcel profile to prescribe an unrealistically moist atmosphere.
+    moisture = humidity * saturation_specific_humidity(temperature, pressure)
+    firstchange = torch.where(mask, moisture - vapor, torch.zeros_like(vapor))
+    rain = -(firstchange * mass).sum(dim=1)
+    deep = rain > 0
+
+    # If the deep reference would moisten the column, use Frierson's
+    # nonprecipitating shallow branch: retain its vertical shape while scaling
+    # it to the existing water amount in the convective layer.
+    currentwater = (vapor * weights).sum(dim=1, keepdim=True)
+    referencewater = (moisture * weights).sum(dim=1, keepdim=True).clamp(min=1e-12)
+    shallowmoisture = moisture * currentwater / referencewater
+    moisture = torch.where(deep.unsqueeze(1), moisture, shallowmoisture)
+    moistening = torch.where(mask, moisture - vapor, torch.zeros_like(vapor))
+
+    # Shift the reference temperature uniformly so its sensible-heating
+    # integral exactly balances the latent-energy change.
+    rawheating = torch.where(mask, reference - temperature, torch.zeros_like(temperature))
+    energytarget = -Lv * (moistening * mass).sum(dim=1, keepdim=True)
+    temperatureshift = (energytarget / cp - (rawheating * mass).sum(dim=1, keepdim=True)) / weights.sum(dim=1, keepdim=True).clamp(min=1)
+    adjusted = reference + temperatureshift
+    heating = torch.where(mask, adjusted - temperature, torch.zeros_like(temperature))
+    rain = (-(moistening * mass).sum(dim=1)).clamp(min=0)
+    active = capacity > params.get('cape_threshold', 50.0)
+    timescale = torch.as_tensor(params.get('tau_bm', 7200.0), device=temperature.device, dtype=temperature.dtype).reshape(-1, 1)
+    fraction = (1 - torch.exp(-timestep / timescale)).clamp(max=1)
+    heatlimit = torch.as_tensor(params.get('bm_max_dt_day', 10.0), device=temperature.device, dtype=temperature.dtype).reshape(-1, 1) * timestep / 86400
+    waterlimit = torch.as_tensor(params.get('bm_max_dq_day', 5.0), device=temperature.device, dtype=temperature.dtype).reshape(-1, 1) * timestep / 86400 / 1000
+    fraction = torch.minimum(fraction, heatlimit / heating.abs().amax(dim=1, keepdim=True).clamp(min=1e-12))
+    fraction = torch.minimum(fraction, waterlimit / moistening.abs().amax(dim=1, keepdim=True).clamp(min=1e-12))
+    fraction = fraction * active.unsqueeze(1)
+    return {'dt': fraction * heating / timestep,
+            'dq': fraction * moistening / timestep,
+            'precip': (fraction[:, 0] * rain / timestep).clamp(min=0),
+            'cloud_condensate': torch.zeros_like(capacity), 'cape': capacity}

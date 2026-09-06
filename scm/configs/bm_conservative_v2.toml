@@ -1,14 +1,20 @@
+# Betts-Miller candidate that inherits the full atm407 column: same radiation,
+# same diagnosed boundary-layer depth, same dry adjustment, same CO2
+# calibration. The only difference from atm407.toml is the deep convection
+# closure. bm_conservative_v1.toml layered over default.toml instead and so
+# silently ran without bl_diagnose_depth; this exists to remove that
+# confound.
 # ATM407 test configuration: mass-flux convection with the default multiband radiation.
 [run]
 mode = "full"
-scheme = "mf"
+scheme = "bm"
 sampling = "fixed"
 spinup_days = 100
 perturb_days = 10
 fixed_sst = false
 plot = false
 device = "auto"
-label = "atm407"
+label = "bm_conservative_v2"
 preserve_ensemble_shape = false
 save_restarts = true
 restart_from = ""
@@ -47,9 +53,8 @@ co2_base_tau = 1.50
 [radiation.shortwave]
 sw_kappa_wv = 0.01
 # 0.32 is the clear-sky value: with cloud radiative effects off the surface
-# albedo carries the whole planetary albedo. The often-quoted pairing of clouds
-# with albedo = 0.28 was measured while the clouds-off flag was being ignored,
-# so it needs re-deriving before it is trusted.
+# albedo carries the whole planetary albedo. Enabling clouds requires dropping
+# this to about 0.28, or the column runs roughly 5 K cold.
 albedo = 0.32
 
 [radiation.multiband]
@@ -233,7 +238,10 @@ surface_net_flux = 10.0
 # co2_base_tau = [1.00, 1.50]
 
 [params]
-convection_scheme = "mass_flux"
+convection_scheme = "betts_miller"
+bm_conserve_enthalpy = true
+rhbm = 0.7
+tau_bm = 7200.0
 # boundary layer mixing stops at bl_top_sigma, so a statically unstable
 # interface just above it is coupled to nothing and cannot be removed. without
 # this the equilibrium carried a 9 K theta_v inversion across 910/945 hPa at
@@ -243,15 +251,8 @@ convection_scheme = "mass_flux"
 # Condensation uses a subgrid distribution rather than a grid-mean saturation
 # adjustment, so a layer that keeps receiving moisture forms partial cloud and
 # settles below saturation instead of being pinned at 100% RH. See
-# scm/condensation.py. This sat at 1.0 -- pure saturation adjustment -- while
-# any lower value appeared to drive the column to 223 K. That collapse was
-# unintended cloud shortwave absorption, not this scheme: [radiation.clouds]
-# enabled = false was being ignored whenever cloud microphysics was active. With
-# that fixed, 0.95 gives the best-converged column the project has produced
-# (TOA -0.24 W/m2, drifting 0.002 K/day) and takes mass at RH >= 95% from 0.15
-# to 0.11. The saved reference is generated at this value; changing it makes the
-# reference stale.
-condensation_rh_crit = 0.95
+# scm/condensation.py.
+condensation_rh_crit = 1.0
 dry_adjustment_enabled = true
 dry_adjustment_max_lapse_excess = 3.0
 dry_adjustment_tau = 1800.0

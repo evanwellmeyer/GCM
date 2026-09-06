@@ -48,16 +48,17 @@ def boundary_layer_mixing(state, grid, params):
         raise ValueError(f"unknown boundary layer scheme: {scheme}")
 
     # tridiagonal coefficients for implicit solve
-    a = torch.zeros(batch, nlevels, device=t.device)
-    b = torch.ones(batch, nlevels, device=t.device)
-    c = torch.zeros(batch, nlevels, device=t.device)
+    a = torch.zeros_like(t)
+    b = torch.ones_like(t)
+    c = torch.zeros_like(t)
 
     if mix_top < nlevels - 1:
-        coeff_below = dt * g * d[:, mix_top:nlevels - 1] / mass[:, mix_top:nlevels - 1]
+        # d is the interface mass conductance, rho K / dz. Divide by layer mass once.
+        coeff_below = dt * d[:, mix_top:nlevels - 1] / mass[:, mix_top:nlevels - 1]
         c[:, mix_top:nlevels - 1] = -coeff_below
         b[:, mix_top:nlevels - 1] = b[:, mix_top:nlevels - 1] + coeff_below
 
-        coeff_above = dt * g * d[:, mix_top:nlevels - 1] / mass[:, mix_top + 1:nlevels]
+        coeff_above = dt * d[:, mix_top:nlevels - 1] / mass[:, mix_top + 1:nlevels]
         a[:, mix_top + 1:nlevels] = -coeff_above
         b[:, mix_top + 1:nlevels] = b[:, mix_top + 1:nlevels] + coeff_above
 

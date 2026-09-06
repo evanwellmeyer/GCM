@@ -160,6 +160,10 @@ def cloud_microphysics_step(state, grid, params, cond_out, conv_out, shallow_out
     evaporation_scheme = params.get('cloud_evaporation_scheme', 'relative_humidity')
 
     def evaporate(condensate):
+        if cond_out.get('partition_owns_evaporation', False):
+            # Partial-cloud partition already evaporated at fixed enthalpy.
+            # A grid-mean RH evaporation rule would undo that partition.
+            return condensate, torch.zeros_like(condensate)
         if evaporation_scheme == 'saturation_deficit':
             return _evaporate_to_saturation(q, condensate, t, p)
         if evaporation_scheme == 'relative_humidity':
@@ -240,7 +244,10 @@ def cloud_microphysics_step(state, grid, params, cond_out, conv_out, shallow_out
     pdf_fraction = cond_out.get('condensation_cloud_fraction', None)
     if pdf_fraction is not None and bool(params.get('cloud_fraction_from_condensation', True)):
         pdf_fraction = pdf_fraction.to(device=device, dtype=dtype).clamp(min=0.0, max=1.0)
-        cloud_fraction = torch.maximum(cloud_fraction, pdf_fraction * (qc > 1.0e-8).to(dtype))
+        if cond_out.get('partition_owns_evaporation', False):
+            cloud_fraction = pdf_fraction * (qc > 1.0e-8).to(dtype)
+        else:
+            cloud_fraction = torch.maximum(cloud_fraction, pdf_fraction * (qc > 1.0e-8).to(dtype))
     if shallow_out is not None and 'cloud_fraction' in shallow_out:
         plume_fraction = shallow_out['cloud_fraction'].to(device=device, dtype=dtype)
         cloud_fraction = torch.maximum(cloud_fraction, plume_fraction).clamp(max=cf_max)

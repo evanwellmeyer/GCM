@@ -25,11 +25,17 @@ parser.add_argument('--config', type=Path)
 parser.add_argument('--output-label', default='')
 parser.add_argument('--initial-reference', type=Path)
 parser.add_argument('--levels', type=int, default=20)
+parser.add_argument('--condensation-rh-crit', type=float)
+parser.add_argument('--adjustment-ocean-depth', type=float, default=50.0)
 parser.add_argument('--cloud-ls-precip-fraction', type=float)
 parser.add_argument('--cloud-autoconv-tau', type=float)
 parser.add_argument('--cloud-autoconv-path-threshold', type=float)
 parser.add_argument('--edmf-plume-fraction', type=float)
 args = parser.parse_args()
+if args.adjustment_ocean_depth <= 0:
+    parser.error('--adjustment-ocean-depth must be positive')
+if args.condensation_rh_crit is not None and not 0.5 <= args.condensation_rh_crit <= 1.0:
+    parser.error('--condensation-rh-crit must be between 0.5 and 1.0')
 
 if args.output_label and not args.output_label.replace('_', '').isalnum():
     parser.error('--output-label may contain only letters, numbers, and underscores')
@@ -47,6 +53,8 @@ grid = make_grid(args.levels, device=device)
 params = default_params(device=device)
 config = load_run_config(args.config)
 params.update(extract_param_overrides(config))
+if args.condensation_rh_crit is not None:
+    params['condensation_rh_crit'] = args.condensation_rh_crit
 if args.cloud_ls_precip_fraction is not None:
     if not 0.0 <= args.cloud_ls_precip_fraction <= 1.0:
         parser.error('--cloud-ls-precip-fraction must be between 0 and 1')
@@ -151,7 +159,7 @@ else:
     )
 
 params['dt'] = 900.0
-params['ocean_depth'] = 50.0
+params['ocean_depth'] = args.adjustment_ocean_depth
 state['slab_ts_ref'] = state['ts'].clone()
 state['slab_energy'].zero_()
 stepsperday = round(86400 / params['dt'])
@@ -194,12 +202,15 @@ metadata = {
     ),
     'final_adjustment_days': previousadjustment + args.adjustment_days,
     'spinup_ocean_depth_m': 5.0,
-    'final_ocean_depth_m': 50.0,
+    'final_ocean_depth_m': params['ocean_depth'],
+    'condensation_rh_crit': params.get('condensation_rh_crit', 1.0),
     'final_dt_s': 900.0,
     'radiation_scheme': params['radiation_scheme'],
     'convection_scheme': params['convection_scheme'],
     'surface_albedo': params['albedo'],
     'surface_temperature_k': stats['ts_mean'][0].item(),
+    'absorbed_solar_radiation_wm2': stats['asr_mean'][0].item(),
+    'outgoing_longwave_radiation_wm2': stats['olr_mean'][0].item(),
     'toa_net_wm2': stats['toa_net_mean'][0].item(),
     'surface_total_flux_wm2': stats['surface_total_flux_mean'][0].item(),
     'precipitation_mmday': stats['precip_total_mean'][0].item() * 86400,

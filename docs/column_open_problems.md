@@ -1,4 +1,4 @@
-# ATM407 single column: open problems
+# ATM407 single column: state and open problems
 
 Written as a handoff. The model is a single-column atmospheric model (`scm/`)
 used for an undergraduate atmospheric dynamics lab
@@ -13,136 +13,239 @@ The reference state is a saved equilibrium in
 `scripts/make_atm407_reference.py`. The lab loads it so students start from a
 balanced column rather than waiting for a spin-up.
 
----
-
-## Problem 1: subgrid condensation is broken (highest priority)
-
-**Where:** `scm/condensation.py`, the `rh_crit` block.
-
-**What it is meant to do.** Condensation is currently a grid-mean saturation
-adjustment: any vapour above `qs` is removed. That forces every layer which
-keeps receiving moisture to sit at exactly 100% RH, which is what produces
-Problem 2 below. The intended replacement is a Sundqvist-type partial
-condensation: total water in a layer is treated as spread over a uniform
-subgrid distribution of half width `(1 - rh_crit) * qs`, only the part of the
-distribution above `qs` condenses, and the cloud fraction falls out of the same
-distribution. The grid mean can then sit between `rh_crit` and 1 with partial
-cloud present, as it does in observations and in CLUBB-style closures.
-
-**The maths appears right.** For a uniform distribution about the mean with
-half width `D`, letting `s = qt + D - qs`:
-
-    cloud fraction f  = s / (2D)                clamped to [0, 1]
-    condensate    qc  = s^2 / (4D)
-
-Limits check out: at `qt = qs - D` (RH = rh_crit) it gives `f = 0`, `qc = 0`;
-at `qt = qs` it gives `f = 1/2`; at `qt = qs + D` it gives `f = 1` and
-`qc = D = qt - qs`, which is exactly the saturation-adjustment answer, so the
-scheme is continuous with the branch it replaces.
-
-**What actually happens.** Any `rh_crit < 1.0` drives the column into a runaway
-cold-and-dry state. From the saved reference, 200 days on a 5 m slab:
-
-| rh_crit | ts drift | TOA    | CAPE |
-|---------|----------|--------|------|
-| 1.00    | +1.35 K  | +3.99  | 1450 |
-| 0.95    | -19.78 K | -17.67 |   51 |
-| 0.90    | -12.66 K | -14.71 |  237 |
-
-Two things to note. The drift is large, and it is **non-monotonic**: 0.95 is
-much worse than 0.90, although 0.95 is the gentler setting. That
-non-monotonicity is the strongest single clue, and it is why this looks like a
-formulation error rather than a tuning problem. Left alone over a full cold
-start the column equilibrates near **265 K**, roughly 23 K too cold, with CAPE
-around 70 and precipitation 0.54 mm/day - effectively a dead column.
-
-**Isolation.** The cooling is unambiguously this scheme and not the other
-changes made alongside it. Same start, 200 days, one change at a time:
-
-| case                     | ts drift | CAPE |
-|--------------------------|----------|------|
-| everything on            | -12.66 K |  237 |
-| no subsidence drying     | -11.25 K |  303 |
-| **no subgrid condensation** | **+1.35 K** | **1450** |
-| no downdrafts            | -12.94 K |  233 |
-
-**Hypothesis that was tested and failed.** The scheme is a *diagnostic split of
-total water*, but the code applies it as an incremental sink on vapour: it
-computes a condensate amount and subtracts it from `q` every step, so
-condensate that already exists is re-derived from the reduced vapour and
-removed again. That should drain the column without limit, which matches the
-symptom. Rewriting it to diagnose from `qt = q + qc` and drive `q` toward
-`qt - qc_target` made things **worse**, and - importantly - it also broke the
-`rh_crit = 1.0` case, which should fall straight through to the unchanged
-saturation-adjustment branch and be completely unaffected. Post-fix drift at
-`rh_crit = 1.0` was -33 K against +1.35 K before. That contradiction was not
-resolved, so the change was reverted.
-
-Also unexplained in that attempt: TOA read **+41 W/m2** while the surface
-*cooled* 33 K. Those cannot both be true of a coupled column, so something in
-the energy path is being violated, not merely mistuned.
-
-**Current state.** Reverted to the earlier formulation with `rh_crit = 1.0` in
-both configs, which reduces exactly to saturation adjustment and is stable. The
-defect is documented in a comment in `scm/condensation.py`.
-
-**Suggested approach.** Trace the condensation path directly rather than
-reasoning about it. Specifically worth checking: whether `excess` is consistent
-with the latent heating applied to `t_new` inside the 3-iteration loop; whether
-the `cloud_microphysics` branch further down double-counts, since it takes
-`condensate_total = (-full_dq).clamp(min=0)` and splits it between precipitation
-and the `qc` reservoir which the microphysics also evolves; and why the
-`rh_crit = 1.0` branch is not bit-identical to the original code.
+This document is maintained as a current picture, not an append-only log. Two
+earlier top-priority problems (subgrid condensation, moist subcloud layer) have
+been traced to code defects and are recorded under "Fixed and verified" rather
+than in the open list.
 
 ---
 
-## Problem 2: saturated slab at 685-865 hPa
+## Where the column stands right now
 
-A direct consequence of Problem 1 being unfixed. With grid-mean saturation
-adjustment, the layers between roughly 685 and 865 hPa sit at exactly 100% RH,
-about 19-24% of column mass at RH >= 95%. Observed tropical mean RH at those
-levels is 60-80%, and a deep saturated layer in a *mean* profile is not
-physical - it is what a cloudy sub-volume looks like, which is precisely what
-cloud fraction is supposed to represent.
+Every checkpoint below evaluated under the code as it currently stands, one
+physics step from rest, `atm407.toml`, 5 m slab. "As generated" is what the
+metadata recorded when the file was written.
 
-Approaches already tried against this, all of which failed for reasons now
-understood:
+| checkpoint | ts (K) | TOA now | surface now | TOA as generated | subcloud RH (910-997 hPa) |
+|---|---|---|---|---|---|
+| `atm407_equilibrium_20level` (superseded) | 285.23 | +5.77 | +2.60 | +1.36 | 1.00 / 1.00 / 0.97 / 0.96 / 1.00 |
+| `..._partial_cloud_rh100_5m_radswitch` | 289.70 | +1.02 | -0.09 | +0.97 | 1.00 / 1.00 / 0.96 / 0.95 / 1.00 |
+| `..._partial_cloud_rh095_5m_radswitch` | 287.12 | -0.03 | -0.27 | -0.23 | 0.99 / 0.95 / 0.90 / 0.91 / 0.99 |
+| `..._partial_cloud_rh095_diffusionfix_5m` | 290.48 | +0.58 | +5.56 | +0.47 | 0.84 / 0.74 / 0.67 / 0.65 / 0.75 |
 
-- **Imposed subsidence.** Dries the column but only by destroying convection:
-  at 0.5 hPa/hr CAPE falls 2026 -> 481 and precipitation 2.69 -> 1.50. The
-  drying and the convective suppression are the same process, so there is no
-  useful setting.
-- **Autoconversion thresholds.** Condensate is drained (cloud water path
-  0.67 -> 0.07) but relative humidity *rises*, because the condensate returns
-  to vapour rather than precipitating. Accelerating the sink cannot lower RH
-  while condensation pins it.
-- **Plume spectrum.** Implemented (`mf_plume_count`,
-  `mf_plume_entrainment_spread`) to spread detrainment in height. No measurable
-  effect, because `buoyancy_detrainment_weight = 0.0` means detrainment does not
-  respond to buoyancy, so every plume in the spectrum detrains identically.
-  Enabling buoyancy detrainment made the profile worse.
-- **Surface-flux stencil.** Widening it regressed the column and was reverted.
+That table is the record of how stale the pre-fix checkpoints became; it is kept
+because it is the evidence that metadata cannot be trusted across a physics fix.
+
+**The reference has been replaced.** `notebooks/data/atm407_equilibrium_20level`
+is now the `atm407_current_rh095_5m` run: `atm407.toml` under the current code,
+400 days on a 5 m slab. `condensation_rh_crit` in `atm407.toml` moved from 1.0
+to 0.95 at the same time, so the config the notebook runs and the reference it
+loads are the same column -- verified at -0.26 W/m2 TOA one step from rest
+against the -0.24 recorded. The notebook's instructor banner was rewritten to
+describe the current physics and the two remaining humidity artefacts.
+
+**The subcloud layer is fixed and the fix is the diffusion correction.** The
+`diffusionfix` checkpoint was the first to show it, and the regenerated
+mass-flux references confirm it under the production config: 945-998 hPa now
+runs 0.75-0.86 against 0.90-1.00 before, with 0.75-0.85 observed. That is
+Problem 3 from the previous version of this document, closed.
+
+**Three references regenerated under the current code**, all 400 days on a 5 m
+slab, all `atm407.toml` except for the convection closure. `bm_conservative_v2`
+is a copy of `atm407.toml` with only the closure swapped (a four-key diff:
+`convection_scheme`, `bm_conserve_enthalpy`, `rhbm`, `tau_bm`), built because
+`bm_conservative_v1` layered over `default.toml` and so ran with
+`bl_diagnose_depth` off, the uncalibrated CO2 and the untuned cloud shortwave.
+
+| | MF, rh_crit 1.0 | MF, rh_crit 0.95 | BM conservative v2 |
+|---|---|---|---|
+| ts | 286.27 K | 285.45 K | 293.60 K |
+| TOA | -1.19 | **-0.24** | +5.79 |
+| surface | -1.52 | **-0.49** | +3.07 |
+| ts slope, 50-day window | 0.0046 K/day | **0.0021** | 0.0114 |
+| mass at RH >= 95% | 0.15 | 0.11 | 0.03 |
+| CAPE | 1353 | 1275 | 1635 |
+| deep / large-scale precip | 1.87 / 0.69 | 1.72 / 0.67 | 2.86 / 0.002 |
+| column water residual | -2.5e-10 | 3.9e-11 | 4.3e-10 |
+
+**The fair fight does clear Betts-Miller of the runaway.** `v1` reached 321 K
+with CAPE 57 000 and zero deep precipitation; `v2` convects, precipitates almost
+entirely convectively, and conserves. The 321 K blowup was the missing
+`bl_diagnose_depth`.
+
+**But its humidity is prescribed, not solved, and the RH >= 95% mass fraction is
+a misleading way to see that.** Read the profiles instead:
+
+| p (hPa) | 305 | 380 | 460 | 540 | 615 | 685 | 750 | 810 | 865 | 910 | 945 | 970 | 988 | 998 |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| MF 1.0 | .05 | .20 | .37 | .47 | .50 | .50 | .57 | 1.00 | 1.00 | 1.00 | .89 | .80 | .76 | .85 |
+| MF 0.95 | .04 | .19 | .37 | .47 | .50 | .50 | .57 | 1.00 | .97 | .94 | .86 | .78 | .75 | .84 |
+| BM v2 | .70 | .70 | .70 | .70 | .70 | .70 | .70 | .70 | .70 | .73 | .96 | .93 | .87 | .97 |
+
+Betts-Miller relaxes humidity toward `rhbm * qs`, and with the whole column
+convecting the column simply *is* the reference profile: a flat 0.70 from 305 to
+910 hPa. It has no saturated slab because it cannot have one, not because
+anything was fixed. A real tropical sounding has a mid-tropospheric minimum
+around 30-40% and a dry upper troposphere; a constant 70% is not that.
+
+That also explains the warmth, and the continuation settles it. At 305 hPa
+Betts-Miller holds 70% RH where mass flux holds 5%, and upper-tropospheric water
+vapour is what sets OLR. Continued to 1000 days the column does not converge:
+
+| days | ts | TOA | ts slope |
+|---|---|---|---|
+| 0 | 289.70 K | +1.02 | -- |
+| 400 | 293.60 K | +5.79 | 0.0114 K/day |
+| 1000 | 299.98 K | +6.23 | 0.0108 K/day |
+
+The imbalance grows and the drift rate does not decay. This is a slow runaway,
+driven by the water-vapour feedback of a prescribed moist upper troposphere, and
+600 further days bought no convergence. `bm_conservative_v1`'s 321 K was the
+same trajectory accelerated by the missing `bl_diagnose_depth`, not a separate
+failure. Betts-Miller at `rhbm = 0.7` is not a candidate for this column.
+
+**Mass flux is in much better shape than this document previously recorded**,
+because the older numbers came from checkpoints generated before the cloud-flag
+and diffusion fixes. At `rh_crit = 0.95` the column is nearly converged -- TOA
+-0.24 W/m2, drifting 0.002 K/day -- and RH >= 95% mass is 0.11 against the 0.24-0.30
+recorded earlier. `equilibrium_passed` is still false only on the 0.05 K
+window-drift gate (`scm/diagnostics.py`), which is strict; TOA, surface and
+column-residual gates all pass.
+
+Two real problems remain visible in the mass-flux profiles: a saturated band at
+810-910 hPa (narrower than the 685-865 previously recorded, and at `rh_crit
+0.95` no longer pinned at 1.00), and an upper troposphere that is too dry, 4-5%
+RH at 305 hPa where observations are 20-40%.
+
+**The saturated slab is narrower but not gone.** Every checkpoint still has RH at or near 1
+between about 685 and 865 hPa, 24-30% of column mass at RH >= 95%.
 
 ---
 
-## Problem 3: subcloud layer too moist
+## Open problem 1: saturated slab at 685-865 hPa
 
-The lowest few levels sit near 90-93% RH against an observed 75-85%. This
-appeared when the boundary-layer depth was changed from a fixed sigma cutoff to
-a diagnosed one (correct in itself, see below): deeper mixing carries surface
-moisture upward and nothing removes it.
+**Status: much improved, not closed.** Under the current code the band is
+810-910 hPa rather than 685-865, and RH >= 95% column mass is 0.11 at
+`rh_crit = 0.95` against the 0.24-0.30 recorded below. Betts-Miller shows 0.03
+but only because it prescribes RH, so it is not evidence about this problem
+either way. The record below of what was tried against the slab still stands;
+the numbers in it predate the cloud-flag and diffusion fixes and should be
+re-measured before any of it is treated as a closed door.
 
-Convective downdrafts were implemented for exactly this
-(`mf_downdraft_fraction`) and they do work - the draft arrives about 5 K colder
-and 2 g/kg drier than its surroundings, and CAPE falls ~15%. But they do not
-lower RH, and on reflection they should not: a downdraft brings down air that is
-both colder and drier, so `q` and `qs(T)` fall together and the ratio is roughly
-preserved. Downdrafts fix moist static energy, not humidity. The cause of the
-moist subcloud layer is still unidentified.
+The layers between roughly 685 and 865 hPa sit at or very near 100% RH.
+Observed tropical mean RH at those levels is 60-80%. A deep saturated layer in a
+*mean* profile is not physical: it is what a cloudy sub-volume looks like, which
+is what cloud fraction is supposed to represent.
+
+Partial condensation now works (see "Fixed and verified"), and it does lower the
+slab, but only from 1.00 to about 0.95-0.98 at `rh_crit = 0.95` -- it moves the
+pin rather than removing it. So the layer is not merely being clipped by
+saturation adjustment; something is delivering moisture to it faster than
+anything removes it.
+
+The best evidence about what that something is comes from a stage trace of the
+`diffusionfix` checkpoint: at 810 hPa, dry adjustment adds 0.770 g/kg/day, deep
+convection removes 0.121, and condensation removes 0.658. Radiation cools the
+level 3.231 K/day, balanced by dry adjustment (+0.411), deep convection
+(+1.173), and condensation (+1.638). On that reading the layer is maintained by
+repeated dry-adjustment transport against radiative cooling, while deep
+convection locally dries it.
+
+**Caveat that must be resolved before acting on that trace.**
+`scripts/trace_dry_adjustment.py` calls `load_run_config(None)`, so it runs on
+`default.toml` alone. `bl_diagnose_depth` defaults to `False` in code
+(`scm/boundary_layer.py:30`), so the trace ran with the *fixed* `bl_top_sigma`
+cutoff -- precisely the configuration in which the dry adjustment is already
+known to become load-bearing at 35 K/day, and which `bl_diagnose_depth = true`
+in `atm407.toml` exists to avoid. The trace should be repeated against
+`scm/configs/atm407.toml` before its attribution is trusted. It may well hold;
+it has not yet been shown to hold for the configuration the lab runs.
+
+Approaches already tried and rejected, with the reason:
+
+- **Lowering the dry-adjustment trigger to zero.** Saturation spreads *upward*
+  to 540-750 hPa, large-scale rain rises 0.933 -> 2.592 mm/day, the surface
+  cools 0.678 K at a mean surface flux of -16.55 W/m2. Energy residual stays at
+  0.006 W/m2, so this is not a conservation leak -- lowering the trigger
+  intensifies the moisture-transport/condensation cascade. Results:
+  `outputs/column/diagnostics/rh095_dry_neutral_10day.json`.
+- **Imposed subsidence.** Dries the column only by destroying convection: at
+  0.5 hPa/hr CAPE falls 2026 -> 481 and precipitation 2.69 -> 1.50 mm/day. The
+  drying and the convective suppression are the same process, so no setting is
+  useful.
+- **Autoconversion thresholds.** Condensate drains (cloud water path 0.67 ->
+  0.07) but RH *rises*, because the condensate returns to vapour rather than
+  precipitating.
+- **Plume spectrum** (`mf_plume_count`, `mf_plume_entrainment_spread`). No
+  measurable effect: `buoyancy_detrainment_weight = 0.0` means detrainment does
+  not respond to buoyancy, so every plume detrains identically. Enabling
+  buoyancy detrainment made the profile worse.
+- **Common-interface convective heat/vapour fluxes.** Over ten days this
+  severely depleted upper-tropospheric vapour, raised large-scale rain to
+  1.714 mm/day, and developed a water residual of -2.01e-7 kg/m2/s. Removed.
+  Not a clean single-factor test (it also used a 2500 Pa CAPE step and immediate
+  condensate fallout). Record: `rh095_convective_flux_10day.json`.
+- **Widening the surface-flux stencil.** Regressed the column; reverted.
+
+The mass-flux environmental-descent expression is a live suspect: it uses
+temperature from below without the appropriate pressure-work relation. Trials
+correcting its direction, throughflow and vertical gradient did not produce a
+validated replacement -- the two-day drying persisted at 685 hPa but 750-865 hPa
+remained saturated after ten days, and the closure-response resolution test
+failed (19-23% spread against a 15% limit). Those trials were removed. The
+expression is still wrong; nobody has yet found the right form.
 
 ---
 
-## Problem 4: no model top / no stratosphere
+## Open problem 2: the Betts-Miller candidate runs away
+
+`scm/configs/bm_conservative_v1.toml` is a Frierson-style Betts-Miller with a
+repaired energy contract: reference temperature and humidity solved together to
+match column moist enthalpy, one common relaxation factor so limiting preserves
+that constraint, contiguous convective layer including the source air, no
+negative-rain solutions, all removed vapour returned as precipitation with an
+explicit zero retained-condensate return so the legacy cloud fallback cannot
+manufacture cloud water from the same rain. The approach follows
+[Frierson (2007)](https://doi.org/10.1175/JAS3935.1). It is a simplified
+adjustment scheme at prescribed reference RH 0.7, not a CESM/GFDL port.
+
+It does what it was built to do for humidity: in a 50-day continuation, RH at
+685-865 hPa settles at 72-81% and dry-adjustment transport there is zero.
+
+It does not close energetically. The saved 600-day checkpoint
+(`notebooks/data/atm407_equilibrium_20level_bm_conservative_v1_5m.npz`) is a
+runaway:
+
+| ts | TOA | surface | CAPE | deep precip | large-scale precip |
+|---|---|---|---|---|---|
+| 321.36 K | +42.4 W/m2 | +8.9 W/m2 | 57 375 J/kg | 0.00 mm/day | 0.94 mm/day |
+
+Deep precipitation is exactly zero and CAPE is 57 000 J/kg, so convection has
+switched off entirely and the column is warming with nothing to stabilise it.
+Note this supersedes the 200-day description that appeared in earlier versions
+of this document (293.6 K, TOA +11.1, still warming at +0.024 K/day) -- that run
+was continued to 600 days and the file was overwritten. The 200-day state was
+not an equilibrium, it was a waypoint on the way here.
+
+**Before this is debugged as a convection problem, fix the comparison.**
+`bm_conservative_v1.toml` layers over `default.toml`, not over `atm407.toml`, so
+the candidate ran without three settings the baseline depends on:
+
+| setting | atm407 | bm_conservative_v1 |
+|---|---|---|
+| `bl_diagnose_depth` | `true` | absent -> `False` (code default) |
+| `lw_band_co2_log_factor` | calibrated to 3.7 W/m2 per doubling | default, 2.1 W/m2 |
+| `cloud_sw_scattering_efficiency` | 0.60 | 0.05 |
+| `dry_adjustment_max_lapse_excess` | 3.0 | absent -> code default |
+
+The first of those is the significant one: the candidate re-introduced the fixed
+boundary-layer cutoff that `bl_diagnose_depth` was added to remove. A candidate
+config that is meant to change one thing should inherit `atm407.toml`, and this
+one does not. Re-run it that way before concluding anything about the closure.
+
+---
+
+## Open problem 3: no model top / no stratosphere
 
 `make_grid` uses `p_top = 0`, so the top layer extends to zero pressure and has
 unbounded geometric depth. CAM6 caps at 2.25 hPa and GFDL AM4 near 1 hPa, both
@@ -152,43 +255,43 @@ into the well-mixed trace bucket rather than given a vertical profile (a
 it, but the ATM407 config does not).
 
 Changing this alters the whole vertical grid, so it invalidates the radiation
-tuning and any saved reference. It was deliberately deferred. Note the vertical
+tuning and any saved reference. Deliberately deferred. Note the vertical
 *distribution* is fine: layer thickness peaks in the mid-troposphere in pressure
-terms, but that is simply because pressure is mass; in height the grid coarsens
-monotonically upward (42 m at the surface to ~6 km at the top), matching what
-CAM6 and AM4 do.
+terms, but pressure is mass; in height the grid coarsens monotonically upward
+(42 m at the surface to ~6 km at the top), matching CAM6 and AM4.
 
 ---
 
-## Problem 5: cloud radiative effects are too weak
+## Open problem 4: cloud radiative effects are too weak
 
-Currently disabled in the baseline (`[radiation.clouds] enabled = false`), with
+Disabled in the baseline (`[radiation.clouds] enabled = false`), with
 `albedo = 0.32` carrying the whole planetary albedo. The machinery works and is
-tuned: setting `enabled = true` together with `albedo = 0.28` gives a net cloud
-radiative effect near -8 W/m2, correctly negative for a low-cloud regime.
+tuned: `enabled = true` with `albedo = 0.28` gives a net cloud radiative effect
+near -8 W/m2, correctly negative for a low-cloud regime.
 
 It is off because the cloud field is not good enough to rest an equilibrium on.
-Cloud fraction comes out patchy and small (0.02-0.19 against 0.3-0.6 observed),
-and because every cloud in this column is low and warm the longwave effect is
-only about +2.5 W/m2 against +26 observed - there are no high cold anvils.
-Toggling clouds is a reasonable lab experiment; building the reference on them
-is not. Note cloud fraction is also entangled with Problem 1, since the intended
-subgrid scheme is what would make fraction and condensation mutually consistent.
+Cloud fraction is patchy and small (0.02-0.19 against 0.3-0.6 observed), and
+because every cloud in this column is low and warm the longwave effect is only
+about +2.5 W/m2 against +26 observed -- there are no high cold anvils. Toggling
+clouds is a good lab experiment; building the reference on them is not.
+
+Until very recently this flag did not actually work; see "Fixed and verified".
 
 ---
 
-## Problem 6: missing radiation physics
+## Open problem 5: missing radiation physics
 
 Checked against RRTMG as used by CESM2 and GFDL:
 
 - **No water-vapour continuum.** Longwave absorption is `kappa * q * dp/g`,
   strictly linear in humidity. The MT_CKD continuum's self-broadened part scales
-  with vapour amount times vapour pressure - roughly quadratic - and dominates
-  the 8-12 micron window in moist air. A parameterisation was added
+  with vapour amount times vapour pressure -- roughly quadratic -- and dominates
+  the 8-12 micron window in moist air. A parameterisation exists
   (`lw_band_wv_continuum`, default zero, quadratic in `q` and pressure
-  dependent). It was tested against Problem 1 and does **not** fix the cold
-  drift at any strength up to 150, so it should not be enabled on that
-  argument; it remains a genuine physics gap on its own merits.
+  dependent). It was tested against the cold drift that was then blamed on
+  condensation and does not affect it at any strength up to 150; that drift has
+  since been traced elsewhere, so the continuum has not been evaluated against
+  anything it might genuinely change. It remains a real physics gap.
 - **No pressure broadening.** Line absorption has no p-dependence beyond layer
   mass, overweighting upper-level absorption.
 - **No condensate sedimentation.** Condensate is removed in place and never
@@ -198,52 +301,170 @@ Checked against RRTMG as used by CESM2 and GFDL:
 
 ---
 
-## What was fixed and verified this session
+## Fixed and verified
 
-For context, so these are not re-litigated:
+Do not re-litigate these.
 
-- **Dry convective adjustment** (`scm/dry_adjustment.py`, new). The reference
-  previously contained a layer at 910/945 hPa with a lapse rate of 38 K/km,
-  about four times dry adiabatic, with theta_v decreasing 9 K upward. Boundary
-  layer mixing stopped at a fixed `bl_top_sigma` and the convection schemes drew
-  from their own prescribed source layers, so that interface had no flux
-  coupling at all and nothing could remove it. The adjustment conserves column
-  enthalpy exactly and water to float32 roundoff, and its trigger is a lapse
-  rate excess in K/km so it carries across vertical grids.
-- **Well-mixed gas optical depth** (`scm/radiation_schemes/multiband.py`). CO2
-  and trace gases were divided by `nlevels` rather than weighted by layer mass,
-  so the 5 hPa bottom layer received ten times its share and the radiative
-  answer depended on how the levels were cut. Column totals are preserved, so
-  the tuned band coefficients keep their meaning. Grid-shape sensitivity fell
-  from 1.73 to 0.79 W/m2. Covered by `scm/test_wellmixed_gas_weighting.py`,
-  which fails on the old code.
-- **Compensating-subsidence drying** (`scm/convection_mf.py`). The scheme
-  applied subsidence *warming* to temperature with no matching moisture term.
-  In Zhang-McFarlane both exist and are driven by the same mass flux. Adding it
-  dried the mid-troposphere from a flat 70% to 36-50%, into the observed range.
-- **Diagnosed boundary-layer depth.** `bl_diagnose_depth = true` replaces the
-  fixed `bl_top_sigma` cutoff with a bulk Richardson diagnosis, as KPP,
-  Mellor-Yamada and EDMF all do. This took dry-adjustment activity from 35 K/day
-  permanent to exactly zero - the adjustment is now a backstop rather than
-  load-bearing. It also incidentally fixed shallow convection, which had been
-  entirely suppressed by an RH trigger the subcloud layer never reached.
-- **CO2 forcing calibration.** A doubling forced 2.12 W/m2; now 3.708. The term
-  multiplies `log(co2/co2_ref)` and the control runs at `co2 = co2_ref`, so this
-  provably cannot shift the equilibrium.
-- **Config loader silently dropped keys.** Any `[mass_flux]` key not explicitly
-  listed in `scm/configuration.py` was discarded with no warning, so several
-  settings had no effect when written into a config even though they worked when
-  passed directly. Downdraft, rain-evaporation, subsidence-drying and plume
-  parameters are now mapped.
+### Cloud radiative effects were on when the config said they were off
+
+`scm/cloud_optics.py`. `clouds_enabled()` returned true whenever cloud
+microphysics was active, and `cloud_optical_properties()` selected an optics
+scheme from `cloud_optics_scheme = "auto"` without consulting the radiation
+flag. `atm407.toml` sets `[radiation.clouds] enabled = false`, which resolves to
+`cloud_radiative_effects_enabled = False`, and that was ignored. The explicit
+flag now takes precedence in both places.
+
+The consequence is larger than a flag: **every ATM407 run described as clear-sky
+was not.** Clouds were reflecting and absorbing while `albedo = 0.32`, the value
+chosen to carry the whole planetary albedo *in their absence*, was applied on
+top. That double-counting is why the baseline sat at 285 K. The same config with
+the flag honoured settles at 289.7 K with TOA +1.0.
+
+It is also the whole of the former "Problem 1". Subgrid condensation was blamed
+for driving the column to 223-265 K, non-monotonically in `rh_crit`, and was
+disabled on that evidence. Those runs had unintended cloud shortwave absorption.
+With the flag honoured:
+
+| rh_crit | ts | TOA | CAPE | before the fix |
+|---|---|---|---|---|
+| 1.00 | 289.70 | +0.97 | 2171 | 285.23 |
+| 0.95 | 287.12 | -0.23 | 1410 | 223.69 |
+| 0.90 | 285.41 | +4.38 | 1587 | 223.48 |
+
+There is no collapse and no non-monotonicity. Partial condensation is a working
+scheme, not a broken one, and `condensation_rh_crit` is a usable knob again. The
+default is still 1.0 only because no reference has been promoted at 0.95 yet.
+
+### Boundary-layer diffusion was too strong by a factor of g
+
+`scm/boundary_layer.py`. The Richardson and constant-K solvers carried an extra
+factor of gravity. Interface conductance is already `rho K / dz =
+K g rho^2 / dp_interface`, so the implicit exchange coefficient must be
+`dt * conductance / (dp/g)` and not another `g` larger. Mixing was roughly 9.8x
+too strong.
+
+This closes the former "Problem 3", the moist subcloud layer. A ten-day
+continuation with only this correction changes RH at 685/750 hPa from 99.7/97.1%
+to 70.8/68.2% and the lowest level from 98.4% to 83.5%. In the settled
+`diffusionfix` checkpoint the subcloud layer runs 65-84%, against 90-93% before
+and 75-85% observed.
+
+Convective downdrafts had been implemented for this problem
+(`mf_downdraft_fraction`) and do work -- the draft arrives about 5 K colder and
+2 g/kg drier and CAPE falls ~15% -- but they were never the fix: a downdraft
+brings down air that is colder *and* drier, so `q` and `qs(T)` fall together and
+RH is roughly preserved. Downdrafts act on moist static energy, not humidity.
+
+Covered by an independent two-layer backward-Euler exchange test against the
+physical mixing rate, and a moist-transport test for column enthalpy and
+total-water conservation.
+
+### Parcel ascent mixed a moist lapse rate with a latent increment
+
+The ascent used by both mass-flux convection and dilute CAPE applied a moist
+lapse rate *and* an additional latent-temperature increment from condensation,
+double-counting the phase change. It now applies exact dry Poisson pressure work
+followed by an implicit saturation solve conserving `cp*T + Lv*q`. This is a
+finite-step pressure-work/saturation split, not a new closure. Analytical
+dry-ascent, small-step moist-lapse, saturation and enthalpy tests pass.
+
+The CAPE default internal pressure interval drops from 2500 to 1000 Pa: the
+10/20/40-level spread falls from 7.16% to 2.60% after the correction. That is a
+grid comparison, not a proof of pressure-step convergence.
+
+### Partial condensation solves at fixed moist enthalpy
+
+`scm/condensation.py`. Total water is partitioned at fixed moist enthalpy and a
+signed condensate increment is passed to microphysics; the path owns
+evaporation, so the separate grid-mean evaporation rule is bypassed for it.
+Isolated-layer tests cover repeated calls, pre-existing condensate, evaporation
+and precipitation.
+
+### Dry convective adjustment
+
+`scm/dry_adjustment.py`, new. The reference previously carried a layer at
+910/945 hPa with a lapse rate of 38 K/km, about four times dry adiabatic, theta_v
+decreasing 9 K upward. Boundary-layer mixing stopped at a fixed `bl_top_sigma`
+and the convection schemes drew from their own prescribed source layers, so that
+interface had no flux coupling and nothing could remove it. The adjustment
+conserves column enthalpy exactly and water to float32 roundoff, and its trigger
+is a lapse-rate excess in K/km so it carries across vertical grids.
+
+### Well-mixed gas optical depth
+
+`scm/radiation_schemes/multiband.py`. CO2 and trace gases were divided by
+`nlevels` rather than weighted by layer mass, so the 5 hPa bottom layer received
+ten times its share and the radiative answer depended on how the levels were
+cut. Column totals are preserved, so the tuned band coefficients keep their
+meaning. Grid-shape sensitivity fell from 1.73 to 0.79 W/m2. Covered by
+`scm/test_wellmixed_gas_weighting.py`, which fails on the old code.
+
+### Compensating-subsidence drying
+
+`scm/convection_mf.py`. The scheme applied subsidence *warming* with no matching
+moisture term. In Zhang-McFarlane both exist and are driven by the same mass
+flux. Adding it dried the mid-troposphere from a flat 70% to 36-50%.
+
+### Diagnosed boundary-layer depth
+
+`bl_diagnose_depth = true` replaces the fixed `bl_top_sigma` cutoff with a bulk
+Richardson diagnosis, as KPP, Mellor-Yamada and EDMF all do. Dry-adjustment
+activity went from 35 K/day permanent to zero -- the adjustment became a backstop
+rather than load-bearing. It also incidentally fixed shallow convection, which
+had been entirely suppressed by an RH trigger the subcloud layer never reached.
+**This is a code default of `False`**, so any config that does not inherit
+`atm407.toml` silently reverts to the broken behaviour.
+
+### CO2 forcing calibration
+
+A doubling forced 2.12 W/m2; now 3.708. The term multiplies `log(co2/co2_ref)`
+and the control runs at `co2 = co2_ref`, so this provably cannot shift the
+equilibrium, only the forcing.
+
+### Config loader silently dropped keys
+
+Any `[mass_flux]` key not explicitly listed in `scm/configuration.py` was
+discarded without warning, so settings that worked when passed directly had no
+effect when written into a config. Downdraft, rain-evaporation,
+subsidence-drying and plume parameters are now mapped.
+
+### Energy budget accounting
+
+The budget reporter was omitting dry convective adjustment; it is now included.
+A frequent-sampling budget gives TOA +0.482 W/m2, surface -0.052, primary
+residual -0.00833, MSE residual +0.00767. The directly calculated
+potential-energy tendency is -0.01569 W/m2, and adding it to the MSE-minus-primary
+difference leaves 0.00031 W/m2. The earlier 1.45 W/m2 sampled MSE figure was a
+sampling artefact, not a sustained energy leak. Results:
+`rh095_diffusionfix_settled_budget_10day.json`. Zero-filled optional clear-sky
+and TKE entries in those reports are unavailable diagnostics, not measurements.
+
+---
 
 ## Practical notes
 
-- Test suite: `python -m pytest scm/ benchmarks/ -q`, 89 passing.
-- Reference regeneration takes 15-25 minutes for 400 adjustment days; a 50 m
-  slab needs of order 1000+ days to converge, a 5 m slab roughly a tenth of
-  that, which is the fast way to compare configurations.
-- Beware judging a configuration from a short run: several wrong conclusions in
-  this session came from comparing columns that were still in transit. Check
-  that TOA imbalance is actually shrinking before drawing conclusions.
-- `matplotlib` is not installed in the `gcm` conda environment, so notebook
-  plotting cells cannot be executed locally without stubbing.
+- Test suite: `python -m pytest scm/ benchmarks/ -q`, 118 passing (~8 min).
+  The `gcm` conda
+  environment has torch and pytest; the base environment has neither. Use
+  `~/miniconda3/envs/gcm/bin/python`.
+- Reference regeneration on a 5 m slab runs about 600 model days in 9 minutes.
+  A 50 m slab needs of order 1000+ days to converge, a 5 m slab roughly a tenth
+  of that, which is the fast way to compare configurations. Promote to 50 m only
+  at the end.
+- Beware judging a configuration from a short run. Several wrong conclusions in
+  this project came from comparing columns still in transit. Check that TOA
+  imbalance is actually shrinking before drawing conclusions -- and check the
+  surface flux separately, since a column can look balanced at the top while the
+  slab is still gaining.
+- **Check a checkpoint against the current code before trusting its metadata.**
+  Metadata records the state at generation. After the cloud-radiation and
+  diffusion fixes, several saved "equilibria" are no longer equilibria. One
+  physics step from rest, comparing TOA and surface flux against the recorded
+  values, takes seconds and is worth doing every time.
+- New candidate configs should inherit `atm407.toml`, not `default.toml`. The
+  loader merges a user config over `default.toml` only
+  (`scm/configuration.py:26`), so anything layered directly on the default
+  silently drops `bl_diagnose_depth`, the CO2 calibration and the cloud
+  shortwave tuning.
+- `matplotlib` is not installed in the `gcm` environment, so notebook plotting
+  cells cannot be executed locally without stubbing.

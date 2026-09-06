@@ -29,6 +29,8 @@ def available_cloud_optics_schemes():
 
 
 def clouds_enabled(params):
+    if 'cloud_radiative_effects_enabled' in params:
+        return bool(params['cloud_radiative_effects_enabled'])
     mode = params.get("radiation_mode", "semi_gray")
     return bool(params.get("cloud_microphysics_enabled", False)) or bool(
         params.get("cloud_radiative_effects_enabled", False)
@@ -150,7 +152,11 @@ def _prescribed_cloud_optics(grid, params, batch, dtype, gaussian=False):
 def cloud_optical_properties(state, grid, params, batch, dtype, force_clear_sky=False):
     """Return cloud SW reflectivity, SW absorption tau layer, and LW tau layer."""
 
-    if force_clear_sky:
+    explicitly_disabled = (
+        'cloud_radiative_effects_enabled' in params
+        and not bool(params['cloud_radiative_effects_enabled'])
+    )
+    if force_clear_sky or explicitly_disabled:
         scheme = "clear_sky"
     else:
         scheme = str(params.get("cloud_optics_scheme", "auto"))

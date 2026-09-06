@@ -20,7 +20,11 @@ from scm.thermo import geopotential
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--reference', type=Path, required=True)
-parser.add_argument('--config', type=Path, required=True)
+parser.add_argument('--config', type=Path)
+parser.add_argument('--ocean-depth', type=float, default=50.0)
+parser.add_argument('--condensation-rh-crit', type=float)
+parser.add_argument('--dry-lapse-excess', type=float)
+parser.add_argument('--conservative-adjustment', action='store_true')
 parser.add_argument('--days', type=int, default=10)
 parser.add_argument('--output', type=Path)
 parser.add_argument('--production-gates', action='store_true')
@@ -38,12 +42,20 @@ params.update({
     'ps0': 100000.0,
     'solar_constant': 1360.0,
     'zenith_factor': 0.25,
-    'ocean_depth': 50.0,
+    'ocean_depth': args.ocean_depth,
     'wind_speed': 5.0,
-    'convection_scheme': 'mass_flux',
+    'convection_scheme': config.get('params', {}).get('convection_scheme') or {
+        'mf': 'mass_flux', 'bm': 'betts_miller',
+    }[config['run']['scheme']],
     'use_slab_ocean': True,
     'profile_diagnostics': True,
 })
+if args.condensation_rh_crit is not None:
+    params['condensation_rh_crit'] = args.condensation_rh_crit
+if args.dry_lapse_excess is not None:
+    params['dry_adjustment_max_lapse_excess'] = args.dry_lapse_excess
+if args.conservative_adjustment:
+    params.update(convection_scheme='betts_miller', bm_conserve_enthalpy=True)
 
 state = initial_state(1, grid, params, device=device)
 for name in ('t', 'q', 'qc', 'cloud_fraction'):
@@ -57,6 +69,7 @@ state['ps'][0] = float(reference['ps'])
 state['slab_ts_ref'] = state['ts'].clone()
 state['slab_energy'].zero_()
 update_derived(state, grid)
+initialpotential = torch.sum(geopotential(state['t'], state['q'], state['p'], grid).double() * state['dp'].double(), dim=1)
 
 stepsperday = round(86400 / params['dt'])
 state, history = run(
@@ -72,6 +85,7 @@ processes = [
     'radiation',
     'surface',
     'boundary_layer',
+    'dry_adjustment',
     'shallow',
     'deep',
     'condensation',
@@ -95,9 +109,14 @@ for process in processes:
 
 pressure = state['p'][0] / 100
 rh = relative_humidity(state['q'], state['t'], state['p'])[0] * 100
+humidityhistory = torch.stack([
+    relative_humidity(item['q'], item['t'], state['p'])[0] * 100
+    for item in history
+])
 mass = state['dp'][0] / g
 rh95mass = torch.sum((rh >= 95.0) * mass) / torch.sum(mass)
 height = geopotential(state['t'], state['q'], state['p'], grid)
+potentialchange = (torch.sum(height.double() * state['dp'].double(), dim=1) - initialpotential) / (args.days * 86400)
 if 'tke' in state:
     mixinglength = tke_mixing_length(height, params)
     diffusivity, _ = tke_diffusivity(
@@ -116,9 +135,27 @@ result = {
     'reference': str(args.reference),
     'configuration_label': config['run']['label'],
     'averaging_days': args.days,
+    'ocean_depth_m': args.ocean_depth,
+    'condensation_rh_crit': params.get('condensation_rh_crit', 1.0),
+    'dry_lapse_excess_kkm': params.get('dry_adjustment_max_lapse_excess', 3.0),
+    'cape_pressure_step_pa': params.get('mf_cape_max_pressure_step', 1000.0),
+    'convection_scheme': params['convection_scheme'],
+    'conservative_adjustment': params.get('bm_conserve_enthalpy', False),
+    'potential_energy_tendency_wm2': potentialchange.item(),
+    'mse_reconciliation_wm2': (meanvalue('column_mse_residual') - meanvalue('column_energy_residual')).item() + potentialchange.item(),
     'pressure_hpa': pressure.tolist(),
     'temperature_k': state['t'][0].tolist(),
     'relative_humidity_percent': rh.tolist(),
+    'mean_relative_humidity_percent': humidityhistory.mean(dim=0).tolist(),
+    'daily_means': [
+        {
+            'day': day + 1,
+            'rh_percent': humidityhistory[day * stepsperday:(day + 1) * stepsperday].mean(dim=0).tolist(),
+            **{name: torch.stack([item[name][0] for item in history[day * stepsperday:(day + 1) * stepsperday]]).mean().item()
+               for name in ('ts', 'toa_net', 'surface_total_flux', 'cape', 'precip_conv', 'precip_ls', 'column_water_residual', 'column_energy_residual')},
+        }
+        for day in range(args.days)
+    ],
     'cloud_condensate_gkg': (state['qc'][0] * 1000).tolist(),
     'tke_m2s2': state['tke'][0].tolist(),
     'diffusivity_m2s': diffusivity[0].tolist(),
@@ -221,7 +258,7 @@ print(json.dumps(result['summary'], indent=2))
 print('column vapor tendencies (kg m-2 day-1)')
 for process in processes:
     print(f'{process:16s} {columnmoisture[process]:9.4f}')
-print('pressure  rh    surface      bl shallow    deep condensation cloud')
+print('pressure  rh ' + ' '.join(processes[1:]))
 for level in range(grid['nlevels']):
     values = ' '.join(f'{moisture[process][level].item():8.3f}' for process in processes[1:])
     print(f'{pressure[level].item():7.1f} {rh[level].item():5.1f} {values}')

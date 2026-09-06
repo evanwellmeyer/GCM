@@ -1,0 +1,11 @@
+# Candidate convection closure; validate its slab equilibrium before promotion.
+[run]
+label = "bm_conservative_v1"
+scheme = "bm"
+
+[params]
+convection_scheme = "betts_miller"
+bm_conserve_enthalpy = true
+condensation_rh_crit = 0.95
+rhbm = 0.7
+tau_bm = 7200.0

@@ -59,6 +59,23 @@ def _conserve_mse(dt_tend, dq_tend, dp, correction_region=None):
     return corrected
 
 
+def parcel_ascent(temperature, vapor, lower, upper):
+    """Dry pressure work followed by enthalpy-conserving saturation adjustment."""
+    dry = temperature * (upper / lower).clamp(min=1.0e-8) ** (Rd / cp)
+    # Solve cp*T + Lv*q = cp*Tdry + Lv*qin with q <= qsat(T,p).
+    low = torch.zeros_like(vapor)
+    high = vapor.clamp(min=0.0)
+    for iteration in range(28):
+        condensed = (low + high) / 2
+        warmed = dry + (Lv / cp) * condensed
+        excess = vapor - condensed - saturation_specific_humidity(warmed, upper)
+        low = torch.where(excess > 0, condensed, low)
+        high = torch.where(excess > 0, high, condensed)
+    condensed = (low + high) / 2
+    condensed = torch.where(vapor > saturation_specific_humidity(dry, upper), condensed, torch.zeros_like(condensed))
+    return dry + (Lv / cp) * condensed, vapor - condensed, condensed
+
+
 def dilute_cape(
     t,
     q,
@@ -66,7 +83,7 @@ def dilute_cape(
     entrainment,
     condensate_retention=0.0,
     condensate_fallout=1.0,
-    max_pressure_step=2500.0,
+    max_pressure_step=1000.0,
 ):
     """CAPE computed with an entraining parcel. more realistic than
     undilute CAPE because it accounts for how environmental humidity
@@ -109,24 +126,9 @@ def dilute_cape(
             q_parcel = (1.0 - mix) * q_parcel + mix * q_env
             qc_parcel = (1.0 - mix) * qc_parcel
 
-            qs_p = saturation_specific_humidity(t_parcel, p_target)
-            saturated = (q_parcel >= qs_p).float()
-            gamma_dry = Rd * t_parcel / (cp * p_target)
-            num = (Rd * t_parcel / (cp * p_target)) * (
-                1.0 + Lv * qs_p / (Rd * t_parcel)
-            )
-            den = 1.0 + Lv * Lv * qs_p / (cp * Rv * t_parcel * t_parcel)
-            gamma_moist = num / den
-            gamma = (1.0 - saturated) * gamma_dry + saturated * gamma_moist
-
             p_previous = p_parcel
-            t_parcel = t_parcel + gamma * (p_target - p_parcel)
+            t_parcel, q_parcel, excess = parcel_ascent(t_parcel, q_parcel, p_parcel, p_target)
             p_parcel = p_target
-
-            qs_new = saturation_specific_humidity(t_parcel, p_target)
-            excess = torch.clamp(q_parcel - qs_new, min=0.0)
-            q_parcel = q_parcel - excess
-            t_parcel = t_parcel + Lv / cp * excess
             qc_parcel = fallout_keep * (qc_parcel + cond_retain * excess)
 
             tv_parcel = loaded_virtual_temperature(t_parcel, q_parcel, qc_parcel)
@@ -179,7 +181,7 @@ def mass_flux_convection(state, grid, params):
         t, q, p, entrainment,
         condensate_retention=cond_retain,
         condensate_fallout=cond_fallout,
-        max_pressure_step=params.get('mf_cape_max_pressure_step', 2500.0),
+        max_pressure_step=params.get('mf_cape_max_pressure_step', 1000.0),
     )
     cape_excess = torch.clamp(cape_val - cape_threshold, min=0.0)
 
@@ -263,23 +265,7 @@ def mass_flux_convection(state, grid, params):
             # splitting a layer does not change cumulative entrainment.
             mf_profile = mf_profile * torch.exp((entrainment * dp_step).clamp(max=5.0))
 
-            # adiabatic cooling
-            qs_p = saturation_specific_humidity(t_plume, p_here)
-            saturated = (q_plume >= qs_p).float()
-            gamma_dry = Rd * t_plume / (cp * p_here)
-            num = (Rd * t_plume / (cp * p_here)) * (1.0 + Lv * qs_p / (Rd * t_plume))
-            den = 1.0 + Lv * Lv * qs_p / (cp * Rv * t_plume * t_plume)
-            gamma_moist = num / den
-            gamma = (1.0 - saturated) * gamma_dry + saturated * gamma_moist
-
-            dp_rise = p_here - p[:, k + 1]
-            t_plume = t_plume + gamma * dp_rise
-
-            # condense
-            qs_p = saturation_specific_humidity(t_plume, p_here)
-            condensate = torch.clamp(q_plume - qs_p, min=0.0)
-            q_plume = q_plume - condensate
-            t_plume = t_plume + Lv / cp * condensate
+            t_plume, q_plume, condensate = parcel_ascent(t_plume, q_plume, p[:, k + 1], p_here)
             qc_plume = fallout_keep * (qc_plume + cond_retain * condensate)
 
             # buoyancy
@@ -456,7 +442,7 @@ def mass_flux_convection(state, grid, params):
             entrainment,
             condensate_retention=cond_retain,
             condensate_fallout=cond_fallout,
-            max_pressure_step=params.get('mf_cape_max_pressure_step', 2500.0),
+            max_pressure_step=params.get('mf_cape_max_pressure_step', 1000.0),
         )
         cape_response = (cape_val - trial_cape) / trial_mass_flux
         minimum_response = _column_param(

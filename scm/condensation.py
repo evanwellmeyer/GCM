@@ -33,6 +33,10 @@ def condensation(state, grid, params):
     # stays there, which is what this column was doing between 685 and 865 hPa.
     rh_crit = float(params.get('condensation_rh_crit', 1.0))
     rh_crit = min(max(rh_crit, 0.5), 1.0)
+    if rh_crit < 1.0:
+        if not cloud_microphysics:
+            raise ValueError('partial condensation requires prognostic cloud microphysics')
+        return partial_condensation(state, params, rh_crit)
 
     qs = saturation_specific_humidity(t, p)
 
@@ -49,19 +53,8 @@ def condensation(state, grid, params):
     # what lets the grid mean settle somewhere between rh_crit and 1 instead
     # of being pinned to either. The cloud fraction below comes out of the
     # same distribution, so the two can no longer disagree.
-    # NOTE: this is a partial-condensation scheme and it is NOT correct yet.
-    # The intent is a diagnostic split of total water into vapour and
-    # condensate over a uniform subgrid distribution, which is what lets a
-    # layer hold partial cloud while its grid mean stays below saturation.
-    # As written it is applied as an incremental sink on vapour instead, and
-    # any setting below 1.0 drives the column into a runaway cold-and-dry
-    # state (about -13 K over 200 days at 0.90, and non-monotonic in rh_crit,
-    # which is the sign that the formulation rather than the tuning is wrong).
-    # Rewriting it to work from total water was tried and made matters worse,
-    # so the cause is not yet understood. rh_crit is therefore left at 1.0,
-    # where this reduces exactly to a saturation adjustment and the column is
-    # stable. Fixing it properly would remove the saturated slab between 685
-    # and 865 hPa that the saturation adjustment produces.
+    # This legacy calculation is retained unchanged for rh_crit == 1.
+    # Partial-cloud settings return through partial_condensation above.
     cloud_fraction_diag = torch.zeros_like(q)
     for _ in range(3):
         qs_current = saturation_specific_humidity(t_new, p)
@@ -124,4 +117,55 @@ def condensation(state, grid, params):
         'dq': dq_tend,
         'precip': precip,
         'cloud_source': cloud_source,
+    }
+
+
+def partial_condensation(state, params, critical):
+    """Partition total water at fixed moist enthalpy, then remove new rain.
+
+    cloud_source is a signed reservoir increment, not a new condensate amount.
+    Negative increments represent evaporation and carry matching latent cooling.
+    """
+    vapor = state['q']
+    liquid = state.get('qc', torch.zeros_like(vapor))
+    water = vapor + liquid
+    temperature = state['t']
+
+    def distribution(condensate):
+        warmed = temperature + Lv / cp * (condensate - liquid)
+        saturation = saturation_specific_humidity(warmed, state['p'])
+        width = ((1.0 - critical) * saturation).clamp(min=1.0e-12)
+        above = water + width - saturation
+        fraction = (above / (2.0 * width)).clamp(0.0, 1.0)
+        target = torch.where(
+            above >= 2.0 * width,
+            water - saturation,
+            above.clamp(min=0.0).square() / (4.0 * width),
+        ).clamp(min=0.0)
+        return target, fraction
+
+    lower = torch.zeros_like(water)
+    upper = water.clone()
+    for _ in range(48):
+        middle = 0.5 * (lower + upper)
+        target, _ = distribution(middle)
+        upper = torch.where(middle > target, middle, upper)
+        lower = torch.where(middle > target, lower, middle)
+    condensate = 0.5 * (lower + upper)
+    _, fraction = distribution(condensate)
+    change = condensate - liquid
+    efficiency = torch.as_tensor(
+        params.get('cloud_ls_precip_fraction', 0.8),
+        device=vapor.device, dtype=vapor.dtype,
+    )
+    if efficiency.ndim == 1:
+        efficiency = efficiency.unsqueeze(1)
+    rain = efficiency.clamp(0.0, 1.0) * change.clamp(min=0.0)
+    return {
+        'dt': Lv / cp * change,
+        'dq': -change,
+        'cloud_source': change - rain,
+        'precip': torch.sum(rain * state['dp'] / g, dim=1),
+        'condensation_cloud_fraction': fraction,
+        'partition_owns_evaporation': True,
     }
