@@ -13,6 +13,15 @@ The reference state is a saved equilibrium in
 `scripts/make_atm407_reference.py`. The lab loads it so students start from a
 balanced column rather than waiting for a spin-up.
 
+The lab is delivered as two notebooks. `01_meet_the_column.ipynb` introduces
+each parameterization in isolation -- one section per scheme, each calling
+`scheme(state, grid, params)` against the saved reference and plotting what it
+does on its own. `02_experiments_atm407.ipynb` puts them together and runs the
+column forward. The split exists because the schemes are separable in the code
+and the physics is easier to teach that way; it also means the remaining
+humidity artefacts are shown to students in section 10 of the first notebook
+rather than hidden.
+
 This document is maintained as a current picture, not an append-only log. Two
 earlier top-priority problems (subgrid condensation, moist subcloud layer) have
 been traced to code defects and are recorded under "Fixed and verified" rather
@@ -443,14 +452,18 @@ and TKE entries in those reports are unavailable diagnostics, not measurements.
 
 ## Practical notes
 
-- Test suite: `python -m pytest scm/ benchmarks/ -q`, 118 passing (~8 min).
+- Test suite: `python -m pytest scm/ benchmarks/ -q`, 118 passing (~7.5 min).
   The `gcm` conda
   environment has torch and pytest; the base environment has neither. Use
   `~/miniconda3/envs/gcm/bin/python`.
-- Reference regeneration on a 5 m slab runs about 600 model days in 9 minutes.
-  A 50 m slab needs of order 1000+ days to converge, a 5 m slab roughly a tenth
-  of that, which is the fast way to compare configurations. Promote to 50 m only
-  at the end.
+- Reference regeneration on a 5 m slab: mass flux runs 400 model days in about
+  75 minutes, Betts-Miller the same 400 days in 18. Mass flux is the expensive
+  one because the implicit saturation solve in the parcel ascent is called twice
+  per step by its closure. Budget accordingly -- the old "600 days in 9 minutes"
+  note in earlier versions of this document was a Betts-Miller timing and does
+  not apply to the production configuration. A 50 m slab needs of order 1000+
+  days to converge, a 5 m slab roughly a tenth of that, which is the fast way to
+  compare configurations. Promote to 50 m only at the end.
 - Beware judging a configuration from a short run. Several wrong conclusions in
   this project came from comparing columns still in transit. Check that TOA
   imbalance is actually shrinking before drawing conclusions -- and check the
@@ -466,5 +479,7 @@ and TKE entries in those reports are unavailable diagnostics, not measurements.
   (`scm/configuration.py:26`), so anything layered directly on the default
   silently drops `bl_diagnose_depth`, the CO2 calibration and the cloud
   shortwave tuning.
-- `matplotlib` is not installed in the `gcm` environment, so notebook plotting
-  cells cannot be executed locally without stubbing.
+- `matplotlib` is installed in the `gcm` environment (conda-forge
+  `matplotlib-base`), so notebook cells can be executed and verified locally.
+  There is no `pip` in that environment; use
+  `~/miniconda3/bin/conda install -n gcm -c conda-forge <package>`.
