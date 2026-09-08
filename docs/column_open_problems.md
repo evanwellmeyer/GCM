@@ -1,5 +1,9 @@
 # ATM407 single column: state and open problems
 
+> September 7 audit: start with [the reconciled status and recovery plan](column_audit_2026-09-07.md). The notes below are preserved development history, not a consistent current specification. In particular, their claims of grid convergence, failed shared partitioning, completed UW cloud-fraction handoff, and a precipitation-efficiency shortfall are not established by the current evidence. Do not promote a configuration on those claims.
+
+> Accepted implementation: the conservative `atm407_flux_v1` settings are now the ATM407 and repository defaults. After 500 days with a 5 m slab, correctly sampled 50-day means pass every gate: TOA +0.93 W/m2, surface +0.41 W/m2, drift 0.038 K, CAPE 777 J/kg, no RH95 layer, and deep rain exceeding large-scale rain. The canonical checkpoint and both student notebooks now use it. The prior surface/MSE failures were diagnostic aliasing and omitted hydrostatic pressure work, not physical nonclosure. See the linked audit for verification and remaining radiation limitations.
+
 Written as a handoff. The model is a single-column atmospheric model (`scm/`)
 used for an undergraduate atmospheric dynamics lab
 (`notebooks/02_experiments_atm407.ipynb`). Physics is mass-flux deep convection
@@ -20,16 +24,854 @@ does on its own. `02_experiments_atm407.ipynb` puts them together and runs the
 column forward. The split exists because the schemes are separable in the code
 and the physics is easier to teach that way; it also means the remaining
 humidity artefacts are shown to students in section 10 of the first notebook
-rather than hidden.
+rather than hidden. Notebook 2 is titled "the column at work"; the earlier
+forecast-office framing ("can convection keep up", the tournament, the medal
+ratings) was removed at the user's request, though the predict-before-you-run
+device was kept.
 
-This document is maintained as a current picture, not an append-only log. Two
+The following historical introduction described this as a current picture, not an append-only log. Two
 earlier top-priority problems (subgrid condensation, moist subcloud layer) have
 been traced to code defects and are recorded under "Fixed and verified" rather
 than in the open list.
 
+
 ---
 
+# Earlier handoff: superseded where contradicted by the linked audit
+
+## The one thing to know
+
+**Dry adjustment is not the cause of the saturated band. It is a label on a
+transport that happens regardless of which scheme performs it.**
+
+Two invisible parameters in `scm/boundary_layer.py` (`unstable_diffusion_boost`,
+default 4, and `k_diff_cap_factor`, default 4) throttle how much the Richardson
+scheme may mix in unstable conditions. They are multiplicative -- the boost is
+clipped by the cap -- so raising either alone does nothing and raising both takes
+dry-adjustment activity from 14.38 to 0.72 K/day, a twenty-fold cut, with no
+change of turbulence scheme.
+
+The band does not improve. RH >= 95% mass goes 0.100 -> 0.155. The vapour budget
+at 865 hPa shows why:
+
+| process | control | boost 100 + cap 40 |
+|---|---|---|
+| dry adjustment | **+0.508** | -0.495 |
+| boundary layer | +0.083 | **+0.619** |
+| condensation | -0.472 | -0.044 |
+
+The supply is unchanged; only its attribution moves. Any scheme that mixes the
+boundary layer carries surface moisture upward, and the mid-troposphere receives
+it either way. **Earlier sections of this document that treat dry adjustment as
+the causal agent are wrong, including ones written on September 7.** It is a
+symptom.
+
+**The column is in water balance and the band is a steady state, not an
+accumulation.** Over ten days evaporation is 2.2833 mm/day and total
+precipitation 2.2835 mm/day, an imbalance of -0.0001. Locally the same holds: net
+vapour tendency at 810 hPa is +0.001 g/kg/day against individual terms ten times
+larger. Nothing is piling up anywhere.
+
+So the band is not a leak, not a clamp, and not an efficiency shortfall. It is a
+balance that happens to sit at RH ~ 1: upward moisture transport and condensation
+are equal and opposite, and the equilibrium point of that balance is at
+saturation. Moving it requires changing the *ratio* of transport to removal at
+those levels, not the magnitude of either -- which is why every intervention that
+scaled one term simply relocated the band or swapped which scheme carried it.
+
+An earlier version of this section claimed a 2.37 vs 1.87 mm/day precipitation
+shortfall. That was a single-step snapshot read as a mean and it was wrong; the
+ten-day figures above supersede it.
+
+**The band is grid-converged.** Same config, 10 days, 20 vs 40 levels: max RH in
+780-940 hPa is 0.996 vs 0.997, RH95 mass 0.100 vs 0.090, TOA -0.25 vs -0.24,
+CAPE 1312 vs 1452. Doubling vertical resolution changes nothing, so this is real
+model behaviour and not a discretization artifact. Do not spend time on the grid.
+
+## What was measured and eliminated
+
+All by experiment, not argument. Do not re-litigate these.
+
+| hypothesis | test | outcome |
+|---|---|---|
+| autoconversion threshold too high | 0.2 -> 0 g/kg | inert; band unmoved |
+| condensate re-evaporating | `dry_factor` = 0 above RH 0.75 | cannot fire in the band |
+| BL depth ceiling | 1500 -> 6000 m | depth free at 3894 m, dry adjustment unchanged |
+| surface moisture stencil | 0.005 -> 0.05 | 14.4 -> 13.5, band unmoved |
+| microphysics reservoir starved | `cloud_ls_precip_fraction` 0.95 -> 0.05 | reservoir activates, humidity **worsens** 0.10 -> 0.15 |
+| condensate sedimentation | new code, w = 0.02-0.10 m/s | monotonically worse; clamp propagates downward |
+| near-surface instability is numerical | dt 900 -> 100 s | dry adjustment unchanged (14.38 -> 14.30): physical |
+| condensation clamps at saturation | direct partition test | false; it settles below saturation as designed |
+| dry adjustment is the supply | boost/cap raised | false; boundary layer takes over the same flux |
+
+Two configurations were run to equilibrium, scored against criteria fixed in
+advance, and reverted: the RRTMG band calibration (ts 285.45 -> 279.36, CAPE
+-39%) and `surface_heat_sigma_depth = 0.05` (six of seven criteria, first config
+ever to reach `equilibrium_passed: true`, but the band relocated rather than
+dissolving). Both checkpoints are kept as evidence.
+
+## Ways forward, ranked
+
+**1. Mid-tropospheric precipitation efficiency.** The reframing above points
+here and nothing has tested it. Total precipitation is 1.87 mm/day against 2.37
+mm/day of evaporation. Look at why deep convection removes only ~0.10 g/kg/day
+from 865 hPa when dry adjustment and turbulence deliver five times that. Suspect
+the mass-flux detrainment profile and `precip_efficiency`; note the environmental
+descent expression is separately known to be wrong (it uses temperature from
+below without the pressure-work relation).
+
+**2. Make UW usable.** UW drives dry adjustment to exactly 0.00 and is the only
+change that broke the band at all three levels together (810/865/910 ->
+0.87/0.75/0.60). It costs TOA +9.9 W/m2 and CAPE 1312 -> 335, i.e. convection
+nearly shuts off. This is the Bretherton-Park closure as a partial
+implementation; it fails BOMEX at 0.227 kg/m2 water path against a 0.10 limit.
+Real work, open-ended.
+
+**3. Sub-band radiation structure.** The upper troposphere is 0.9-1.4 K/day short
+of RRTMG cooling at 305-540 hPa, and four candidate causes were eliminated. The
+cause is the grey band model: one `kappa` per band cannot represent line
+saturation, so opacity falls linearly with `q` when it should fall far more
+slowly. Needs more bands or a strong/weak-line split per band. The RRTMG
+comparison harness now exists (climlab is installed).
+
+**4. Leave it.** Both notebooks pass, the reference is promoted and converged,
+and the band is documented for students as a known artefact. Defensible if ATM
+407 is the goal.
+
+## Defects found in code review, not yet fixed
+
+**Count-weighted absorbers remain in four places.** The `/nlevels` bug fixed in
+the multiband longwave still exists in `scm/radiation_schemes/semi_gray.py` lines
+45, 64 and 123, and -- on the active path -- `multiband.py:198` for shortwave
+ozone. On the 20-level grid the bottom 5 hPa layer receives **ten times** its
+mass share. Ozone is worse than CO2 was: it is not well mixed and peaks in the
+stratosphere, so count-weighting places stratospheric absorber in the boundary
+layer. Present shortwave heating is +0.19 K/day at 10 hPa against +1.49 at 998
+hPa. A `multiband_ozone_profile` scheme exists and fixes this; `atm407.toml` does
+not select it.
+
+**149 parameters are read from silent code defaults** and set by no config. Most
+belong to inactive schemes, but these are on the active path and load-bearing:
+`ri_crit` (0.25), `k_diff_min` (0.05), `k_diff_cap_factor` (4.0),
+`unstable_diffusion_boost` (4.0), `bl_shear_floor` (1.0), `surface_flux_coupling`
+('distributed'), `cloud_evaporation_scheme`, `cloud_autoconversion_scheme`,
+`cloud_fraction_from_condensation`, `lw_band_wv_continuum`, `condensation_scheme`.
+This is the same failure mode as `bl_diagnose_depth` defaulting to `False`, which
+silently disabled a verified fix in every config that did not inherit
+`atm407.toml`. Recommend writing the active-path defaults explicitly into
+`atm407.toml` so they are visible and diffable.
+
+**Surface fluxes are a body source, not a boundary condition.** Sensible and
+latent heat are spread over the lowest layers by `surface_heat_sigma_depth`
+rather than applied as a flux boundary condition on the turbulence solver. These
+are not equivalent. The physical form exists (`surface_flux_coupling =
+'boundary_layer'`) and makes dry adjustment worse under Richardson (14.4 -> 33.9)
+but gives 0.00 under UW -- so the coupling and the closure must change together.
+
+## Fixed this session
+
+- **UW discarded its cloud fraction.** `partition_water` returns a fraction from
+  the same subgrid distribution it condensed from; `boundary_layer_uw.py`
+  assigned and dropped it, so UW-mixed layers carried condensate while reporting
+  zero cloud. Now returned as `condensation_cloud_fraction` and merged into the
+  microphysics diagnosis. (A first attempt returned it as `cloud_fraction`, which
+  tripped the EDMF plume-handoff branch in `column_model.py:311` and broke three
+  runs with `KeyError: 'plume_condensate'`; the separate key avoids that.)
+- **Condensate sedimentation** added to `scm/cloud_microphysics.py` as a
+  conservative upwind flux, `cloud_sedimentation_speed`, default 0.0. Water
+  residual 3.1e-11 with it active against 3.6e-11 without. Inert at the default;
+  kept because it is real physics the model lacked, but it is not a fix.
+
+## State
+
+`scm/configs/atm407.toml` is unmodified from the last commit. The promoted
+reference is untouched. It reports `equilibrium_passed: false`, but only on the
+0.05 K window-drift gate (0.105); TOA 0.241, surface 0.488 and column residual
+0.0097 all pass comfortably, and the slope is 0.0021 K/day. Describe it as
+nearly converged, not converged. Test suite
+124 passing. Both notebooks execute end to end. All experimental checkpoints are
+kept under their own labels.
+
+
 ## Where the column stands right now
+
+### September 6: longwave validated against RRTMG
+
+climlab (`conda install -c conda-forge climlab climlab-rrtmg`) is installed in
+the `gcm` environment, giving an independent longwave reference. The promoted
+reference profile was passed to both `compute_longwave_multiband` and
+`RRTMG_LW`, clear sky, same T and q.
+
+**OLR: multiband 242.13, RRTMG 256.20 W/m2 -- the scheme traps 14 W/m2 too
+much.** Heating rates localize it, and the error changes sign with height:
+
+| p hPa | q g/kg | multiband K/day | RRTMG K/day | diff |
+|---|---|---|---|---|
+| 305 | 0.009 | -0.200 | -1.121 | +0.922 |
+| 380 | 0.037 | -0.198 | -1.611 | +1.413 |
+| 460 | 0.096 | -0.321 | -1.643 | +1.322 |
+| 540 | 0.171 | -0.500 | -1.401 | +0.901 |
+| 810 | 1.746 | -3.707 | -2.712 | -0.995 |
+| 865 | 2.517 | -3.754 | -2.547 | -1.206 |
+| 997 | 5.115 | -1.546 | -0.596 | -0.950 |
+
+Too little cooling aloft, too much below. Longwave absorption here is linear in
+`q` (`kappa_wv * q * dp/g`), so it vanishes as the air dries, while RRTMG keeps
+cooling the upper troposphere because CO2 carries that band where vapour is
+absent. That is self-reinforcing with the dry upper troposphere in problem 1:
+nothing cools the layer, so convection is never required to moisten it.
+
+This implicates the CO2 mass-weighting recorded under "Fixed and verified".
+Mass-weighting is correct for a well-mixed gas in an optically thin band, but it
+concentrates CO2 optical depth in the thick lower layers, where water vapour has
+already saturated the absorption. The fix removed a grid-dependence bug and
+should not be reverted; the vertical distribution still needs separate work.
+
+Caveat: climlab's 20-level grid is not identical to `make_grid(20)`, so the
+per-level differences are indicative. The OLR gap is the robust number.
+Reproduce with the comparison in this session's scratch, or rebuild it from
+`compute_longwave_multiband` plus `climlab.radiation.RRTMG_LW`.
+
+### September 6: longwave recalibrated against RRTMG, tested, and REVERTED
+
+The calibration below was applied, run to equilibrium, judged against criteria
+fixed in advance, and **reverted**. `scm/configs/atm407.toml` is back to the
+committed coefficients. The promoted reference was never overwritten; the test
+run is kept as `atm407_equilibrium_20level_rrtmg_cal_5m` for the record.
+
+Cause of the 14 W/m2 OLR gap was isolated by elimination: scaling CO2 up made
+OLR worse (2x -> 221 W/m2), scaling water vapour down fixed OLR but degraded
+heating-rate RMS from 0.805 to 1.326, and only the **atmospheric window
+fraction** improved both together. `lw_band_weights[0]` was 0.10, letting just
+10% of the longwave through the window; 0.26 closed OLR to within 0.08 W/m2 of
+RRTMG (242.13 -> 256.28 against 256.20) and cut heating-rate RMS to 0.632.
+`lw_band_co2_log_factor` was re-solved by bisection to restore 3.700 W/m2 per
+doubling, which the band change had knocked to 3.214.
+
+**In isolation the radiation was better. In the coupled column it was worse.**
+400 days, 5 m slab, from the promoted reference:
+
+| criterion (set before the run) | baseline | calibrated | |
+|---|---|---|---|
+| \|TOA\| <= 1.0 W/m2 | 0.24 | **1.287** | fail |
+| \|surface\| <= 1.0 W/m2 | 0.49 | **1.062** | fail |
+| ts drift <= 0.005 K/day | 0.0021 | 0.0040 | pass |
+| RH95 mass <= 0.15 | 0.11 | 0.09 | pass |
+| CAPE 800-2500 | 1275 | **781** | fail |
+| deep rain > large-scale | 1.72 / 0.67 | 1.05 / 0.19 | pass |
+
+Surface temperature fell 285.45 -> 279.36 K. The direction was expected -- more
+outgoing longwave forces cooling -- but the magnitude broke convection: CAPE
+dropped 39% and deep rain 39%, and the column had not re-equilibrated after 400
+days.
+
+**The lesson is worth keeping.** The old coefficients were not merely mistuned;
+the column's convection was calibrated *against* the too-opaque radiation, so
+correcting one alone breaks the balance. A future radiation improvement has to
+be accompanied by re-tuning convection, or evaluated on a column allowed to find
+a genuinely new equilibrium rather than judged at 400 days. Note also that
+humidity slightly improved (RH95 0.11 -> 0.09), so the radiative direction is
+probably right even though this configuration is not promotable.
+
+### September 7: the near-surface instability is physical, not a timestep artifact
+
+Step 1 of the chain -- why the 988/998 hPa interface is unstable at essentially
+every step -- had never been tested directly. If it were a discretization
+artifact (the bottom layer is 5 hPa, about 42 m, taking +17.6 K/day of surface
+heat on a 900 s step) the cure would be cheap substepping. It is not.
+
+| dt s | steps/day | 988/998 unstable | 945/970 | max dry-adjustment K/day |
+|---|---|---|---|---|
+| 900 | 96 | 100.0% | 43.2% | 14.38 |
+| 300 | 288 | 85.2% | 37.2% | 14.23 |
+| 100 | 864 | 83.2% | 33.2% | 14.30 |
+
+A ninefold reduction in timestep leaves dry-adjustment magnitude **unchanged**
+(14.38 -> 14.30) and the interface unstable at 83% of steps. There is mild
+timestep sensitivity in the firing frequency but none in the effect. The surface
+genuinely destabilizes that interface faster than local diffusion can mix it.
+
+This closes off the cheap fix and confirms the expensive one is the right target.
+It is consistent with the dry-transport benchmark already recorded: under 100
+W/m2 of surface heating, Richardson diffusion leaves a 47 K/km superadiabatic
+gradient while UW leaves 1.0-1.5. Local K-diffusion is structurally inadequate
+for a convective boundary layer, which is why every serious model uses nonlocal
+or mass-flux transport there.
+
+Note also that surface fluxes are currently injected as a *body source* spread
+over the lowest layers (`surface_heat_sigma_depth`), rather than applied as a
+flux boundary condition on the turbulence solver. The two are not equivalent,
+and `surface_flux_coupling = 'boundary_layer'` (the physical form) made dry
+adjustment *worse* under Richardson (14.4 -> 33.9) while giving 0.00 under UW.
+The coupling and the turbulence closure have to be fixed together; neither alone
+is sufficient.
+
+### September 7 (later): causal chain closed, and a correction
+
+**Correction to the entry below.** It states the cause as "condensation is a
+one-way sink that can never push a layer below saturation". That is true of the
+`rh_crit = 1.0` branch, but production runs `rh_crit = 0.95`, which dispatches to
+`partial_condensation` / `phase_partition.partition_water`. Testing that partition
+directly at 810 hPa conditions (T 260.3 K, qs 1.756 g/kg, rh_crit 0.95):
+
+| qt/qs | grid-mean RH after | qc g/kg | cloud fraction |
+|---|---|---|---|
+| 1.00 | 0.9855 | 0.019 | 0.462 |
+| 1.05 | 0.9990 | 0.066 | 0.861 |
+| 1.10 | 1.0000 | 0.129 | 1.000 |
+
+It settles the mean **below** saturation with partial cloud, exactly as a
+Sundqvist closure should. The formulation is not clamped and is not the bug. What
+the table does show is the real limit: the mean only stays under 1 while total
+water is within about 5% of `qs`. Beyond that the subgrid distribution is fully
+saturated and the mean pins. **The band is a supply problem, not a sink problem.**
+
+#### The chain, every link measured
+
+1. The near-surface column is unstable at nearly every step (988/998 hPa exceeds
+   the dry-adjustment trigger at 100% of sampled steps).
+2. Dry adjustment therefore fires continuously, at 14.4 K/day.
+3. It is the dominant moisture source into 810-910 hPa: +0.404 g/kg/day against
+   condensation -0.301 and deep convection -0.095, netting +0.001.
+4. That supply pushes total water past the ~5% subgrid width, so the grid mean
+   pins at RH 1.
+
+#### UW turbulence confirms link 2-3 by removing them
+
+Ten days, production config otherwise, from the promoted reference:
+
+| case | dry adj K/day | 810 | 865 | 910 | RH95 | TOA | CAPE | deep rain |
+|---|---|---|---|---|---|---|---|---|
+| richardson (control) | 14.42 | 1.00 | 0.95 | 0.97 | 0.100 | -0.25 | 1312 | 1.75 |
+| uw_moist | **0.00** | 1.00 | 0.99 | 0.81 | 0.390 | +9.03 | 585 | 0.90 |
+| uw_moist + layer closure | **0.00** | **0.87** | **0.77** | **0.62** | 0.360 | +10.20 | 320 | 0.47 |
+| uw + BL surface coupling | **0.00** | **0.83** | **0.76** | **0.61** | 0.300 | +9.39 | 323 | 0.46 |
+
+Dry adjustment goes to exactly zero in every UW variant, and with the layer
+closure the band comes off saturation at all three levels together for the first
+time. The diagnosis is therefore confirmed rather than inferred.
+
+The cost is that UW is not yet usable: TOA +9.4 W/m2, CAPE collapses 1312 -> 323,
+deep rain 1.75 -> 0.46, and RH95 mass *triples* to 0.30 because saturation
+reappears elsewhere. Convection is close to shut off. This reproduces the
+September 6 screening and is why UW is not default.
+
+**The remaining problem is UW's moist response, specifically its condensate
+handling** -- the BOMEX water-path failure (0.227 against a 0.10 limit) and the
+turbulence-only case leaving cloud fraction at zero despite carrying condensate.
+That inconsistency is the next thing to fix, and it now sits on the critical path
+to problem 1 rather than beside it.
+
+#### Condensate sedimentation: implemented, tested, not enabled
+
+`cloud_sedimentation_speed` (default 0.0) adds a conservative upwind flux of
+condensate between layers in `scm/cloud_microphysics.py`. Water residual is
+3.1e-11 kg/m2/s with it active against 3.6e-11 without, so the transport itself
+is clean. **It makes humidity monotonically worse:**
+
+| cloud_ls_precip_fraction | w m/s | RH95 | 810 | 865 | 910 | 945 |
+|---|---|---|---|---|---|---|
+| 0.95 | 0.00 | 0.110 | 0.99 | 0.97 | 0.94 | 0.86 |
+| 0.20 | 0.02 | 0.180 | 0.99 | 0.99 | 0.99 | 0.97 |
+| 0.20 | 0.05 | 0.205 | 0.97 | 0.97 | 0.97 | 0.99 |
+
+945 hPa goes 0.86 -> 0.99: condensate falls into the layer below and evaporates
+there, but that air is already near-saturated, so the clamp propagates downward
+instead of draining. The code is kept because it is real physics the model
+lacked and it is inert at the default, but it is not a fix and should not be
+enabled on its own.
+
+### September 7: the saturated band is a clamp, not a leak -- cause established
+
+The band at 810-910 hPa is not maintained by any removable process. It is held
+at saturation by a balance, and the mechanism is now measured rather than
+argued.
+
+**The decisive measurement.** Ten-day mean vapour budget at 810 hPa, production
+config, from the promoted reference:
+
+| process | g/kg/day |
+|---|---|
+| dry adjustment | **+0.404** |
+| condensation | -0.301 |
+| deep convection | -0.095 |
+| shallow | -0.011 |
+| boundary layer | +0.003 |
+| **net** | **+0.001** |
+
+Final state: RH 0.9961, `qc` **0.045 g/kg**. Two facts follow, and together they
+close the question.
+
+**The layer is saturated with essentially no condensate in it.** No microphysics
+change can dry a layer that holds no cloud water. That is why autoconversion,
+evaporation and the precipitation split were all inert -- they act on
+condensate, and there is none here to act on.
+
+**Condensation is a one-way sink.** It removes vapour above `qs` and can never
+push a layer below saturation. So any layer with a persistent moisture supply is
+clamped at exactly RH = 1 and held there indefinitely; the supply rate sets how
+much condenses, not how wet the layer is. Dry adjustment is that supply, and it
+keeps firing because the near-surface column is unstable at nearly every step
+(988/998 hPa exceeds the trigger at 100% of steps).
+
+This explains why every intervention relocated the band instead of removing it.
+Widening the sensible-heat stencil changed *where* dry adjustment fires, so the
+saturated layer moved with it -- 910 hPa improved 0.95 -> 0.65 while 750 hPa
+became saturated and RH95 mass rose 0.11 -> 0.12. Nothing tested changed the
+fact that a moisture-fed layer gets pinned.
+
+#### Eliminated this session, all measured
+
+| hypothesis | test | result |
+|---|---|---|
+| autoconversion threshold too high | scan 0.2 -> 0 g/kg | inert; RH95 0.10 -> 0.11, band unmoved |
+| condensate re-evaporating | `dry_factor` = 0 above RH 0.75 | cannot fire in the band |
+| BL depth ceiling | raise 1500 -> 6000 m | depth diagnoses to 3894 m, dry adjustment unchanged at 14.4 K/day |
+| surface moisture stencil | 0.005 -> 0.05 | dry adjustment 14.4 -> 13.5, 810 hPa still 1.00 |
+| microphysics reservoir bypassed | `cloud_ls_precip_fraction` 0.95 -> 0.05 | reservoir activates (autoconversion 0.000 -> 0.47, LWP 0.004 -> 0.070) but humidity **worsens**: RH95 0.10 -> 0.15 |
+
+The last one is worth keeping. `cloud_ls_precip_fraction = 0.95` looked like a
+bug -- it removes 95% of condensate before microphysics sees it, leaving 0.045
+g/kg against a 0.2 g/kg autoconversion threshold, so the reservoir never
+activates. It is instead load-bearing: dumping water out of the column fast is
+partially compensating for the band. Routing water through the reservoir makes
+it linger and re-evaporate, and the layer gets wetter.
+
+#### What would actually fix it
+
+Two candidates, both structural changes rather than tuning, neither attempted:
+
+1. **Stop dry adjustment being a moisture supply.** It is a numerical backstop
+   and it is currently the dominant moisture source in the mid-troposphere. This
+   is the connected-layer/UW turbulence work already identified as the next
+   target -- the September 6 audit found UW eliminates dry-adjustment activity
+   entirely, though its moist response is not yet acceptable.
+2. **Give condensation a subsaturated exit.** Condensate sedimentation between
+   layers (problem 5) would let water leave a layer physically instead of being
+   removed in place, so the layer can fall below saturation.
+
+Reverted after testing and not promoted: the RRTMG band calibration, and
+`surface_heat_sigma_depth = 0.05` (six of seven criteria passed, `equilibrium_passed:
+true`, but RH95 mass rose because the band relocated rather than dissolved --
+kept as `atm407_equilibrium_20level_heatstencil_5m`).
+
+### September 6: the upper-troposphere cooling deficit is a band-model limit
+
+Four candidate causes were tested against RRTMG for the 0.9-1.4 K/day shortfall
+at 305-540 hPa. **All four failed**, and the negative results are the finding.
+
+| candidate | result |
+|---|---|
+| water-vapour continuum, 10-200 | no help aloft (it is quadratic in `q`, so it acts where vapour already is); RMS degrades past 25 |
+| CO2 concentrated aloft, `massfrac * (p/p0)^n`, n = -0.5 to -1.5 | worse: upper levels flip to net *warming* |
+| CO2 scaled 2-8x | OLR collapses to 221-179 W/m2 |
+| sublinear absorption, `tau ~ (q dp/g)^e`, e = 0.4-0.8 | optimizer returns to e = 1.0; every sublinear fit trades the lower troposphere away |
+
+**RRTMG says the cooling is water vapour, not a trace gas.** Zeroing CO2 *and*
+ozone in RRTMG changes 380 hPa cooling only from -1.611 to -1.677 K/day, while
+OLR moves 256 -> 290. So the missing opacity is vapour opacity in a layer
+holding 0.037 g/kg, and no redistribution of a well-mixed absorber can supply
+it.
+
+The structural reason: `tau_wv = kappa * q * dp/g` is a **grey band model**.
+Within one band it has a single absorption coefficient, so a layer's opacity is
+proportional to its vapour. Real bands contain thousands of lines of hugely
+varying strength; in a dry layer the weak lines go transparent while the strong
+line cores stay saturated, so opacity falls far more slowly than `q`. That is
+what a correlated-k scheme like RRTMG represents with its k-distribution, and it
+cannot be recovered by tuning a single coefficient per band -- which is exactly
+what these four experiments demonstrate.
+
+Fixing it properly means sub-band structure: either more bands with a spread of
+`kappa`, or a two-coefficient (strong-line / weak-line) split per band. That is
+a real change to `multiband.py`, not a recalibration, and it should be done
+against the RRTMG comparison already built.
+
+Consequence for problem 1: **the dry upper troposphere has a radiative cause
+that is now identified but not fixed.** Too little cooling aloft means
+convection is never obliged to moisten that layer. Do not attribute it solely
+to convection until the band model is improved.
+
+### Phase-partition contract: module landed, contract did not
+
+`scm/phase_partition.partition_water` is now imported by both
+`scm/boundary_layer_uw.py` and `scm/condensation.py`, which was the prescribed
+next step. **The recycling it was meant to remove still reproduces.** Rerunning
+`scripts/diagnose_partition_handoff.py` gives condensate alternating between
+0 and 0.0245097 g/kg across all five cycles, unchanged. The script alternates
+`partition_mse` (grid-mean full saturation) with `partial_condensation` (RH
+0.95): the two call sites now share an implementation but are still asked for
+different answers. The shared *contract* is outstanding.
+
+### Latest structural development: experimental connected-layer closure
+
+`scm/uw_layers.py` implements cloud-fraction-weighted moist buoyancy from
+liquid static energy and total water (including condensate loading), separate
+connected convective/shear layers, a length scale based on each layer's own
+thickness, layer-mean TKE relaxation and energy-limited entrainment at stable
+edges. The surface no longer supplies an elevated layer's length scale or TKE
+across a strong stable barrier. This follows the organization in Bretherton
+and Park (2009), DOI 10.1175/2008JCLI2556.1, but remains a reduced development
+implementation: surface forcing, layer extension and entrainment quadrature
+are simplified, and cloud-top radiative entrainment is not implemented.
+It must not be described as a complete CAM UWMT port.
+
+Select it explicitly with `uw_layer_closure = true` or the budget script's
+`--uw-layer-closure`. It is not enabled by default because it fails the moist
+acceptance test. Long host steps use internal turbulence steps of at most
+60 s; this alone did not remove the BOMEX failure. Surface fluxes are applied
+once per substep and aggregate returned tendencies conserve the full-step
+surface heat and water input. UW residual diagnostics now check the actual
+returned thermodynamic state rather than only the pre-partition solver state.
+
+New tests cover neutrality at uniform moist-conserved variables, independence
+of a detached turbulent layer from surface buoyancy, and full-step surface
+budgets under subcycling. The broad suite passed 124 tests with the accepted
+default path; the three structural tests also pass after the final stable-
+surface-layer diagnostic correction. These passes do not override the known
+experimental BOMEX failure:
+
+| six-hour BOMEX, 20 levels, 900 s host step | water path kg/m2 | diagnosed depth m |
+|---|---|---|
+| new turbulence alone | 0.0623 | 640 |
+| new turbulence plus UW shallow convection | 0.2270 | 1023 |
+
+The combined case exceeds the existing water-path limit 0.10 kg/m2 and cloud
+fraction limit 0.15 (it reaches 0.183). At 40 levels water path is 0.2064 and
+cloud fraction 0.255. This demonstrates a significant turbulence/shallow
+interaction; it does not prove shallow convection alone is defective.
+An additional benchmark deficiency is that the turbulence-only case leaves
+cloud fraction zero despite condensate, so its moist stability input is not
+self-consistent. A proper cloud-diagnosis handoff is required before using
+that case to validate a moist closure.
+
+The dry heated test improves: maximum unstable theta gradient is about
+1.00 K/km, versus 1.47 for the earlier UW candidate and 47 for Richardson.
+The surface-connected layer diagnoses approximately 2.10 km rather than
+sticking at an imposed 1.50 km ceiling. Energy remains conserved.
+In the two-day ATM407 screening, however, deep/LS/cloud rain is
+0.309/0.005/3.245 mm/day, surface flux -57.24 W/m2, TOA +6.00 W/m2, CAPE
+203 J/kg and saturated mass 28%. Thus the structural candidate is implemented
+and testable but is not a successful replacement for production physics.
+The next work must resolve cloud diagnosis and the shallow/turbulence
+interface on BOMEX, including condensate and source-layer budgets, before
+attempting more equilibrium tuning.
+
+Reproduce dry tests with `scripts/diagnose_dry_surface_transport.py
+--uw-layer-closure` and ATM407 with the previous coupled UW budget command
+plus `--uw-layer-closure`. Results are
+`outputs/column/diagnostics/dry_surface_connected_layers_6hour.json` and
+`atm407_uw_connected_layers_2day.json` in that directory. Earlier dry-candidate
+output was regenerated during development; use the connected-layer filename
+for the explicitly selected new closure. Defaults and the promoted reference
+have not changed.
+
+### September 6 audit: current production budget
+
+#### Controlled boundary-layer comparison
+
+#### UW moist-column screening result
+
+Actual-transport trace identifies a major contributor to UW's wet layer.
+The diagnostic BL depth is 1500 m, but `uw_diffusivity` retains locally
+generated TKE/diffusion above that depth up to a separate 5000 m limit.
+Over the corrected two-day run, mean diffusivities at 1.94/2.57/3.30 km are
+47.84/37.88/14.91 m2/s. Corresponding upward total-water fluxes are
+2.800/1.768/0.565 kg/m2/day. These are fluxes inferred directly from the
+implicit total-water solve, not reconstructed from an unrelated TKE scheme.
+Thus "1500 m boundary layer" does not describe the actual transport extent.
+
+A diagnostic ablation limiting UW turbulence to 1500 m reduces cloud rain
+from 1.853 to 0.931 mm/day, saturated mass from 31% to 24%, and surface cooling
+flux from -48.09 to -37.61 W/m2. Deep rain rises from 0.624 to 0.960 and LS
+rain from 0.143 to 0.669 mm/day; CAPE rises from 373 to 570 J/kg. Primary
+energy residual remains 0.00023 W/m2 and water residual 3.09e-11 kg/m2/s.
+The elevated transport therefore materially contributes, but is not the sole
+cause: saturation remains and dry-adjustment activity returns (maximum
+absolute mean tendency 2.61 K/day). A hard cutoff is not a validated fix.
+
+The structural gap is the candidate's treatment of elevated turbulence and
+its connection to the surface/cloud layer. It uses a dry virtual-potential-
+temperature gradient (without condensate loading) for local TKE, retains that
+local mixing above the diagnosed top, and lacks the published UW scheme's
+full moist convective-layer diagnosis and layer TKE transport. Its good dry
+test does not validate those missing moist processes. Bretherton and Park
+(2009), DOI 10.1175/2008JCLI2556.1, describe unified turbulent-layer treatment,
+explicit entrainment and layer-mean TKE transport. The name UW in this repo
+denotes a partial implementation, not equivalence to the established model.
+The next physical correction should address those layer boundaries and moist
+buoyancy energetics, rather than selecting a new arbitrary cutoff.
+
+Reproduce the trace with `scripts/trace_uw_transport.py`; results are
+`outputs/column/diagnostics/uw_transport_trace.json`. The ablation is
+`atm407_uw_above_bl_ablation_2day.json` in that directory, produced by adding
+`--uw-max-height 1500` to the UW coupled diagnostic command. All modifications
+in this investigation are diagnostics; production physics was not changed.
+
+Shared-partition correction implemented in `scm/phase_partition.py`.
+UW and partial condensation now call the same nonprecipitating total-water /
+moist-enthalpy solver at the configured condensation RH threshold. Rain is
+still removed explicitly by condensation/microphysics, never by the shared
+solver. Three new unforced alternating-call tests cover dry, partially cloudy
+and supersaturated initial states; condensate, total water and enthalpy remain
+stationary. All 21 focused partition/condensation/UW tests pass.
+The first broad suite run gave 120 passes and one BOMEX grid-comparison
+failure after the full-saturation solver also changed numerical precision.
+The correction is now scoped to RH thresholds below 1; the established
+full-saturation UW solver remains unchanged. All 17 affected UW convection,
+turbulence and shared-partition tests pass on rerun, including that BOMEX test.
+The entire suite was not repeated after this scoped correction.
+
+The corrected two-day UW run does **not** remove the moist-column bias:
+RH95 mass remains 31%; deep/large-scale/cloud rain is
+0.624/0.143/1.853 mm/day, versus 0.580/0.400/1.792 previously.
+TOA is +5.156 W/m2, surface -48.092 W/m2, surface drift -0.394 K and CAPE
+373 J/kg. Primary residual is +0.0055 W/m2, water residual 4.26e-11
+kg/m2/s, and potential-energy reconciliation -0.0012 W/m2.
+The eliminated partition recycling was a real defect but is not sufficient
+to explain the wet layer. Do not represent this correction as a validated
+climate improvement. The next target is the vertical distribution of UW
+total-water flux and diagnosed mixing/entrainment extent, using the stored
+layer budgets and an independently specified moist case before more tuning.
+Result: `outputs/column/diagnostics/atm407_uw_shared_partition_2day.json`.
+The earlier standalone handoff script deliberately retains the old
+full-saturation/partial-cloud pair as a reproducer of the original failure;
+`scm/test_phase_partition.py` verifies the repaired contract.
+
+The timestep/handoff audit is complete. At 300 s versus 900 s, two-day
+UW surface flux changes from -49.38 to -48.70 W/m2, CAPE from 351 to 363,
+and final RH95 mass remains 31%. Thus the broad moist response persists at
+the shorter timestep. Rain partition is more sensitive: deep/large-scale/cloud
+rain changes from 0.580/0.400/1.792 to 0.603/0.576/1.594 mm/day. A factor-three
+step reduction is not a convergence proof, particularly for precipitation.
+
+UW's boundary-layer stage supplies net condensate at 2.208 kg/m2/day at
+900 s and 2.014 at 300 s, concentrated at 615-810 hPa. Existing cloud source
+diagnostics do not label this as a plume source. At 900 s microphysics removes
+1.811 kg/m2/day from its condensate reservoir, mostly as 1.792 mm/day cloud
+rain; the remainder includes the signed condensation handoff. These stage
+budgets identify turbulent transport/partitioning as the upstream source,
+but do not distinguish all transported condensate from newly condensed vapor.
+
+A specific thermodynamic inconsistency is independently reproduced:
+UW calls `partition_mse`, which uses grid-mean full saturation, while ATM407
+later calls partial condensation with RH threshold 0.95. At 280 K, 850 hPa,
+initial RH 0.98, zero forcing and precipitation disabled, alternating these
+solvers repeatedly switches condensate between zero and 0.0245097 g/kg.
+Water and moist enthalpy errors are exactly zero in this float64 test.
+Conservation therefore does not certify a consistent phase partition. This
+recycling is established; its contribution to the full-column cloud-rain
+bias is not yet quantified.
+
+Next use one shared nonprecipitating phase-partition contract for UW and
+condensation, leaving precipitation to an explicit reservoir sink. Require
+the unforced alternating-call test to preserve the partition before running
+the same two-day comparison. Do not tune autoconversion to mask the conflict.
+Reproduce the isolated failure with `scripts/diagnose_partition_handoff.py`.
+Results: `outputs/column/diagnostics/uw_partition_handoff.json` and
+`atm407_uw_handoff_dt900_2day.json` / `atm407_uw_handoff_dt300_2day.json` in
+the same directory. The budget script now records timestep and the BL
+condensate tendency explicitly. Physics defaults remain unchanged.
+
+Two-day ATM407 runs now separate surface coupling from the turbulence scheme.
+Both start from the promoted reference at 20 levels, 900 s and 5 m slab; all
+radiation, convection and cloud settings remain ATM407's. The new CLI options
+are `--surface-coupling boundary_layer --bl-scheme richardson` or
+`--surface-coupling boundary_layer --bl-scheme uw_moist` in
+`scripts/diagnose_atm407_budget.py`. The surface routine returns zero direct
+atmospheric tendencies in this mode, and turbulence receives the fluxes once.
+
+| configuration | TOA W/m2 | surface W/m2 | CAPE J/kg | deep / LS / cloud rain mm/day | final RH95 mass | max absolute mean dry-adjustment heating K/day |
+|---|---|---|---|---|---|---|
+| original | -0.146 | -0.513 | 1276 | 1.719 / 0.516 / 0 | 0.15 | 14.38 |
+| Richardson, coupled surface | +0.004 | +0.026 | 1287 | 1.751 / 0.596 / 0 | 0.10 | 33.60 |
+| UW, coupled surface | +5.069 | -49.380 | 351 | 0.580 / 0.400 / 1.792 | 0.31 | 0 |
+
+UW eliminates dry-adjustment activity in this run, confirming that stronger,
+conserved-variable turbulent transport can replace that numerical backstop.
+However, the moist response is not yet acceptable for promotion: cloud rain
+dominates, saturated mass increases to 31%, and surface cooling reaches
+0.404 K over two days. The lowest-level RH falls to 52.5%. The original
+surface/atmosphere state is far from balance under this scheme, so these
+transient fluxes do not establish UW's equilibrium temperature or runaway.
+Primary energy residual is +0.00095 W/m2, water residual -6.22e-11 kg/m2/s,
+and MSE/primary reconciliation including potential energy is -0.0021 W/m2.
+Thus the large surface cooling is resolved energy exchange, not a measured
+conservation leak. Diagnosed depth still sits at 1500 m.
+
+Next isolate UW total-water/condensate redistribution and saturation
+partitioning at each stage, including sensitivity to the 900 s host timestep,
+before any longer run. Do not tune radiation or promote either coupling
+variant from these short results. UW's profile diagnostics currently group
+surface input into the boundary-layer tendency (no separate surface/mixing
+split), unlike Richardson; compare their combined surface+BL tendencies.
+The budget script's reconstructed diffusivity uses the separate TKE-v2
+formula and is not a valid UW diffusivity measurement.
+
+Evidence: `outputs/column/diagnostics/atm407_richardson_coupled_2day.json`
+and `outputs/column/diagnostics/atm407_uw_moist_coupled_2day.json`.
+
+Existing-candidate follow-up: the same six-hour dry test now compares
+`boundary_layer_tke_v2.tke_boundary_layer` and
+`boundary_layer_uw.uw_moist_turbulence` with the Richardson controls.
+Momentum is initialized to zero in every case; prognostic candidate TKE and
+returned scalar/momentum tendencies are advanced at every step. The 100 W/m2
+heated cases give:
+
+| scheme | largest unstable theta gradient K/km, 60 s | at 30 s | maximum K m2/s |
+|---|---|---|---|
+| Richardson, temperature | 47.182 | 47.183 | 1.50 |
+| Richardson, MSE | 52.357 | 52.358 | 1.68 |
+| prognostic TKE v2 | 2.708 | 2.813 | 100 |
+| UW diagnostic TKE | 1.47077 | 1.47085 | 200 |
+
+Both candidates preserve the unheated lower layer much better than raw
+temperature diffusion. All energy residuals are below 1e-9 W/m2. UW is the
+preferred candidate for the next controlled moist-column comparison on this
+evidence, not a newly validated production default. Six existing UW tests
+also pass, including dry-layer grid comparisons and BOMEX checks; these do
+not amount to independent validation of the full scheme against LES.
+
+The candidates hit diffusivity caps. Doubling UW's cap from 200 to 400 m2/s
+changes the maximum unstable gradient only from 1.47077 to 1.47296 K/km.
+Raising its boundary-depth ceiling alone from 1500 to 3000 m gives diagnosed
+depth 1837 m and gradient 1.37625 K/km, so UW is not forced to the new ceiling
+in this test. These checks support proceeding with UW without tuning its
+diffusivity cap merely to improve the result. Other profile/entrainment
+sensitivities remain unvalidated.
+
+Reproduce with `python scripts/diagnose_dry_surface_transport.py`; all 14
+cases are saved in `outputs/column/diagnostics/dry_surface_candidates_6hour.json`.
+Any moist follow-up must override the current ATM407 parameters directly:
+the old `uw_turbulence_only_v1.toml` also changes radiation and is not a
+controlled comparison. Test conservative surface-flux handoff together with
+the scheme, since the dry experiment injected surface heat directly into it.
+
+Follow-up isolated dry test completed with
+`scripts/diagnose_dry_surface_transport.py`. It calls only boundary-layer
+mixing: no radiation, convection, condensation or dry adjustment. Initial
+potential temperature is 300 K below 850 hPa with a stable atmosphere above;
+vapor and condensate are zero. Tests use the native 20-level grid, six hours,
+and either zero or 100 W/m2 prescribed surface sensible heat flux.
+
+| transport | flux W/m2 | maximum temperature change K | largest unstable potential-temperature gradient K/km |
+|---|---|---|---|
+| temperature | 0 | 0.71235 | 0.43750 |
+| moist static energy | 0 | 0.0000011 | 0.0000028 |
+| temperature | 100 | 10.3641 | 47.1822 |
+| moist static energy | 100 | 11.3836 | 52.3568 |
+
+This establishes two distinct shortcomings: raw temperature diffusion does
+not preserve a dry-neutral lower layer, while the existing MSE option almost
+does; neither closure transports the imposed surface heating without severe
+superadiabatic gradients. Halving the timestep from 60 to 30 seconds changes
+the forced gradients by less than 0.002 K/km, excluding a large timestep
+artifact in this test. Energy residuals are below 1e-9 W/m2. The forced runs
+hit the 1500 m depth ceiling, with maximum diagnosed diffusivities only
+1.50 and 1.68 m2/s. This is a controlled consistency/stress test, not a claim
+of validation against LES or observations.
+
+The next development target is turbulence strength and nonlocal heat
+transport driven by surface buoyancy, using conserved thermal variables.
+An established implementation should first pass this dry test and a published
+convective-boundary-layer benchmark before entering the moist equilibrium.
+ECMWF documents this separation: conserved-variable transport plus EDMF in
+unstable boundary layers, rather than local diffusion alone
+([ECMWF atmospheric physics](https://www.ecmwf.int/en/research/modelling-and-prediction/atmospheric-physics)).
+Review the repository's existing turbulence candidates against these tests
+before introducing another scheme. No physics default was changed.
+Results: `outputs/column/diagnostics/dry_surface_transport_6hour.json`.
+
+The requested two-by-two test is complete: the same promoted checkpoint,
+ATM407 config, 20 levels, 900 s, 5 m slab and two days in every case. Only
+`bl_max_depth_m` (1500 or 3000 m) and the existing
+`bl_mix_moist_static_energy` option (false or true) differ. The unchanged
+control is the production-budget run below.
+
+| heat transport / ceiling | TOA W/m2 | surface W/m2 | deep rain mm/day | large-scale rain mm/day | final RH95 mass |
+|---|---|---|---|---|---|
+| temperature / 1500 m | -0.146 | -0.513 | 1.719 | 0.516 | 0.15 |
+| temperature / 3000 m | +0.022 | -0.394 | 1.728 | 0.479 | 0.15 |
+| moist static energy / 1500 m | -0.079 | -2.999 | 1.659 | 0.722 | 0.15 |
+| moist static energy / 3000 m | -0.035 | -3.191 | 1.654 | 0.716 | 0.15 |
+
+Neither intervention removes the saturated band. Increasing the ceiling
+simply makes the diagnosed depth reach the new 3000 m limit. Dry adjustment
+still has a maximum absolute mean heating/cooling tendency near 14 K/day in
+all four cases. Its vapor input at 910 hPa rises from 0.868 g/kg/day in the
+control to 1.065, 0.971 and 1.164 respectively. The MSE option increases
+large-scale rain and initially cools the surface faster. These short responses
+reject promotion of these switches as a demonstrated fix; they do not establish
+their eventual equilibria or discredit MSE transport as a physical approach.
+
+All cases retain small primary energy residuals (absolute values below
+0.019 W/m2), water residuals below 1.1e-11 kg/m2/s, and MSE/primary residual
+reconciliation including potential energy within 0.002 W/m2. The independent
+two-layer diffusion-rate and water/enthalpy conservation tests both pass.
+
+The next investigation should isolate surface-forced turbulent transport in
+a dry convective boundary-layer case, with dry adjustment disabled for that
+component test. Measure heat flux, static stability and mixing depth against
+a specified benchmark. The current diffusivity magnitude and depth diagnosis
+must be validated together; neither changing the transported variable alone
+nor lifting the depth ceiling resolves the surface instability. This is a
+bounded component test, not authorization to remove adjustment in production.
+
+Results: `outputs/column/diagnostics/atm407_bl_depth_2day.json`,
+`atm407_bl_mse_2day.json`, and `atm407_bl_both_2day.json` in the same directory.
+Reproduce with `scripts/diagnose_atm407_budget.py --reference
+notebooks/data/atm407_equilibrium_20level.npz --config scm/configs/atm407.toml
+--ocean-depth 5 --days 2`, adding `--bl-max-depth 3000` and/or
+`--bl-heat-transport moist-static-energy`, and a distinct `--output` path.
+No production physics, default configuration or checkpoint was changed.
+
+This audit supersedes the causal claims below that diagnosed boundary-layer
+depth eliminated dry adjustment, and that the Betts-Miller warming mechanism
+has been established. The latter configuration failed to converge, but its
+cause has not been isolated. Its current config also has condensation RH 1.0,
+whereas ATM407 now uses 0.95; it is no longer a closure-only comparison.
+
+A two-day continuation of the promoted reference using `atm407.toml`, 20
+levels, 900 s and a 5 m slab gives mean TOA -0.146 W/m2, surface -0.513 W/m2,
+surface drift -0.0040 K, deep rain 1.719 and large-scale rain 0.516 mm/day.
+Primary energy residual is -0.0082 W/m2 and water residual -1.06e-11
+kg/m2/s. MSE residual is +0.392 W/m2 and must be interpreted with potential
+energy storage, not reported as zero. These are short-run diagnostics, not a
+new equilibrium certification. End-of-run RH >=95% mass is 15%, showing that
+the saved 11% threshold statistic alone does not describe persistence.
+
+Mean vapor tendencies in g/kg/day:
+
+| pressure hPa | boundary layer | dry adjustment | shallow | deep | condensation |
+|---|---|---|---|---|---|
+| 810 | +0.003 | +0.300 | -0.011 | -0.095 | -0.241 |
+| 865 | +0.082 | +0.471 | -0.014 | -0.103 | -0.442 |
+| 910 | +0.053 | +0.868 | +0.001 | -0.453 | -0.365 |
+
+**[Superseded 7 Sep -- see HANDOFF. Raising the boundary layer's diffusion
+limits moves this same supply from dry adjustment to turbulent mixing with no
+humidity benefit, so dry adjustment is a label on the transport, not its cause.]**
+Dry adjustment supplies most of the local vapor input in this band; deep
+convection locally dries it. Diagnosed boundary-layer depth averages exactly
+its 1500 m ceiling. A separate stage trace using the same config shows the
+970/987.5 hPa interface exceeds the dry-adjustment trigger at every sampled
+step. Surface forcing raises its mean lapse excess from 2.52 to 3.79 K/km;
+boundary-layer mixing only reduces this to 3.73 before adjustment. Thus the
+surface/mixing/adjustment coupling remains load-bearing even with diagnosed
+depth. The next controlled test should examine that coupling, including the
+1500 m ceiling and the choice of transported thermal variable. Do not infer
+that raising the ceiling or increasing diffusivity is already a validated fix.
+
+Upper-tropospheric net moisture tendencies are tiny over these two days, so
+this budget does not isolate why that region became dry during spin-up.
+The mass-flux heat/moisture descent mismatch remains a separate structural
+concern and needs component tests before any replacement is promoted.
+
+Evidence: `outputs/column/diagnostics/atm407_current_audit_2day.json` and
+`outputs/column/diagnostics/atm407_current_stage_trace_2day.json`.
+`trace_dry_adjustment.py` now accepts explicit config/reference arguments and
+defaults to ATM407 and the promoted reference, removing the old silent
+default-config confound.
 
 Every checkpoint below evaluated under the code as it currently stands, one
 physics step from rest, `atm407.toml`, 5 m slab. "As generated" is what the
@@ -61,10 +903,15 @@ Problem 3 from the previous version of this document, closed.
 
 **Three references regenerated under the current code**, all 400 days on a 5 m
 slab, all `atm407.toml` except for the convection closure. `bm_conservative_v2`
-is a copy of `atm407.toml` with only the closure swapped (a four-key diff:
+is a copy of `atm407.toml` with the closure swapped (at the time, a four-key diff:
 `convection_scheme`, `bm_conserve_enthalpy`, `rhbm`, `tau_bm`), built because
 `bm_conservative_v1` layered over `default.toml` and so ran with
 `bl_diagnose_depth` off, the uncalibrated CO2 and the untuned cloud shortwave.
+**That diff is no longer closure-only.** `condensation_rh_crit` in
+`atm407.toml` later moved to 0.95 while `bm_conservative_v2.toml` still sets
+1.0, so the 1000-day runaway below confounds the closure with a condensation
+change. The flat-70%-RH water-vapour-feedback mechanism given for it is a
+plausible reading, not an established one.
 
 | | MF, rh_crit 1.0 | MF, rh_crit 0.95 | BM conservative v2 |
 |---|---|---|---|
@@ -131,7 +978,7 @@ between about 685 and 865 hPa, 24-30% of column mass at RH >= 95%.
 
 ---
 
-## Open problem 1: saturated slab at 685-865 hPa
+## Open problem 1: near-saturated band at 810-910 hPa
 
 **Status: much improved, not closed.** Under the current code the band is
 810-910 hPa rather than 685-865, and RH >= 95% column mass is 0.11 at
@@ -165,8 +1012,8 @@ convection locally dries it.
 `default.toml` alone. `bl_diagnose_depth` defaults to `False` in code
 (`scm/boundary_layer.py:30`), so the trace ran with the *fixed* `bl_top_sigma`
 cutoff -- precisely the configuration in which the dry adjustment is already
-known to become load-bearing at 35 K/day, and which `bl_diagnose_depth = true`
-in `atm407.toml` exists to avoid. The trace should be repeated against
+known to become load-bearing, and which `bl_diagnose_depth = true` in
+`atm407.toml` reduces but does not remove (see the retraction below). The trace should be repeated against
 `scm/configs/atm407.toml` before its attribution is trusted. It may well hold;
 it has not yet been shown to hold for the configuration the lab runs.
 
@@ -206,7 +1053,15 @@ expression is still wrong; nobody has yet found the right form.
 
 ---
 
-## Open problem 2: the Betts-Miller candidate runs away
+## Open problem 2: no working alternative to the mass-flux closure
+
+**Status: Betts-Miller is ruled out; nothing has replaced it.** The runaway is
+understood rather than open (see the 1000-day table above): the closure holds a
+flat 70% RH through the deep troposphere, and the resulting water-vapour
+feedback carries the column past 300 K without converging. What remains open is
+that the mass-flux closure has no validated competitor, so the two humidity
+artefacts in problem 1 have no second scheme to be checked against.
+
 
 `scm/configs/bm_conservative_v1.toml` is a Frierson-style Betts-Miller with a
 repaired energy contract: reference temperature and humidity solved together to
@@ -418,8 +1273,12 @@ flux. Adding it dried the mid-troposphere from a flat 70% to 36-50%.
 
 `bl_diagnose_depth = true` replaces the fixed `bl_top_sigma` cutoff with a bulk
 Richardson diagnosis, as KPP, Mellor-Yamada and EDMF all do. Dry-adjustment
-activity went from 35 K/day permanent to zero -- the adjustment became a backstop
-rather than load-bearing. It also incidentally fixed shallow convection, which
+activity fell substantially, but **not to zero, and the earlier claim in this
+document that it did was wrong**. Measured under `atm407.toml` with
+`bl_diagnose_depth = true`, mean dry-adjustment heating peaks at -14.38 K/day at
+987.5 hPa (`outputs/column/diagnostics/atm407_current_audit_2day.json`). The
+September 6 audit above is correct that the surface/mixing/adjustment coupling
+remains load-bearing. The adjustment is smaller than it was, not a backstop. It also incidentally fixed shallow convection, which
 had been entirely suppressed by an RH trigger the subcloud layer never reached.
 **This is a code default of `False`**, so any config that does not inherit
 `atm407.toml` silently reverts to the broken behaviour.
@@ -479,7 +1338,11 @@ and TKE entries in those reports are unavailable diagnostics, not measurements.
   (`scm/configuration.py:26`), so anything layered directly on the default
   silently drops `bl_diagnose_depth`, the CO2 calibration and the cloud
   shortwave tuning.
-- `matplotlib` is installed in the `gcm` environment (conda-forge
-  `matplotlib-base`), so notebook cells can be executed and verified locally.
-  There is no `pip` in that environment; use
+- `matplotlib-base` and `ipython` are installed in the `gcm` environment, so
+  both notebooks can be executed and verified locally rather than shipped
+  unrun. There is no `pip` in that environment; use
   `~/miniconda3/bin/conda install -n gcm -c conda-forge <package>`.
+- Verify a notebook by exec'ing its code cells in order under the `Agg`
+  backend. Both notebooks pass that way: 36 cells in `01_meet_the_column`,
+  20 code cells in `02_experiments_atm407`. Notebook 2 needs `IPython` for its
+  animation, and without it thirteen cells fail on one cascading import.

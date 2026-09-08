@@ -5,16 +5,36 @@ stable turbulence. Elevated and cloud-top radiatively driven layers will be
 added after these paths pass their component cases.
 """
 
+import math
 import torch
 
 from scm.boundary_layer import _as_batch_tensor, diagnose_boundary_layer_depth
 from scm.boundary_layer_tke_v2 import pressure_diffusion_coefficients, solve_scalar
+from scm.phase_partition import partition_water
 from scm.shallow_plume_v2 import partition_mse
+from scm.uw_layers import layer_diffusivity
 from scm.thermo import Lv, Rd, cp, g, geopotential, kappa, p0, virtual_temperature
 
 
 def uw_moist_turbulence(state, grid, params):
     """Return conservative tendencies from the UW diagnostic-TKE closure."""
+
+    timestep = float(params.get('dt', 900.0))
+    maximum = float(params.get('uw_max_timestep_s', 60.0))
+    if params.get('uw_layer_closure', False) and timestep > maximum:
+        steps = math.ceil(timestep / maximum)
+        local = dict(params, dt=timestep / steps)
+        working = {name: value.clone() if torch.is_tensor(value) else value
+                   for name, value in state.items()}
+        for step in range(steps):
+            output = uw_moist_turbulence(working, grid, local)
+            for name in ('t', 'q', 'qc', 'u', 'v'):
+                if name in working:
+                    working[name] = working[name] + local['dt'] * output['d' + name]
+        for name in ('t', 'q', 'qc', 'u', 'v'):
+            if name in state:
+                output['d' + name] = (working[name] - state[name]) / timestep
+        return output
 
     t = state["t"]
     q = state["q"]
@@ -55,18 +75,19 @@ def uw_moist_turbulence(state, grid, params):
         },
     )
 
-    heat_diffusivity, momentum_diffusivity, interface_tke, entrainment = uw_diffusivity(
-        t,
-        q,
-        u,
-        v,
-        p,
-        height,
-        theta_v,
-        boundary_depth,
-        surface_buoyancy,
-        params,
-    )
+    layers = None
+    if params.get('uw_layer_closure', False):
+        layers = layer_diffusivity(
+            t, q, qc, state.get('cloud_fraction', torch.zeros_like(q)),
+            u, v, p, dp, height, surface_buoyancy, params)
+        heat_diffusivity = layers['heat']
+        momentum_diffusivity = layers['momentum']
+        interface_tke = layers['tke']
+        boundary_depth = layers['depth']
+        entrainment = layers['entrainment']
+    else:
+        heat_diffusivity, momentum_diffusivity, interface_tke, entrainment = uw_diffusivity(
+            t, q, u, v, p, height, theta_v, boundary_depth, surface_buoyancy, params)
 
     heat_coefficients = pressure_diffusion_coefficients(
         heat_diffusivity,
@@ -97,35 +118,53 @@ def uw_moist_turbulence(state, grid, params):
         heat_coefficients,
     )
     moist_static_energy_new = liquid_static_energy_new + Lv * total_water_new
-    partitioned_t, partitioned_q, partitioned_qc = partition_mse(
-        total_water_new,
-        moist_static_energy_new,
-        height,
-        p,
-    )
+    critical = float(params.get('condensation_rh_crit', 1.0))
+    if critical < 1.0:
+        partitioned_t, partitioned_q, partitioned_qc, fraction = partition_water(
+            total_water_new, moist_static_energy_new - g * height, p, critical)
+    else:
+        # Preserve the established full-saturation discretization for cases
+        # that do not use partial cloud, including the BOMEX benchmark.
+        partitioned_t, partitioned_q, partitioned_qc = partition_mse(
+            total_water_new, moist_static_energy_new, height, p)
+        # Full saturation adjustment: a layer is cloudy exactly where it holds
+        # condensate.
+        fraction = (partitioned_qc > 0.0).to(partitioned_qc.dtype)
     mixed_layer = interface_to_layer(heat_diffusivity) > 0.0
     surface_source = (sensible.abs() + Lv * moisture.abs()) > 0.0
     mixed_layer[:, -1] = mixed_layer[:, -1] | surface_source
     t_new = torch.where(mixed_layer, partitioned_t, t)
     q_new = torch.where(mixed_layer, partitioned_q, q)
     qc_new = torch.where(mixed_layer, partitioned_qc, qc)
+    # The partition already knows what fraction of each layer is cloudy, because
+    # that is the same subgrid distribution it condensed from. Without passing
+    # it on, a UW-mixed layer could carry condensate while the column reported
+    # zero cloud fraction -- which is what the BOMEX turbulence-only case did,
+    # making its moist stability input self-inconsistent.
+    cloud_fraction_new = torch.where(
+        mixed_layer, fraction.clamp(min=0.0, max=1.0),
+        state.get('cloud_fraction', torch.zeros_like(qc)),
+    )
 
     u_new = solve_scalar(u, u, momentum_coefficients)
     v_new = solve_scalar(v, v, momentum_coefficients)
     layer_tke = interface_to_layer(interface_tke)
     water_before = torch.sum(total_water * mass, dim=1)
-    water_after = torch.sum(total_water_new * mass, dim=1)
+    water_after = torch.sum((q_new + qc_new) * mass, dim=1)
     energy_before = torch.sum((liquid_static_energy + Lv * total_water) * mass, dim=1)
-    energy_after = torch.sum(moist_static_energy_new * mass, dim=1)
+    energy_after = torch.sum((cp * t_new + Lv * q_new + g * height) * mass, dim=1)
 
     return {
         "dt": (t_new - t) / timestep,
         "dq": (q_new - q) / timestep,
         "dqc": (qc_new - qc) / timestep,
+        "condensation_cloud_fraction": cloud_fraction_new,
         "du": (u_new - u) / timestep,
         "dv": (v_new - v) / timestep,
         "tke": layer_tke,
         "heat_diffusivity": heat_diffusivity,
+        "moist_stability": layers['stability'] if layers is not None else torch.zeros_like(heat_diffusivity),
+        "turbulent_layer_labels": layers['labels'] if layers is not None else torch.full_like(heat_diffusivity, -1, dtype=torch.long),
         "momentum_diffusivity": momentum_diffusivity,
         "boundary_layer_depth_m": boundary_depth,
         "entrainment_velocity_ms": entrainment,

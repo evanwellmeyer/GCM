@@ -24,8 +24,15 @@ parser.add_argument('--config', type=Path)
 parser.add_argument('--ocean-depth', type=float, default=50.0)
 parser.add_argument('--condensation-rh-crit', type=float)
 parser.add_argument('--dry-lapse-excess', type=float)
+parser.add_argument('--bl-max-depth', type=float)
+parser.add_argument('--uw-max-height', type=float)
+parser.add_argument('--uw-layer-closure', action='store_true')
+parser.add_argument('--bl-scheme', choices=['richardson', 'uw_moist'])
+parser.add_argument('--surface-coupling', choices=['distributed', 'boundary_layer'])
+parser.add_argument('--bl-heat-transport', choices=['temperature', 'moist-static-energy'])
 parser.add_argument('--conservative-adjustment', action='store_true')
 parser.add_argument('--days', type=int, default=10)
+parser.add_argument('--dt', type=float, default=900.0)
 parser.add_argument('--output', type=Path)
 parser.add_argument('--production-gates', action='store_true')
 args = parser.parse_args()
@@ -38,7 +45,7 @@ config = load_run_config(args.config)
 params = default_params(device=device)
 params.update(extract_param_overrides(config))
 params.update({
-    'dt': 900.0,
+    'dt': args.dt,
     'ps0': 100000.0,
     'solar_constant': 1360.0,
     'zenith_factor': 0.25,
@@ -54,6 +61,18 @@ if args.condensation_rh_crit is not None:
     params['condensation_rh_crit'] = args.condensation_rh_crit
 if args.dry_lapse_excess is not None:
     params['dry_adjustment_max_lapse_excess'] = args.dry_lapse_excess
+if args.bl_max_depth is not None:
+    params['bl_max_depth_m'] = args.bl_max_depth
+if args.uw_max_height is not None:
+    params['uw_maximum_turbulent_height_m'] = args.uw_max_height
+if args.uw_layer_closure:
+    params['uw_layer_closure'] = True
+if args.bl_scheme is not None:
+    params['boundary_layer_scheme'] = args.bl_scheme
+if args.surface_coupling is not None:
+    params['surface_flux_coupling'] = args.surface_coupling
+if args.bl_heat_transport is not None:
+    params['bl_mix_moist_static_energy'] = args.bl_heat_transport == 'moist-static-energy'
 if args.conservative_adjustment:
     params.update(convection_scheme='betts_miller', bm_conserve_enthalpy=True)
 
@@ -136,6 +155,13 @@ result = {
     'configuration_label': config['run']['label'],
     'averaging_days': args.days,
     'ocean_depth_m': args.ocean_depth,
+    'dt_s': params['dt'],
+    'bl_max_depth_m': params.get('bl_max_depth_m', 1200.0),
+    'uw_maximum_turbulent_height_m': params.get('uw_maximum_turbulent_height_m', 5000.0),
+    'uw_layer_closure': params.get('uw_layer_closure', False),
+    'boundary_layer_scheme': params.get('boundary_layer_scheme', 'richardson'),
+    'surface_flux_coupling': params.get('surface_flux_coupling', 'distributed'),
+    'bl_mix_moist_static_energy': params.get('bl_mix_moist_static_energy', False),
     'condensation_rh_crit': params.get('condensation_rh_crit', 1.0),
     'dry_lapse_excess_kkm': params.get('dry_adjustment_max_lapse_excess', 3.0),
     'cape_pressure_step_pa': params.get('mf_cape_max_pressure_step', 1000.0),
@@ -157,6 +183,9 @@ result = {
         for day in range(args.days)
     ],
     'cloud_condensate_gkg': (state['qc'][0] * 1000).tolist(),
+    'boundary_layer_condensate_tendency_gkgday': (
+        meanprofile('boundary_layer_condensate_tendency') * 86400 * 1000
+    ).tolist(),
     'tke_m2s2': state['tke'][0].tolist(),
     'diffusivity_m2s': diffusivity[0].tolist(),
     'tke_production_m2s3': meanprofile('tke_production').tolist(),

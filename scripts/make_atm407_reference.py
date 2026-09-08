@@ -21,6 +21,7 @@ from scm.thermo import g, make_grid, relative_humidity
 parser = argparse.ArgumentParser()
 parser.add_argument('--force', action='store_true')
 parser.add_argument('--adjustment-days', type=int, default=100)
+parser.add_argument('--final-dt', type=float, default=900.0)
 parser.add_argument('--config', type=Path)
 parser.add_argument('--output-label', default='')
 parser.add_argument('--initial-reference', type=Path)
@@ -34,6 +35,8 @@ parser.add_argument('--edmf-plume-fraction', type=float)
 args = parser.parse_args()
 if args.adjustment_ocean_depth <= 0:
     parser.error('--adjustment-ocean-depth must be positive')
+if args.final_dt <= 0:
+    parser.error('--final-dt must be positive')
 if args.condensation_rh_crit is not None and not 0.5 <= args.condensation_rh_crit <= 1.0:
     parser.error('--condensation-rh-crit must be between 0.5 and 1.0')
 
@@ -158,23 +161,27 @@ else:
         diag_interval=stepsperday,
     )
 
-params['dt'] = 900.0
+params['dt'] = args.final_dt
 params['ocean_depth'] = args.adjustment_ocean_depth
 state['slab_ts_ref'] = state['ts'].clone()
 state['slab_energy'].zero_()
 stepsperday = round(86400 / params['dt'])
+radiationinterval = max(1, round(7200 / params['dt']))
+diagnosticsperday = max(1, round(stepsperday / radiationinterval))
+equilibriumwindow = 50 * diagnosticsperday
+history = []
 state, finalhistory = run(
     state,
     grid,
     params,
     args.adjustment_days * stepsperday,
-    rad_interval=8,
-    diag_interval=stepsperday,
+    rad_interval=radiationinterval,
+    diag_interval=radiationinterval,
 )
 history.extend(finalhistory)
 
-metrics = equilibrium_metrics(history, window=50)
-stats = equilibrium_stats(history, last_n=50)
+metrics = equilibrium_metrics(history, window=equilibriumwindow)
+stats = equilibrium_stats(history, last_n=equilibriumwindow)
 rh = relative_humidity(state['q'], state['t'], state['p'])[0]
 rh95mass = torch.sum((rh >= 0.95) * state['dp'][0] / g) / torch.sum(state['dp'][0] / g)
 cloudwaterpath = torch.sum(state['qc'][0] * state['dp'][0] / g)
@@ -204,7 +211,10 @@ metadata = {
     'spinup_ocean_depth_m': 5.0,
     'final_ocean_depth_m': params['ocean_depth'],
     'condensation_rh_crit': params.get('condensation_rh_crit', 1.0),
-    'final_dt_s': 900.0,
+    'final_dt_s': params['dt'],
+    'radiation_cadence_s': radiationinterval * params['dt'],
+    'diagnostic_cadence_s': radiationinterval * params['dt'],
+    'equilibrium_window_days': 50,
     'radiation_scheme': params['radiation_scheme'],
     'convection_scheme': params['convection_scheme'],
     'surface_albedo': params['albedo'],
@@ -232,7 +242,7 @@ metadata = {
     'moisture_cap_fraction': stats['moisture_cap_fraction_mean'][0].item(),
     'column_water_residual_kgm2s': stats['column_water_residual_mean'][0].item(),
     'equilibrium_metrics': metrics,
-    'equilibrium_passed': check_equilibrium(history, window=50),
+    'equilibrium_passed': check_equilibrium(history, window=equilibriumwindow),
     'generation_runtime_s': time.perf_counter() - start,
 }
 

@@ -197,6 +197,27 @@ def cloud_microphysics_step(state, grid, params, cond_out, conv_out, shallow_out
     else:
         qc, autoconv_sink = autoconvert(qc)
         qc, evaporation = evaporate(qc)
+    # Condensate sedimentation. Cloud water falls, and where it falls into
+    # subsaturated air below it evaporates there rather than in the layer that
+    # made it. Without this, condensate is only ever removed in place, so a
+    # layer with a persistent moisture supply is clamped at saturation and
+    # cannot dry: condensation is a one-way sink that never pushes a layer
+    # below qs. This is the physical exit that clamp is missing. Implemented as
+    # a conservative upwind flux, so column total water is unchanged by the
+    # transport itself.
+    fall_speed = float(params.get('cloud_sedimentation_speed', 0.0))
+    if fall_speed > 0.0:
+        # mass flux rho*w*qc through each interface; rho*w*dt in pressure units
+        # is w*dt*g^-1 * dp/dz -> use hydrostatic mass so the sink is exact.
+        flux = (fall_speed * dt * g / (dp / g).clamp(min=1.0e-8)).clamp(max=1.0)
+        leaving = qc * flux
+        arriving = torch.zeros_like(qc)
+        arriving[:, 1:] = leaving[:, :-1] * (dp[:, :-1] / dp[:, 1:].clamp(min=1.0e-8))
+        surface_loss = leaving[:, -1] * dp[:, -1] / g
+        qc = (qc - leaving + arriving).clamp(min=0.0)
+    else:
+        surface_loss = torch.zeros(batch, device=device, dtype=dtype)
+
     vapor_adjustment = evaporation
     temperature_adjustment = -Lv / cp * evaporation
     q_after_evaporation = q + vapor_adjustment
@@ -262,7 +283,7 @@ def cloud_microphysics_step(state, grid, params, cond_out, conv_out, shallow_out
     if not params.get('cloud_optical_depth_from_gridmean_water', False):
         cloud_sw_tau_layer = cloud_fraction * cloud_sw_tau_layer
         cloud_lw_tau_layer = cloud_fraction * cloud_lw_tau_layer
-    precip = torch.sum((overflow_sink + autoconv_sink) * dp / g, dim=1)
+    precip = torch.sum((overflow_sink + autoconv_sink) * dp / g, dim=1) + surface_loss
     ls_cloud_source = torch.sum(ls_source * dp / g, dim=1) / dt
     conv_cloud_source = torch.sum(conv_source * dp / g, dim=1) / dt
     cloud_evaporation = torch.sum(evaporation * dp / g, dim=1) / dt

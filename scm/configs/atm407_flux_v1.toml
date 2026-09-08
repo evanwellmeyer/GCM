@@ -1,0 +1,30 @@
+extends = "atm407.toml"
+
+[run]
+label = "atm407_flux_v1"
+
+[radiation]
+scheme = "multiband_ozone_profile"
+
+[composition]
+o3_peak_sigma = 0.08
+o3_width_sigma = 0.04
+
+[mass_flux]
+transport_form = "flux"
+entrainment_rate = 5.0e-6
+detrainment_rate = 5.0e-6
+tau_cape = 21600.0
+max_dt_day = 20.0
+max_dq_day = 20.0
+downdraft_entrainment_pa = 1.0e-5
+downdraft_detrainment_pa = 1.0e-5
+downdraft_release_pa = 1.2e-4
+downdraft_rain_share = 0.5
+
+[params]
+condensation_rh_crit = 0.90
+bl_mix_moist_static_energy = true
+bl_diagnose_depth = true
+bl_min_depth_m = 100.0
+bl_max_depth_m = 900.0

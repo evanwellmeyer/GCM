@@ -28,15 +28,20 @@ def trace_gases_enabled(params):
 
 
 def forward_flux_sweep(transmissivity, source, boundary):
-    """Vectorized solution of y[k+1] = y[k] * transmissivity[k] + source[k]."""
+    """Stable solution of y[k+1] = y[k] * transmissivity[k] + source[k].
 
-    batch = transmissivity.shape[0]
-    one = torch.ones(batch, 1, device=transmissivity.device, dtype=transmissivity.dtype)
-    zero = torch.zeros(batch, 1, device=transmissivity.device, dtype=transmissivity.dtype)
-    prefix = torch.cat([one, torch.cumprod(transmissivity, dim=1)], dim=1)
-    scaled_source = source / prefix[:, 1:].clamp(min=1.0e-12)
-    accum = torch.cumsum(scaled_source, dim=1)
-    return prefix * (boundary.unsqueeze(1) + torch.cat([zero, accum], dim=1))
+    A cumulative-product rearrangement used previously divided every source by
+    the transmissivity above it. In an optically thick column that product
+    underflows, so clamping the denominator corrupts the flux. The recurrence
+    itself is bounded and differentiable, and atmospheric columns are short
+    enough that evaluating it directly is preferable.
+    """
+    values = [boundary]
+    current = boundary
+    for level in range(transmissivity.shape[1]):
+        current = current * transmissivity[:, level] + source[:, level]
+        values.append(current)
+    return torch.stack(values, dim=1)
 
 
 def band_vector(values, default, device, dtype):

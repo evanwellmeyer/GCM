@@ -7,6 +7,7 @@
 
 import torch
 from scm.thermo import Lv, cp, g, saturation_specific_humidity
+from scm.phase_partition import partition_water
 
 
 def condensation(state, grid, params):
@@ -131,28 +132,8 @@ def partial_condensation(state, params, critical):
     water = vapor + liquid
     temperature = state['t']
 
-    def distribution(condensate):
-        warmed = temperature + Lv / cp * (condensate - liquid)
-        saturation = saturation_specific_humidity(warmed, state['p'])
-        width = ((1.0 - critical) * saturation).clamp(min=1.0e-12)
-        above = water + width - saturation
-        fraction = (above / (2.0 * width)).clamp(0.0, 1.0)
-        target = torch.where(
-            above >= 2.0 * width,
-            water - saturation,
-            above.clamp(min=0.0).square() / (4.0 * width),
-        ).clamp(min=0.0)
-        return target, fraction
-
-    lower = torch.zeros_like(water)
-    upper = water.clone()
-    for _ in range(48):
-        middle = 0.5 * (lower + upper)
-        target, _ = distribution(middle)
-        upper = torch.where(middle > target, middle, upper)
-        lower = torch.where(middle > target, lower, middle)
-    condensate = 0.5 * (lower + upper)
-    _, fraction = distribution(condensate)
+    _, _, condensate, fraction = partition_water(
+        water, cp * temperature + Lv * vapor, state['p'], critical)
     change = condensate - liquid
     efficiency = torch.as_tensor(
         params.get('cloud_ls_precip_fraction', 0.8),

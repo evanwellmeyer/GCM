@@ -329,11 +329,11 @@ python -m scm.run_scm --config scm/configs/default.toml
 
 Two example configs are included:
 
-- `scm/configs/default.toml` - accepted 20-level standalone SCM and ATM407 reference configuration, labeled `mf_response_v3`
+- `scm/configs/default.toml` - accepted 20-level standalone SCM and ATM407 reference configuration, labeled `atm407_flux_v1`
 - `scm/configs/mf_baseline_v1.toml` - frozen earlier mass-flux configuration retained for reproducing the `2000d/8000d` coupling benchmark
 - `scm/configs/mf_flowdev_v1.toml` - current flow-dependent MF development configuration with softer CAPE-timescale limits
 - `scm/configs/mf_response_v2.toml` - experimental CAPE-response closure with a source-layer mass limit, used to diagnose the saturated-column bias before changing the accepted default
-- `scm/configs/mf_response_v3.toml` - frozen copy of the accepted CAPE-response configuration
+- `scm/configs/mf_response_v3.toml` - frozen copy of the previous CAPE-response configuration
 - `scm/configs/simplified_physics.toml` - simplified fallback: semi-gray radiation and no cloud microphysics
 - `scm/configs/trace_gases_example.toml` - example of the optional trace-gas radiation mode
 - `scm/configs/clouds_example.toml` - example of the optional cloud-radiative mode

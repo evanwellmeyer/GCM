@@ -23,18 +23,39 @@ def deep_merge(base, override):
     return merged
 
 
+def _load_config_file(path, active=None):
+    """Load one config and any parent named by its top-level ``extends`` key."""
+
+    path = Path(path).resolve()
+    active = set() if active is None else active
+    if path in active:
+        chain = ' -> '.join(str(item) for item in (*active, path))
+        raise ValueError(f'configuration inheritance cycle: {chain}')
+    active.add(path)
+    with path.open('rb') as file:
+        config = tomllib.load(file)
+    parent = config.pop('extends', None)
+    if parent is None:
+        merged = config
+    else:
+        parentpath = Path(parent)
+        if not parentpath.is_absolute():
+            parentpath = path.parent / parentpath
+        merged = deep_merge(_load_config_file(parentpath, active), config)
+    active.remove(path)
+    return merged
+
+
 def load_run_config(path=None):
     """load the default SCM config, optionally merged with a user config."""
 
-    with DEFAULT_CONFIG_PATH.open("rb") as f:
-        config = tomllib.load(f)
+    config = _load_config_file(DEFAULT_CONFIG_PATH)
 
     if path is None:
         return config
 
     user_path = Path(path)
-    with user_path.open("rb") as f:
-        override = tomllib.load(f)
+    override = _load_config_file(user_path)
 
     config = deep_merge(config, override)
     config["_config_path"] = str(user_path)
@@ -272,6 +293,10 @@ def extract_param_overrides(config):
             "mf_source_top_sigma": mass_flux.get("source_top_sigma"),
             "mf_buoyancy_detrainment_weight": mass_flux.get("buoyancy_detrainment_weight"),
             "mf_mse_correction_top_sigma": mass_flux.get("mse_correction_top_sigma"),
+            "mf_transport_form": mass_flux.get("transport_form"),
+            "mf_downdraft_entrainment_pa": mass_flux.get("downdraft_entrainment_pa"),
+            "mf_downdraft_detrainment_pa": mass_flux.get("downdraft_detrainment_pa"),
+            "mf_downdraft_release_pa": mass_flux.get("downdraft_release_pa"),
         }))
 
     return params

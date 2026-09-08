@@ -14,6 +14,20 @@ from scm.radiation_schemes.common import (
 )
 
 
+def planck_band_fractions(temperature, edges, samples=32):
+    """Fraction of terrestrial blackbody emission in wavenumber bands."""
+    edges = torch.as_tensor(edges, device=temperature.device, dtype=temperature.dtype)
+    if edges.ndim != 1 or edges.numel() < 2 or torch.any(edges[1:] <= edges[:-1]):
+        raise ValueError('lw_band_edges_cm1 must be a strictly increasing vector')
+    coordinate = torch.linspace(0, 1, samples, device=temperature.device,
+                                dtype=temperature.dtype)
+    wavenumber = edges[:-1, None] + (edges[1:] - edges[:-1])[:, None] * coordinate
+    exponent = 1.438776877 * wavenumber / temperature[..., None, None].clamp(min=100)
+    density = wavenumber.pow(3) / torch.expm1(exponent).clamp(min=1e-30)
+    integral = torch.trapezoid(density, wavenumber, dim=-1)
+    return integral / integral.sum(dim=-1, keepdim=True).clamp(min=1e-30)
+
+
 def ozone_layer_profile(grid, batch, device, dtype, params):
     sigma = full_level_coordinate(grid, batch=batch, device=device, dtype=dtype)
     peak = as_batch_tensor(params.get("o3_peak_sigma", 0.18), batch, device, dtype)
@@ -36,12 +50,21 @@ def compute_longwave_multiband(state, grid, params, force_clear_sky=False, ozone
         state, grid, params, batch, dtype, force_clear_sky=force_clear_sky
     )
 
-    band_weights = band_vector(
-        params.get("lw_band_weights"),
-        [0.18, 0.32, 0.30, 0.20],
-        device, dtype,
-    )
-    band_weights = band_weights / band_weights.sum().clamp(min=1.0e-8)
+    spectral_edges = params.get('lw_band_edges_cm1')
+    if spectral_edges is None:
+        band_weights = band_vector(
+            params.get("lw_band_weights"),
+            [0.18, 0.32, 0.30, 0.20],
+            device, dtype,
+        )
+        band_weights = band_weights / band_weights.sum().clamp(min=1.0e-8)
+        level_weights = band_weights.view(1, 1, -1).expand(batch, nlevels, -1)
+        surface_weights = band_weights.view(1, -1).expand(batch, -1)
+    else:
+        level_weights = planck_band_fractions(t, spectral_edges)
+        surface_weights = planck_band_fractions(ts, spectral_edges)
+        band_weights = torch.ones(
+            level_weights.shape[-1], device=device, dtype=dtype)
     band_wv_kappa = band_vector(
         params.get("lw_band_wv_kappa"),
         [0.0, 0.05, 0.12, 0.22],
@@ -125,8 +148,8 @@ def compute_longwave_multiband(state, grid, params, force_clear_sky=False, ozone
         dtau = tau_wv + tau_co2 + tau_trace + cloud_lw_tau
         transmissivity = torch.exp(-dtau * mu_diff)
 
-        b_level = band_weights[band] * sigma_sb * t ** 4
-        b_surface = band_weights[band] * sigma_sb * ts ** 4
+        b_level = level_weights[:, :, band] * sigma_sb * t ** 4
+        b_surface = surface_weights[:, band] * sigma_sb * ts ** 4
         emission = b_level * (1.0 - transmissivity)
 
         f_up = forward_flux_sweep(

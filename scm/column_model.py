@@ -316,6 +316,12 @@ def physics_step(state, grid, params, rad_cache=None, ls_forcing=None):
         shallow_out['condensate_detrainment'] = bl_out.get(
             'condensate_detrainment', torch.zeros_like(state['qc'])
         )
+    # A turbulence scheme that partitions water knows the cloud fraction of the
+    # layers it mixed, from the same subgrid distribution it condensed from.
+    # That is not a plume handoff, so it travels separately from the EDMF keys
+    # above and simply seeds the microphysics diagnosis.
+    bl_cloud_fraction = bl_out.get('condensation_cloud_fraction')
+
     check_nan('shallow dt', shallow_out['dt'])
     check_nan('shallow dq', shallow_out['dq'])
     shallow_dt = torch.nan_to_num(shallow_out['dt'], nan=0.0).to(state['t'].dtype)
@@ -359,6 +365,15 @@ def physics_step(state, grid, params, rad_cache=None, ls_forcing=None):
 
     # --- cloud microphysics / cloud-radiative state ---
     qc_before_cloud = state['qc'].clone()
+    if bl_cloud_fraction is not None:
+        # Where turbulence mixed and partitioned a layer, its own cloud fraction
+        # is the better estimate; elsewhere keep condensation's.
+        cond_out = dict(cond_out)
+        existing = cond_out.get('condensation_cloud_fraction')
+        cond_out['condensation_cloud_fraction'] = (
+            bl_cloud_fraction if existing is None
+            else torch.maximum(existing, bl_cloud_fraction)
+        )
     cloud_out = cloud_microphysics_step(
         state, grid, params, cond_out, conv_out, shallow_out=shallow_out
     )
@@ -446,10 +461,17 @@ def physics_step(state, grid, params, rad_cache=None, ls_forcing=None):
         rad_out['toa_net'] - column_energy_tendency + precip_heat_flux
     )
     atm_mse_tendency = (atm_mse_now - atm_mse_prev) / dt
-    atmos_mse_residual = atmos_flux_convergence - atm_mse_tendency
+    # The pressure-coordinate integral of g*z changes during vertical
+    # redistribution. This is hydrostatic pressure work, not an external
+    # column-energy source. Include it when closing the MSE budget.
+    hydrostatic_work_tendency = atm_mse_tendency - atm_energy_tendency
+    atmos_mse_residual = (
+        atmos_flux_convergence - atm_mse_tendency + hydrostatic_work_tendency
+    )
     column_mse_tendency = atm_mse_tendency + slab_energy_tendency
     column_mse_residual = (
-        rad_out['toa_net'] - column_mse_tendency + precip_heat_flux
+        rad_out['toa_net'] - column_mse_tendency
+        + precip_heat_flux + hydrostatic_work_tendency
     )
     column_water_tendency = (water_now - water_prev) / dt
     column_water_flux = sfc_out['lhf'] / Lv - precip_total
@@ -518,6 +540,7 @@ def physics_step(state, grid, params, rad_cache=None, ls_forcing=None):
         'atmos_energy_tendency': atm_energy_tendency,
         'atmos_energy_residual': atmos_energy_residual,
         'atmos_mse_tendency': atm_mse_tendency,
+        'hydrostatic_work_tendency': hydrostatic_work_tendency,
         'atmos_mse_residual': atmos_mse_residual,
         'slab_energy_tendency': slab_energy_tendency,
         'column_energy_tendency': column_energy_tendency,
@@ -528,6 +551,19 @@ def physics_step(state, grid, params, rad_cache=None, ls_forcing=None):
         'column_water_flux': column_water_flux,
         'column_water_residual': column_water_residual,
         'cape': conv_out.get('cape', torch.zeros_like(state['ts'])),
+        'deep_transport_energy_residual': conv_out.get(
+            'transport_mse_residual_per_mass_flux', torch.zeros_like(state['ts'])
+        ) * conv_out.get('cloud_base_mass_flux', torch.zeros_like(state['ts'])),
+        'deep_raw_energy_residual': conv_out.get(
+            'raw_mse_residual_per_mass_flux', torch.zeros_like(state['ts'])
+        ) * conv_out.get('cloud_base_mass_flux', torch.zeros_like(state['ts'])),
+        'deep_transport_limiter': conv_out.get('transport_limiter', torch.ones_like(state['ts'])),
+        'deep_downdraft_energy_residual': conv_out.get(
+            'downdraft_mse_residual_per_mass_flux', torch.zeros_like(state['ts'])
+        ) * conv_out.get('cloud_base_mass_flux', torch.zeros_like(state['ts'])),
+        'deep_export_energy_residual': conv_out.get(
+            'export_mse_residual_per_mass_flux', torch.zeros_like(state['ts'])
+        ) * conv_out.get('cloud_base_mass_flux', torch.zeros_like(state['ts'])),
         'tau_cape_eff': conv_out.get('tau_cape_eff', torch.zeros_like(state['ts'])),
         'cloud_base_mass_flux': conv_out.get(
             'cloud_base_mass_flux', torch.zeros_like(state['ts'])
@@ -728,7 +764,10 @@ def run(state, grid, params, nsteps, rad_interval=8, diag_interval=100,
 
     # When cloud condensate is prognostic, let radiation see the updated
     # cloud state more frequently than in the clear-sky/semi-gray path.
-    if params.get('cloud_microphysics_enabled', False):
+    if (
+        params.get('cloud_microphysics_enabled', False)
+        and params.get('cloud_radiative_effects_enabled', False)
+    ):
         effective_rad_interval = min(
             effective_rad_interval,
             max(1, int(params.get('rad_interval_microphysics_steps', 1))),

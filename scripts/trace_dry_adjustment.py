@@ -1,5 +1,6 @@
 """Attribute changes in dry stability to each physics stage."""
 import json
+import argparse
 import sys
 from pathlib import Path
 
@@ -13,13 +14,21 @@ from scm.configuration import load_run_config, extract_param_overrides
 from scm.ensemble import default_params
 from scm.thermo import make_grid, Rd, g, kappa, p0
 
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument('--config', type=Path, default=root / 'scm/configs/atm407.toml')
+parser.add_argument('--reference', type=Path, default=root / 'notebooks/data/atm407_equilibrium_20level.npz')
+parser.add_argument('--days', type=int, default=2)
+parser.add_argument('--ocean-depth', type=float, default=5.0)
+parser.add_argument('--output', type=Path, default=root / 'outputs/column/diagnostics/dry_adjustment_stage_trace.json')
+args = parser.parse_args()
+config = load_run_config(args.config)
 params = default_params()
-params.update(extract_param_overrides(load_run_config(None)))
-params.update(dt=900.0, ocean_depth=5.0, condensation_rh_crit=0.95,
+params.update(extract_param_overrides(config))
+params.update(dt=config['numerics']['dt'], ocean_depth=args.ocean_depth,
               use_slab_ocean=True, profile_diagnostics=True)
-grid = make_grid(20)
+grid = make_grid(config['numerics']['nlevels'])
 state = model.initial_state(1, grid, params)
-path = root / 'notebooks/data/atm407_equilibrium_20level_partial_cloud_rh095_diffusionfix_5m.npz'
+path = args.reference
 with np.load(path) as reference:
     for name in ('t', 'q', 'qc', 'cloud_fraction'):
         state[name][0] = torch.as_tensor(reference[name])
@@ -59,15 +68,18 @@ def scheme(category, name, state, *args, **kwargs):
 
 
 model.run_physics_scheme = scheme
-for step in range(192):
+for step in range(round(args.days * 86400 / params['dt'])):
     state, diagnostic, _ = model.physics_step(state, grid, params)
     record('end', state)
-result = {'reference': str(path), 'days': 2,
+result = {'reference': str(path), 'config': str(args.config), 'days': args.days,
+          'ocean_depth_m': args.ocean_depth,
+          'bl_diagnose_depth': params.get('bl_diagnose_depth', False),
           'interface_pressure_hpa': ((state['p'][0, :-1] + state['p'][0, 1:]) / 200).tolist(),
           'mean_excess_kkm_before_stage': {name: np.mean(values, axis=0).tolist() for name, values in samples.items()},
           'trigger_fraction_before_stage': {name: np.mean(np.array(values) > 3, axis=0).tolist() for name, values in samples.items()},
           'samples_excess_kkm': samples}
-output = root / 'outputs/column/diagnostics/dry_adjustment_stage_trace.json'
+output = args.output
+output.parent.mkdir(parents=True, exist_ok=True)
 output.write_text(json.dumps(result, indent=2) + '\n')
 for name, values in result['mean_excess_kkm_before_stage'].items():
     print(name, np.round(values[10:], 3))

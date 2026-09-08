@@ -13,8 +13,9 @@ import torch
 from scm.thermo import (
     cp, Lv, g, Rd, Rv, eps,
     saturation_specific_humidity, virtual_temperature, full_level_coordinate,
-    half_level_coordinate,
+    half_level_coordinate, geopotential,
 )
+from scm.convective_transport import updraft, downdraft
 
 
 def loaded_virtual_temperature(t, q_vapor, q_condensate):
@@ -151,6 +152,10 @@ def mass_flux_convection(state, grid, params):
     nlevels = t.shape[1]
 
     entrainment = _column_param(params, 'entrainment_rate', 5.0e-6, t, batch)  # per Pa
+    transportform = params.get('mf_transport_form', 'legacy')
+    if transportform not in ('legacy', 'flux'):
+        raise ValueError('mf_transport_form must be legacy or flux')
+    height = geopotential(t, q, p, grid) if transportform == 'flux' else None
     detrainment = _column_param(params, 'mf_detrainment_rate', 3.0e-5, t, batch)
     plume_decay = _column_param(params, 'mf_plume_decay_rate', 1.5e-4, t, batch)
     tau_cape = _column_param(params, 'tau_cape', 3600.0, t, batch)
@@ -167,10 +172,22 @@ def mass_flux_convection(state, grid, params):
     max_dq_day = _column_param(params, 'mf_max_dq_day', 5.0, t, batch)
     cond_retain = _column_param(params, 'mf_condensate_retention', 0.25, t, batch)
     cond_fallout = _column_param(params, 'mf_condensate_fallout', 0.45, t, batch)
+    if transportform == 'flux':
+        if params.get('mf_retain_convective_condensate', False):
+            raise ValueError('The flux updraft currently requires immediate condensate fallout')
+        # Use the same pseudoadiabatic assumption in the CAPE parcel and the
+        # transported plume; retained condensate is not implemented here yet.
+        cond_retain = torch.zeros_like(cond_retain)
+        cond_fallout = torch.ones_like(cond_fallout)
     buoyancy_detrainment = _column_param(
         params, 'mf_buoyancy_detrainment_weight', 1.0, t, batch
     ).clamp(min=0.0, max=1.0)
     enforce_mse = bool(params.get('mf_enforce_mse_conservation', True))
+    if transportform == 'flux':
+        enforce_mse = False
+        bl_export_fraction = torch.zeros_like(bl_export_fraction)
+        if bool(torch.any(_column_param(params, 'mf_rain_evap_coefficient', 0., t, batch) > 0)):
+            raise ValueError('Flux transport uses explicit downdraft evaporation; separate rain evaporation is not implemented')
     model_dt = float(params.get('dt', 900.0))
     correction_top_sigma = float(params.get('mf_mse_correction_top_sigma', 0.0))
     fullsigma = full_level_coordinate(grid, state=state, device=t.device, dtype=t.dtype)
@@ -223,6 +240,7 @@ def mass_flux_convection(state, grid, params):
     # landing in a single layer.
     dt_norm = torch.zeros_like(t)
     dq_norm = torch.zeros_like(q)
+    rainproduction = torch.zeros_like(q)
     plume_count = max(int(params.get("mf_plume_count", 1)), 1)
     entrainment_spread = float(params.get("mf_plume_entrainment_spread", 3.0))
     if plume_count > 1 and entrainment_spread > 1.0:
@@ -237,6 +255,13 @@ def mass_flux_convection(state, grid, params):
 
     for plume_index in range(plume_count):
         entrainment = entrainment_base * plume_scales[plume_index]
+        if transportform == 'flux':
+            member = updraft(t, q, height, p, dp, entrainment, detrainment,
+                             plume_decay, buoyancy_detrainment, floor=1e-7)
+            dt_norm = dt_norm + plume_weight * member['dt']
+            dq_norm = dq_norm + plume_weight * member['dq']
+            rainproduction = rainproduction + plume_weight * member['rain']
+            continue
         dt_member = torch.zeros_like(t)
         dq_member = torch.zeros_like(q)
         # march the plume upward
@@ -338,6 +363,8 @@ def mass_flux_convection(state, grid, params):
 
     entrainment = entrainment_base
 
+    transportresidual = torch.sum((cp * dt_norm + Lv * dq_norm) * dp / g, dim=1)
+
     # Convective downdrafts. A downdraft starts in the mid troposphere, where
     # the air is cool and dry, and sinks. Compression warms it, entrainment
     # mixes in its surroundings, and evaporating rain cools it back toward
@@ -348,7 +375,14 @@ def mass_flux_convection(state, grid, params):
     # it: without `mf_rain_evap_coefficient` above zero the draft warms
     # adiabatically on the way down and does almost nothing.
     downdraft_fraction = _column_param(params, 'mf_downdraft_fraction', 0.0, t, batch)
-    if bool(torch.any(downdraft_fraction > 0.0)):
+    rainevaporation = torch.zeros_like(q)
+    if transportform == 'flux':
+        draft = downdraft(t, q, height, p, dp, fullsigma, rainproduction,
+                          downdraft_fraction, params)
+        dt_norm = dt_norm + draft['dt']
+        dq_norm = dq_norm + draft['dq']
+        rainevaporation = draft['evaporation']
+    if transportform == 'legacy' and bool(torch.any(downdraft_fraction > 0.0)):
         start_sigma = float(params.get('mf_downdraft_start_sigma', 0.60))
         dd_entrain = float(params.get('mf_downdraft_entrainment', 0.05))
         dd_detrain = float(params.get('mf_downdraft_detrainment', 0.05))
@@ -399,6 +433,8 @@ def mass_flux_convection(state, grid, params):
             dq_norm[:, k + 1] = dq_norm[:, k + 1] + rate * (q_dd - q[:, k + 1])
             md = md * (1.0 - local_detrain)
 
+    draftresidual = torch.sum((cp * dt_norm + Lv * dq_norm) * dp / g, dim=1)
+
     # Modest subcloud moisture export over a fixed sigma depth. Normalizing by
     # the selected layer mass keeps the column sink independent of level count.
     export_top_sigma = float(params.get('mf_bl_export_top_sigma', 0.96))
@@ -421,6 +457,7 @@ def mass_flux_convection(state, grid, params):
     ).unsqueeze(1) * export_weights
 
     closure_mode = str(params.get('mf_closure_mode', 'heating_proxy'))
+    rawresidual = torch.sum((cp * dt_norm + Lv * dq_norm) * dp / g, dim=1)
     cape_response = torch.zeros_like(cape_val)
     closure_stabilizing = torch.ones_like(cape_val, dtype=torch.bool)
 
@@ -494,6 +531,26 @@ def mass_flux_convection(state, grid, params):
     dq_cap_active = dq_uncapped.abs() > max_dq
     dt_tend = torch.maximum(torch.minimum(dt_uncapped, max_dt), -max_dt)
     dq_tend = torch.maximum(torch.minimum(dq_uncapped, max_dq), -max_dq)
+    limiter = torch.ones_like(mb)
+    if transportform == 'flux':
+        # A single scale preserves every paired heat/water/rain exchange.
+        limiter = torch.minimum(limiter, (max_dt / dt_uncapped.abs().clamp(min=1e-30)).amin(dim=1))
+        limiter = torch.minimum(limiter, (max_dq / dq_uncapped.abs().clamp(min=1e-30)).amin(dim=1))
+        # Permit only floating-point roundoff around the host floor; otherwise
+        # a vanishing upper-level cancellation can shut down the entire plume.
+        tolerance = 16 * torch.finfo(q.dtype).eps * q.abs().clamp(min=1e-7)
+        available = ((q - 1e-7).clamp(min=0) + tolerance) / (model_dt * (-dq_uncapped).clamp(min=1e-30))
+        available = torch.where(dq_uncapped < 0, available, torch.ones_like(available))
+        limiter = torch.minimum(limiter, available.amin(dim=1))
+        cooling = (t - 150).clamp(min=0) / (model_dt * (-dt_uncapped).clamp(min=1e-30))
+        warming = (350 - t).clamp(min=0) / (model_dt * dt_uncapped.clamp(min=1e-30))
+        cooling = torch.where(dt_uncapped < 0, cooling, torch.ones_like(cooling))
+        warming = torch.where(dt_uncapped > 0, warming, torch.ones_like(warming))
+        limiter = torch.minimum(limiter, torch.minimum(cooling, warming).amin(dim=1))
+        rainfall = (rainproduction.sum(dim=1) - rainevaporation.sum(dim=1)).clamp(min=0) * mb
+        limiter = torch.minimum(limiter, (50. / 86400.) / rainfall.clamp(min=1e-30))
+        dt_tend = dt_uncapped * limiter.unsqueeze(1)
+        dq_tend = dq_uncapped * limiter.unsqueeze(1)
 
     # Keep the capped heating and drying tendencies close to column
     # moist-enthalpy conserving so convection does not create energy
@@ -544,6 +601,8 @@ def mass_flux_convection(state, grid, params):
         precip = column_drying
         cloud_condensate = torch.zeros_like(column_drying)
     precip = precip.clamp(max=50.0 / 86400.0)
+    if transportform == 'flux':
+        precip = (rainproduction.sum(dim=1) - rainevaporation.sum(dim=1)).clamp(min=0) * mb * limiter
 
     return {
         'dt': dt_tend,
@@ -561,4 +620,11 @@ def mass_flux_convection(state, grid, params):
         'temperature_cap_fraction': dt_cap_active.to(t.dtype).mean(dim=1),
         'moisture_cap_fraction': dq_cap_active.to(t.dtype).mean(dim=1),
         'mse_residual': mse_residual,
+        'transport_limiter': limiter,
+        'rain_production': rainproduction.sum(dim=1) * mb * limiter,
+        'rain_evaporation': rainevaporation.sum(dim=1) * mb * limiter,
+        'transport_mse_residual_per_mass_flux': transportresidual,
+        'raw_mse_residual_per_mass_flux': rawresidual,
+        'downdraft_mse_residual_per_mass_flux': draftresidual - transportresidual,
+        'export_mse_residual_per_mass_flux': rawresidual - draftresidual,
     }
