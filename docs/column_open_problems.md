@@ -35,6 +35,71 @@ been traced to code defects and are recorded under "Fixed and verified" rather
 than in the open list.
 
 
+## September 7 (later): the notebook 02 phase portrait is aliased, not wrong code
+
+The "Storm phase portrait: does rain chase CAPE?" figure in
+`notebooks/02_experiments_atm407.ipynb` plots exactly what its code says it
+plots, but the picture is dominated by an artifact and reads as "rain and CAPE
+are unrelated", which is the opposite of the model's actual behaviour.
+
+**The column carries an intrinsic relaxation oscillation.** With no large-scale
+forcing at all, the saved 20-level equilibrium run at dt = 900 s does not sit
+still. Deep-convective rain and dilute CAPE execute a repeating cycle of period
+roughly 6-8 steps (1.5-2 hours), spanning CAPE 725-842 J/kg and deep rain
+1.38-1.74 mm/day. Sampled every step, control CAPE and control deep rain
+correlate at **-0.92**: rain is lowest exactly when CAPE spikes. This is the
+trial-plume closure in `scm/convection_mf.py`, where
+`mb = target_reduction / cape_response` -- when a step destabilises the column,
+`cape_response` (CAPE consumed per unit mass flux) rises faster than
+`cape_excess`, so the diagnosed mass flux and rain fall while CAPE rises.
+
+**It is not a radiation-cadence artifact.** Rerunning the control with
+`rad_interval = 1` instead of 8 leaves the oscillation unchanged (CAPE standard
+deviation 34.63 vs 34.57 J/kg, same spike spacing). The 2-hour radiation refresh
+is exonerated.
+
+**Three-hourly diagnostics alias it.** `experiment['diagnostic_hours'] = 3`
+samples every 12 steps, close to twice the oscillation period, so successive
+plotted points land on unrelated phases of the cycle. The phase portrait's
+entire deep-rain spread is 0.39 mm/day while the unforced oscillation alone
+spans 0.35 mm/day: about ninety per cent of the vertical scatter students see is
+the limit cycle, not the imposed ascent. Point-to-point CAPE-rain correlation in
+the plotted series is +0.12, i.e. noise.
+
+**The physics underneath is fine.** Daily means over the same forced run are
+clean and monotonic: control CAPE 762 J/kg and rain 1.611 mm/day; forced day 0
+913 and 1.676, day 1 1040 and 1.768, day 2 980 and 1.751. Rain does chase CAPE.
+Only the sampling and the instantaneous plotting hide it.
+
+**Fixed in the notebook on September 8, without touching the model.** Mission 5
+now samples every step instead of every three hours, so the cycle is resolved
+rather than aliased, and plots a centred six-hour running mean -- exactly one
+cycle period -- as the trajectory, with the raw every-step trace kept underneath
+so students can see the oscillation they are averaging over. `runningmean` in the
+helper cell pads the ends with the first and last full-window means rather than
+with the first and last samples; padding with a single sample put one phase of
+the cycle straight back into the two endpoints, which moved the final plotted
+rain by 0.074 mm/day, about forty per cent of the whole forced signal. The
+unforced star is now the mean of a six-hour control run rather than one
+instantaneous `physics_step`, which is why the trajectory now starts on the star
+instead of 0.06 mm/day above it. The design-target metrics are computed from the
+smoothed series.
+
+Measured effect at the default sliders: CAPE-rain correlation over the plotted
+series goes from +0.12 to **+0.91**, and the rating goes from "2 of 3 met" to
+"all 3 met" -- the old figure was failing the rain-increase target (0.139 against
+a 0.15 floor) purely because `max()` over an aliased series landed on the wrong
+phase. Added run cost is about eight per cent, from the extra six-hour baseline
+run.
+
+The oscillation itself is untouched and remains open: damping it is a model
+change and should not be done to fix a figure. Missions 6 and 7 and the
+nine-column sweep sample at 3, 6 and unchecked intervals respectively and have
+the same exposure; they were left alone because smoothing would change the lag
+and recovery-time quantities they measure. Nothing here invalidates the accepted
+`atm407_flux_v1` configuration -- its gates are evaluated on long means, which
+average the cycle out.
+
 ---
 
 # Earlier handoff: superseded where contradicted by the linked audit
