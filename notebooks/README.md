@@ -14,3 +14,16 @@ jupyter lab
 ```
 
 Run the notebooks in order. Both load `scm/configs/atm407.toml` and the canonical files in `notebooks/data/`; do not substitute an experimental checkpoint unless the assignment specifically asks for it.
+
+## How to work through the notebooks
+
+Read the text before each code cell, then run the cells one at a time from top to bottom. Many sections ask you to predict what will happen before running an experiment. Write down your prediction first, even if you are unsure, and then compare it with the model output.
+
+Enter your responses in the blanks provided or add a Markdown cell directly below the question. Record both what happened and what you think it means physically. When a slider or parameter is available, begin with the default value, change one quantity at a time, and note the values used for any result you discuss. A useful response should distinguish among:
+
+- your prediction;
+- your observation from the figures or printed diagnostics;
+- your explanation of the physical process; and
+- what the experiment taught you or left unresolved.
+
+If a cell reports an error, first confirm that all preceding setup cells have run successfully. Restart the kernel and run from the beginning if variables or figures appear inconsistent with the written instructions.
