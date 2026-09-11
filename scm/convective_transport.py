@@ -30,7 +30,7 @@ in the moist-energy budget. Geopotential is fixed during this process step.
 
 
 def updraft(t, q, height, pressure, thickness, entrainment, detrainment,
-            decay, buoyancyweight, floor=0.):
+            decay, buoyancyweight, floor=0., stop_at_neutral_buoyancy=False):
     """Build a mass-continuous entraining plume per unit cloud-base mass flux.
 
 Mix conserved scalars at the destination height, then condense at fixed moist
@@ -47,6 +47,7 @@ adding another local replacement tendency would count it twice.
     rain = torch.zeros_like(t)
     exchange = torch.zeros_like(t)
     current = torch.ones_like(t[:, -1])
+    was_buoyant = torch.zeros(t.shape[0], dtype=torch.bool, device=t.device)
     sensible = energy[:, -1].clone()
     vapor = q[:, -1].clone()
     flow[:, -2] = current
@@ -59,8 +60,12 @@ adding another local replacement tendency would count it twice.
         incoming = current
         expanded = incoming * torch.exp((entrainment * span).clamp(max=5.0))
         added = expanded - incoming
-        sensible = (incoming * sensible + added * energy[:, level]) / expanded.clamp(min=1e-30)
-        vapor = (incoming * vapor + added * q[:, level]) / expanded.clamp(min=1e-30)
+        # Once a plume has ended its mass is zero; keep its last properties rather
+        # than dividing zero by zero.
+        sensible = torch.where(expanded > 0, (incoming * sensible + added * energy[:, level])
+                               / expanded.clamp(min=1e-30), sensible)
+        vapor = torch.where(expanded > 0, (incoming * vapor + added * q[:, level])
+                            / expanded.clamp(min=1e-30), vapor)
         dry = (sensible - g * height[:, level]) / cp
         lower = torch.zeros_like(vapor)
         # Respect the host vapor floor inside phase conversion, rather than
@@ -84,6 +89,14 @@ adding another local replacement tendency would count it twice.
         buoyant = torch.sigmoid((plumevirtual - virtual) * 5)
         loss = detrainment * (1 - buoyancyweight * buoyant) + decay * (1 - buoyant)
         current = expanded * torch.exp(-(loss * span).clamp(max=5.0))
+        if stop_at_neutral_buoyancy:
+            # Zhang-McFarlane (CESM2) ends the plume at its level of neutral
+            # buoyancy and sets the mass flux to zero above it. Without this the
+            # mass flux only decays past that level, and a small, very cold
+            # residual reaches the model top and cools the stratosphere.
+            is_buoyant = plumevirtual > virtual
+            current = torch.where(was_buoyant & ~is_buoyant, torch.zeros_like(current), current)
+            was_buoyant = was_buoyant | is_buoyant
         if level == 0:
             current = torch.zeros_like(current)
         exchange[:, level] = incoming - current

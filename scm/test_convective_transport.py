@@ -119,17 +119,14 @@ def test_downdraft_accounts_for_every_evaporated_drop(supply):
         assert result['dq'].abs().max() == 0
 
 
-def test_complete_candidate_conserves_without_repair_even_when_limited(monkeypatch):
+def test_complete_candidate_conserves_without_repair_even_when_limited():
     import scm.convection_mf as convection
 
-    def forbidden(*args, **kwargs):
-        raise AssertionError('Candidate must not use the global energy correction')
-
-    monkeypatch.setattr(convection, '_conserve_mse', forbidden)
+    # The global energy correction left with the legacy transport (10 Sep 2026).
+    assert not hasattr(convection, '_conserve_mse')
     grid = make_grid(20, dtype=torch.float64)
     params = default_params()
-    params.update(mf_transport_form='flux', mf_bl_export_fraction=100.,
-                  mf_downdraft_fraction=.4, mf_enforce_mse_conservation=True,
+    params.update(mf_transport_form='flux', mf_downdraft_fraction=.4,
                   mf_max_dt_day=.01, mf_max_dq_day=.01, mf_closure_mode='heating_proxy')
     state = update_derived(initial_state(1, grid, params), grid)
     state = {key: value.double() if torch.is_tensor(value) else value for key, value in state.items()}
@@ -155,3 +152,43 @@ def test_vapor_floor_does_not_turn_off_an_active_plume():
     assert result['cloud_base_mass_flux'].item() > 0
     assert result['transport_limiter'].item() > .99
     assert result['precip'].item() > 0
+
+
+def test_plume_stops_at_neutral_buoyancy_when_asked():
+    height = torch.tensor([[16000., 13000., 10000., 7000., 4000., 1500., 0.]], dtype=torch.float64)
+    temperature = torch.where(height > 12000, 216.5 + 0.002 * (height - 12000), 300 - 0.007 * height)
+    pressure = 100000 * torch.exp(-height / 7500)
+    water = 0.018 * torch.exp(-height / 2500)
+    thickness = torch.tensor([[8000., 10000., 12000., 15000., 20000., 20000., 15000.]], dtype=torch.float64)
+    args = (temperature, water, height, pressure, thickness, 5e-6, 3e-5, 1.5e-4, 1.)
+    decaying = updraft(*args)
+    stopped = updraft(*args, stop_at_neutral_buoyancy=True)
+    # By default the plume only decays past neutral buoyancy, so it reaches the top level.
+    assert decaying['massflux'][0, 1] > 0 and decaying['dt'][0, 0] < 0
+    # Stopped, nothing crosses into the top level, and the plume below is unchanged.
+    assert stopped['massflux'][0, :2].abs().max() == 0
+    assert stopped['dt'][0, 0] == 0 and stopped['dq'][0, 0] == 0
+    torch.testing.assert_close(stopped['massflux'][:, 2:], decaying['massflux'][:, 2:])
+    mass = thickness / g
+    assert abs(((cp * stopped['dt'] + Lv * stopped['dq']) * mass).sum()) < 1e-9
+    assert abs((stopped['dq'] * mass + stopped['rain']).sum()) < 1e-15
+
+
+def test_mass_flux_scheme_passes_plume_top_switch():
+    grid = make_grid(20)
+    top = {}
+    for stop in (False, True):
+        params = default_params()
+        params.update(mf_transport_form='flux', mf_plume_stop_at_neutral_buoyancy=stop)
+        state = update_derived(initial_state(1, grid, params), grid)
+        top[stop] = mass_flux_convection(state, grid, params)['dt'][0, 0].item()
+    assert top[False] < 0 and top[True] == 0
+
+
+def test_legacy_transport_is_rejected():
+    grid = make_grid(20)
+    params = default_params()
+    params.update(mf_transport_form='legacy')
+    state = update_derived(initial_state(1, grid, params), grid)
+    with pytest.raises(ValueError):
+        mass_flux_convection(state, grid, params)

@@ -139,14 +139,11 @@ tau_cape = 21600.0
 precip_efficiency = 0.80
 retain_convective_condensate = false
 cape_threshold = 50.0
-detrain_rh = 0.70
 mb_max = 1.0
-bl_export_fraction = 1.0
 max_dt_day = 20.0
 max_dq_day = 20.0
 condensate_retention = 0.25
 condensate_fallout = 0.45
-enforce_mse_conservation = true
 cape_timescale_mode = "fixed"
 closure_mode = "cape_response"
 trial_mass_flux = 0.01
@@ -226,7 +223,6 @@ bl_diagnose_depth = true
 bl_min_depth_m = 100.0
 bl_max_depth_m = 900.0
 bl_mix_moist_static_energy = true
-mf_bl_export_top_sigma = 0.96
 include_precip_enthalpy_flux = true
 #
 # examples:

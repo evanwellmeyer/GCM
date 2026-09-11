@@ -32,7 +32,7 @@ def main():
     results = []
     with np.load(referencepath) as reference:
         grid = make_grid(len(reference['sigma_full']))
-        for form, timestep in [('legacy', 900.), ('flux', 900.), ('flux', 300.)]:
+        for form, timestep in [('flux', 900.), ('flux', 300.)]:
             local = dict(params, mf_transport_form=form, dt=timestep)
             state = initial_state(1, grid, local)
             for name in ('t', 'q', 'qc', 'cloud_fraction'):
@@ -67,7 +67,7 @@ def main():
                   referencehash=hashlib.sha256(referencepath.read_bytes()).hexdigest(),
                   sourcehashes={name: hashlib.sha256((root / name).read_bytes()).hexdigest()
                                 for name in sources},
-                  notes='Legacy retains ATM407 source terms. Flux uses conservative rain-fed '
+                  notes='Flux transport at two time steps. It uses a conservative rain-fed '
                         'downdraft, no artificial export and no global energy repair. Radiation every step. '
                         'This is a transient screen, not an equilibrium or realism test.',
                   results=results)

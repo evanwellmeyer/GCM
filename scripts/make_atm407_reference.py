@@ -142,6 +142,14 @@ if sourcepath is not None:
         state['tke'] = torch.as_tensor(
             seedprofile('tke'), dtype=state['t'].dtype
         ).unsqueeze(0)
+    # Cloud optical depths are made by microphysics, which runs after radiation.
+    # Restoring them means the first radiation call after a restart sees the
+    # clouds; without them it sees none for one step when cloud radiation is on.
+    for name in ('cloud_sw_tau_layer', 'cloud_lw_tau_layer'):
+        if name in reference.files:
+            state[name] = torch.as_tensor(
+                seedprofile(name), dtype=state['t'].dtype
+            ).unsqueeze(0)
     state['ts'][0] = float(reference['ts'])
     state['ps'][0] = float(reference['ps'])
     state['slab_ts_ref'] = state['ts'].clone()
@@ -196,6 +204,9 @@ referencearrays = dict(
 )
 if 'tke' in state:
     referencearrays['tke'] = state['tke'][0].cpu().numpy()
+for name in ('cloud_sw_tau_layer', 'cloud_lw_tau_layer'):
+    if name in state:
+        referencearrays[name] = state[name][0].cpu().numpy()
 np.savez_compressed(referencepath, **referencearrays)
 
 metadata = {

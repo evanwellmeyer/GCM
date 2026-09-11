@@ -105,6 +105,54 @@ def compute_longwave_multiband(state, grid, params, force_clear_sky=False, ozone
     )
     band_o3_scale = band_o3_scale / band_o3_scale.sum().clamp(min=1.0e-8)
 
+    # k-distribution. Each band can be split into g-points: sub-bands that share
+    # the band's Planck emission in the given fractions but carry their own
+    # water-vapour and CO2 absorption strengths. Strong line centres then stay
+    # opaque in dry air while weak wings stay transparent, which is how RRTMG
+    # (CESM2's longwave) represents line saturation and one grey coefficient per
+    # band cannot. Without `lw_gpoint_fractions` every band is a single g-point,
+    # exactly as before. With it, `lw_band_wv_kappa` and `lw_band_co2_base_tau`
+    # hold bands x g-points values, band by band.
+    # The shares can be one set used by every band, or one set per band (bands x
+    # g-points, band by band); a window band and a strong-line band need different
+    # shares.
+    gpoint_fractions = params.get("lw_gpoint_fractions")
+    if gpoint_fractions is None:
+        gpoints = 1
+    else:
+        nbands = band_weights.shape[0]
+        gpoint_fractions = band_vector(gpoint_fractions, [1.0], device, dtype)
+        gpoints = band_wv_kappa.shape[0] // nbands
+        if gpoint_fractions.shape[0] == gpoints:
+            gpoint_fractions = gpoint_fractions.repeat(nbands)
+        if gpoints < 1 or gpoint_fractions.shape[0] != nbands * gpoints:
+            raise ValueError(
+                f"lw_gpoint_fractions needs {max(gpoints, 1)} or {nbands * max(gpoints, 1)} "
+                f"values, got {gpoint_fractions.shape[0]}"
+            )
+        gpoint_fractions = gpoint_fractions.view(nbands, gpoints)
+        gpoint_fractions = gpoint_fractions / gpoint_fractions.sum(dim=1, keepdim=True).clamp(min=1.0e-8)
+        for name, values in (("lw_band_wv_kappa", band_wv_kappa), ("lw_band_co2_base_tau", band_co2_base)):
+            if values.shape[0] != nbands * gpoints:
+                raise ValueError(
+                    f"{name} needs {nbands * gpoints} values "
+                    f"(bands x g-points), got {values.shape[0]}"
+                )
+
+    # Pressure dependence of the water-vapour absorption strength, per g-point:
+    # tau is multiplied by (p / p0) ** n. Line centres grow stronger at low
+    # pressure (n < 0) and line wings weaker (n > 0); RRTMG's k-distribution
+    # varies with pressure in this way. Unset, absorption does not depend on
+    # pressure, exactly as before.
+    wv_pressure_exponent = params.get("lw_band_wv_pressure_exponent")
+    if wv_pressure_exponent is not None:
+        wv_pressure_exponent = band_vector(wv_pressure_exponent, [0.0], device, dtype)
+        if wv_pressure_exponent.shape[0] != band_wv_kappa.shape[0]:
+            raise ValueError(
+                "lw_band_wv_pressure_exponent needs one value per water-vapour "
+                f"strength ({band_wv_kappa.shape[0]}), got {wv_pressure_exponent.shape[0]}"
+            )
+
     co2 = as_batch_tensor(params.get("co2", 400.0), batch, device, dtype).unsqueeze(1)
     co2_ref = as_batch_tensor(params.get("co2_ref", 400.0), batch, device, dtype).unsqueeze(1)
     co2_ratio = co2 / co2_ref.clamp(min=1.0e-6)
@@ -131,38 +179,45 @@ def compute_longwave_multiband(state, grid, params, force_clear_sky=False, ozone
     olr = torch.zeros(batch, device=device, dtype=dtype)
 
     for band in range(band_weights.shape[0]):
-        tau_wv = band_wv_kappa[band] * q * dp / g
-        # vapour pressure e = q * p / (eps + (1 - eps) q); the continuum path is
-        # proportional to q * e, hence quadratic in humidity.
-        vapour_pressure = q * p_full / (eps + (1.0 - eps) * q.clamp(min=0.0))
-        tau_wv = tau_wv + (
-            band_wv_continuum[band] * q * (vapour_pressure / p0) * dp / g
-        )
-        tau_co2 = (
-            band_co2_base[band]
-            + band_co2_log[band] * torch.log(co2_ratio.clamp(min=0.01))
-        ) * mass_fraction
-        tau_trace = band_trace_scale[band] * trace_tau * mass_fraction
-        if ozone_profile:
-            tau_trace = tau_trace + band_o3_scale[band] * o3_lw_tau * o3_profile
-        dtau = tau_wv + tau_co2 + tau_trace + cloud_lw_tau
-        transmissivity = torch.exp(-dtau * mu_diff)
+        for point in range(gpoints):
+            index = band * gpoints + point
+            tau_wv = band_wv_kappa[index] * q * dp / g
+            if wv_pressure_exponent is not None:
+                tau_wv = tau_wv * (p_full / p0).clamp(min=1.0e-6) ** wv_pressure_exponent[index]
+            # vapour pressure e = q * p / (eps + (1 - eps) q); the continuum path is
+            # proportional to q * e, hence quadratic in humidity.
+            vapour_pressure = q * p_full / (eps + (1.0 - eps) * q.clamp(min=0.0))
+            tau_wv = tau_wv + (
+                band_wv_continuum[band] * q * (vapour_pressure / p0) * dp / g
+            )
+            tau_co2 = (
+                band_co2_base[index]
+                + band_co2_log[band] * torch.log(co2_ratio.clamp(min=0.01))
+            ) * mass_fraction
+            tau_trace = band_trace_scale[band] * trace_tau * mass_fraction
+            if ozone_profile:
+                tau_trace = tau_trace + band_o3_scale[band] * o3_lw_tau * o3_profile
+            dtau = tau_wv + tau_co2 + tau_trace + cloud_lw_tau
+            transmissivity = torch.exp(-dtau * mu_diff)
 
-        b_level = level_weights[:, :, band] * sigma_sb * t ** 4
-        b_surface = surface_weights[:, band] * sigma_sb * ts ** 4
-        emission = b_level * (1.0 - transmissivity)
+            b_level = level_weights[:, :, band] * sigma_sb * t ** 4
+            b_surface = surface_weights[:, band] * sigma_sb * ts ** 4
+            if gpoints > 1:
+                b_level = b_level * gpoint_fractions[band, point]
+                b_surface = b_surface * gpoint_fractions[band, point]
+            emission = b_level * (1.0 - transmissivity)
 
-        f_up = forward_flux_sweep(
-            transmissivity.flip(1), emission.flip(1), b_surface
-        ).flip(1)
-        f_dn = forward_flux_sweep(
-            transmissivity, emission, torch.zeros(batch, device=device, dtype=dtype)
-        )
+            f_up = forward_flux_sweep(
+                transmissivity.flip(1), emission.flip(1), b_surface
+            ).flip(1)
+            f_dn = forward_flux_sweep(
+                transmissivity, emission, torch.zeros(batch, device=device, dtype=dtype)
+            )
 
-        f_net = f_up - f_dn
-        heating = heating + (-g / cp * (f_net[:, :-1] - f_net[:, 1:]) / dp)
-        lw_down_sfc = lw_down_sfc + f_dn[:, nlevels]
-        olr = olr + f_up[:, 0]
+            f_net = f_up - f_dn
+            heating = heating + (-g / cp * (f_net[:, :-1] - f_net[:, 1:]) / dp)
+            lw_down_sfc = lw_down_sfc + f_dn[:, nlevels]
+            olr = olr + f_up[:, 0]
 
     return heating, lw_down_sfc, olr
 

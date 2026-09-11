@@ -24,7 +24,6 @@ parser.add_argument('--days', type=int, default=100)
 parser.add_argument('--surface-temperature', type=float, default=290.45)
 parser.add_argument('--config', type=Path)
 parser.add_argument('--mb-max', type=float)
-parser.add_argument('--detrain-rh', type=float)
 parser.add_argument('--max-dq-day', type=float)
 parser.add_argument('--output', type=Path)
 args = parser.parse_args()
@@ -43,8 +42,6 @@ for nlevels in args.levels:
     })
     if args.mb_max is not None:
         params['mf_mb_max'] = args.mb_max
-    if args.detrain_rh is not None:
-        params['mf_detrain_rh'] = args.detrain_rh
     if args.max_dq_day is not None:
         params['mf_max_dq_day'] = args.max_dq_day
 

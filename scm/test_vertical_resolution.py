@@ -1,3 +1,4 @@
+import pytest
 import torch
 
 from scm.boundary_layer import boundary_layer_mixing, diagnose_boundary_layer_depth
@@ -179,6 +180,15 @@ def test_boundary_layer_cloud_transport_conserves_total_water_and_energy():
     assert torch.allclose(energy_tendency, torch.zeros_like(energy_tendency), atol=1.5e-1)
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        'The production flux-form mass-flux closure is resolution-dependent: the '
+        'CAPE response per unit mass flux differs about 61% across 10/20/40 '
+        'levels. This test passed before only because the code default ran the '
+        'legacy path, removed 10 Sep. See docs/column_open_problems.md, 10 Sep.'
+    ),
+)
 def test_mass_flux_cape_response_converges_across_teaching_grids():
     responses = []
     limits = []

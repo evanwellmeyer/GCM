@@ -1,5 +1,7 @@
 # SCM boundary-layer case benchmarks
 
+> 10 Sep 2026: the development configs and checkpoints named here were removed as stale. Git history keeps them.
+
 These cases separate boundary-layer and shallow-convection behavior from the radiative-convective equilibrium column.
 
 The dry mixed-layer case starts with a neutral 300 K layer below 1 km, a 2 K inversion, and a 100 W m-2 prescribed surface sensible heat flux. It measures boundary-layer growth, mixed-layer uniformity, and column-energy conservation after six hours.

@@ -8,7 +8,7 @@ perturb_days = 10
 fixed_sst = false
 plot = false
 device = "auto"
-label = "atm407_flux_v1"
+label = "atm407_plume_stop"
 preserve_ensemble_shape = false
 save_restarts = true
 restart_from = ""
@@ -165,14 +165,11 @@ tau_cape = 21600.0
 precip_efficiency = 0.80
 retain_convective_condensate = false
 cape_threshold = 50.0
-detrain_rh = 0.70
 mb_max = 1.0
-bl_export_fraction = 1.0
 max_dt_day = 20.0
 max_dq_day = 20.0
 condensate_retention = 0.25
 condensate_fallout = 0.45
-enforce_mse_conservation = true
 cape_timescale_mode = "fixed"
 closure_mode = "cape_response"
 trial_mass_flux = 0.01
@@ -198,7 +195,6 @@ cape_max_pressure_step = 2500.0
 # balance it, and it is only worth enabling alongside a stronger sink.
 downdraft_fraction = 0.4
 downdraft_start_sigma = 0.60
-downdraft_entrainment = 0.05
 downdraft_release_sigma = 0.90
 downdraft_entrainment_pa = 1.0e-5
 downdraft_detrainment_pa = 1.0e-5
@@ -284,11 +280,50 @@ boundary_layer_scheme = "richardson"
 # bl_top_sigma is ignored while bl_diagnose_depth is true; kept for reference.
 bl_diagnose_depth = true
 bl_min_depth_m = 100.0
-bl_max_depth_m = 900.0
+bl_max_depth_m = 1500.0
+# Boundary-layer mixing strength. The code default of k_diff = 0.5 m2/s is
+# 20-200x weaker than a convective marine boundary layer (10-100 m2/s). At 0.5
+# the lowest 1.4 km sat upside down (theta_v fell 3.16 K from the surface to
+# 865 hPa) and dry adjustment did the mixing at 14 K/day. At 40 the column is
+# upright (0.39 K), dry adjustment falls to zero, and the column settles within
+# 1000 days. The cap factor is raised with it so K is not clipped at 2 m2/s.
+# With this change alone, equilibrium TOA was +1.06 W/m2 (+0.93 before). Mixing raised column
+# water vapour 63% and warmed the column 3.6 K; those two radiative effects
+# nearly cancel. Side effect: a wetter 865-910 hPa band.
+k_diff = 40.0
+k_diff_cap_factor = 40.0
 bl_mix_moist_static_energy = true
 bl_top_sigma = 0.94
-mf_bl_export_top_sigma = 0.96
 include_precip_enthalpy_flux = true
+
+# Hidden defaults, written out on 10 Sep. These are the values the code falls
+# back to when a config does not set them. They were invisible, which is how
+# bl_diagnose_depth = false once silently disabled a verified fix. Writing them
+# here changes nothing: two physics steps are identical before and after. It
+# makes every active setting visible and diffable. The [numerics] copy of
+# rad_interval_microphysics_steps is not read by the physics; this one is.
+bl_mix_levels = 8
+bl_mix_total_water = false
+bl_shear_floor = 1.0
+k_diff_min = 0.05
+ri_crit = 0.25
+unstable_diffusion_boost = 4.0
+cloud_autoconv_path_thresh_kgm2 = 0.02
+cloud_autoconversion_scheme = "local"
+cloud_evaporation_before_autoconversion = false
+cloud_evaporation_scheme = "relative_humidity"
+cloud_fraction_from_condensation = true
+cloud_optical_depth_from_gridmean_water = false
+cloud_sedimentation_speed = 0.0
+cloud_fractional_gridmean_optics = false
+cloud_fractional_optics_blend = 1.0
+condensation_scheme = "large_scale"
+rad_interval_microphysics_steps = 1
+shallow_convection_scheme = "simple"
+surface_flux_coupling = "distributed"
+mf_plume_count = 1
+mf_plume_entrainment_spread = 3.0
+mf_rain_evap_coefficient = 0.0
 #
 # examples:
 # tau_cape = 3600.0
@@ -341,3 +376,9 @@ include_precip_enthalpy_flux = true
 # surface_emissions = 0.0
 # dry_deposition_velocity = 0.0
 # wet_deposition_rate = 0.0
+
+# The deep-convection plume stops at its level of neutral buoyancy, as in CESM2
+# (Zhang-McFarlane). Without this it carried about 5 W/m2 of heat from the
+# stratosphere into the troposphere. See docs/column_open_problems.md, 10 Sep.
+# Equilibrium with it: TOA +0.46 W/m2, surface temperature 289.0 K.
+mf_plume_stop_at_neutral_buoyancy = true

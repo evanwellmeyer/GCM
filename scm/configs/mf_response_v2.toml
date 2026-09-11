@@ -10,7 +10,6 @@ minimum_cape_response = 1.0
 available_mass_fraction = 0.25
 source_top_sigma = 0.90
 mb_max = 1.0
-bl_export_fraction = 1.0
 buoyancy_detrainment_weight = 1.0
 
 [params]

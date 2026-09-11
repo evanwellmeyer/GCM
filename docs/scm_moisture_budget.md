@@ -1,5 +1,7 @@
 # SCM moisture-budget diagnosis
 
+> 10 Sep 2026: the development configs and checkpoints named here were removed as stale. Git history keeps them.
+
 > Historical diagnosis. The accepted configuration is now `atm407_flux_v1`; it removes the saturated band and supersedes the `mf_response_v3` recommendation below. See [column_audit_2026-09-07.md](column_audit_2026-09-07.md) for the current configuration, checkpoint, and validation.
 
 The accepted 20-level SCM state developed nearly saturated conditions from the
