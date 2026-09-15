@@ -5,7 +5,7 @@ import torch
 from scm.thermo import Lv, cp, g, geopotential, kappa, p0, saturation_specific_humidity
 
 
-def partition_plume(theta_liquid, total_water, pressure):
+def partition_plume(theta_liquid, total_water, pressure, iterations=20):
     exner = (pressure / p0).clamp(min=1.0e-6) ** kappa
     def residual(vapor):
         condensate = torch.clamp(total_water - vapor, min=0.0)
@@ -15,7 +15,7 @@ def partition_plume(theta_liquid, total_water, pressure):
     saturated = residual(total_water) > 0.0
     lower = torch.zeros_like(total_water)
     upper = total_water
-    for _ in range(20):
+    for _ in range(int(iterations)):
         middle = 0.5 * (lower + upper)
         above = residual(middle) > 0.0
         upper = torch.where(above, middle, upper)

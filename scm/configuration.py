@@ -5,6 +5,7 @@ import tomllib
 
 CONFIG_DIR = Path(__file__).with_name("configs")
 DEFAULT_CONFIG_PATH = CONFIG_DIR / "default.toml"
+LEGACY_CONFIG_PATH = CONFIG_DIR / "legacy_base.toml"
 
 
 def _non_null_items(mapping):
@@ -49,12 +50,13 @@ def _load_config_file(path, active=None):
 def load_run_config(path=None):
     """load the default SCM config, optionally merged with a user config."""
 
-    config = _load_config_file(DEFAULT_CONFIG_PATH)
-
     if path is None:
-        return config
+        return _load_config_file(DEFAULT_CONFIG_PATH)
 
     user_path = Path(path)
+    # Explicit experiments retain their original base instead of silently
+    # inheriting each newly promoted teaching parameter.
+    config = _load_config_file(LEGACY_CONFIG_PATH)
     override = _load_config_file(user_path)
 
     config = deep_merge(config, override)
@@ -251,6 +253,7 @@ def extract_param_overrides(config):
     if mass_flux:
         params.update(_non_null_items({
             "entrainment_rate": mass_flux.get("entrainment_rate"),
+            "mf_cape_entrainment_rate": mass_flux.get("cape_entrainment_rate"),
             "mf_detrainment_rate": mass_flux.get("detrainment_rate"),
             "mf_plume_decay_rate": mass_flux.get("plume_decay_rate"),
             "tau_cape": mass_flux.get("tau_cape"),

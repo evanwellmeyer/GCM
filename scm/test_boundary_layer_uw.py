@@ -28,6 +28,7 @@ def test_uw_moist_turbulence_conserves_surface_water_and_energy():
     })
 
     output = uw_moist_turbulence(state, grid, params)
+    assert output['tke_interfaces'].shape == (1, 39)
     mass = state["dp"] / g
     water = torch.sum((output["dq"] + output["dqc"]) * mass, dim=1)
     energy = torch.sum(
@@ -106,6 +107,7 @@ def test_registered_uw_scheme_returns_host_grid_tendencies_from_physics_grid():
     )
 
     assert output["dt"].shape == state["t"].shape
+    assert output['tke_interfaces'].shape == (1, 19)
     assert output["dq"].shape == state["q"].shape
     assert output["dqc"].shape == state["qc"].shape
     assert torch.isfinite(output["dt"]).all()

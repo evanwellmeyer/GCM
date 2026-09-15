@@ -1,5 +1,158 @@
 # ATM407 single column: state and open problems
 
+## Local cleanup and cloud-top attribution
+
+Generated suffixed notebook checkpoints and notebook/tool caches are ignored; the canonical unsuffixed checkpoint pair, source, configs and regression fixtures remain pushable. No experiment files were deleted. Older entries below are historical, not current configuration instructions: `default.toml` now aliases `atm407.toml`, with `legacy_base.toml` supplying explicit-config compatibility.
+
+The archived six-hour baseline establishes where cloud-top water comes from: at 1823 m shallow convection adds **1.10886 g/kg**, imposed forcing removes **0.44052 g/kg**, and net storage is **0.66834 g/kg**. Other operators contribute essentially zero total water there. At hour 3, shallow water flux entering this cell is **2.73303 kg/m²/day**, with zero leaving above. Thus terminal plume flux convergence deposits the water; condensation is not creating it. Zero flux above a stopped plume is not itself a bug.
+
+The host stops ascent at zero vertical kinetic energy and retains crossed-interface fluxes. CAM's reference additionally replaces fluxes in its penetration region with a diagnosed return-flow entrainment treatment (`uwshcu.F90`, lines 3390–3400). This structural difference is a hypothesis to test, not evidence that adding return flow automatically fixes moistening. Next compare the stopping-region flux and return-flow contract on identical saved plume inputs before implementing or tuning it. These numbers are from the archived baseline, **not** a process attribution of the newer combined one-hour candidate. Reproduction: `python scripts/trace_bomex_cloud_top.py`; requires the locally generated `bomex_launch_budget_20_6h.json` archive. No physics/default changes or equilibrium run were made in this cleanup.
+
+## Latest repair candidate: conserved environment and diagnosed sorting depth
+
+**Current decision: not a validated fix; do not promote.** The completed combined one-hour screen reduces launch-layer drying but shifts more moisture toward 1823 m. Compared over the same first hour with the archived baseline, maximum water change improves only from 0.230 to 0.215 g/kg, while maximum theta_l change worsens from 0.149 to 0.158 K. At 825 m drying improves from 0.230 to 0.163 g/kg, but moistening at 1823 m increases from 0.149 to 0.215 g/kg. Rain during minutes 30–60 decreases from 0.154 to 0.131 mm/day; this is not the required hours 3–6 rain window. The combined correction has not passed a six-hour screen. The strong frozen-state drying reductions below must not be represented as a comparable overall model improvement.
+
+Two reference-contract issues have been addressed behind explicit UW development flags: the plume environment is reconstructed from layer-local conserved heat/total water using the host's phase partition, and the buoyancy-sorting distance can now be diagnosed as 10% of plume-top height rather than fixed at 100 m. The latter iterates fresh plumes to a 1% relative consistency target (maximum six trials) and reports residual consistency. Neither flag is enabled in the supported default or teaching checkpoint. Details and reproduction commands are in [the audit](column_bomex_transport_audit_2026-09-14.md).
+
+**Do not confuse a kernel correction with physical validation.** The six-hour reconstruction-only screen fails: maximum theta_l change −0.76776 K and water change +0.97970 g/kg at 1823 m; late rain 0.06716 mm/day passes. The saturation-partition control gives essentially the same result. At 825 m drying remains 0.912 g/kg. This rejects reconstruction alone as the solution.
+
+With both corrections, saved-state drying is reduced from approximately 3.80 to **1.53 g/kg/day** at hour 3 and from 3.41 to **0.34** at hour 5.75. Sorting-scale discrepancies are 0.19% and 0.50%, and float64 water/energy budgets close to numerical precision. These are local tests, not six-hour acceptance. Forty-one focused tests pass. The one-hour coupled result is `outputs/column/diagnostics/bomex_conserved_environment_1h_host_diagnosed.json`; it is explicitly not six-hour validation. No equilibrium or notebook-reference regeneration was performed. The outstanding physical issue is the vertical distribution of transport/deposition, not a proven missing water source or a justified rain-threshold adjustment.
+
+## Latest: unified default and humidity-contrast audit
+
+The generic default now aliases `atm407.toml`; they resolve identically. The notebook's existing effective configuration is unchanged. The old base is retained as `legacy_base.toml` for compatibility: a before/after comparison of every existing explicit TOML found only `default.toml` changed. Thus the UW candidate and other experiments retain their original effective settings. Fourteen configuration/reference/substep tests pass, including default equality and experimental isolation. Earlier statements below that the generic default differs from the teaching setup are superseded.
+
+The hour-3 archived launch-layer flux jump has now been decomposed exactly. In kg/m²/day, decreasing mass flux contributes **−2.063**, plume dilution **−1.188**, and the changing effective environmental humidity contrast **+4.836**, leaving **+1.585** upward flux increase (drying). Source total water is 17.111 g/kg, upper plume water 16.191, and upper environmental water 12.993. The lower effective environment (16.737) is inferred from the reconstructed subcloud flux, not an independent measured interface humidity. This decomposition reproduces the archived jump to 7.1e-7 kg/m²/day.
+
+This rules out interpreting the jump as simply growing plume mass flux or absent plume dilution. The mismatch between the reconstructed lower transport and the strong upper humidity contrast dominates. It does **not** establish which reconstructed profile or closure is physically wrong; no coefficient has been tuned or physical drying claimed fixed. Evidence: `outputs/column/diagnostics/bomex_launch_contrast.json`, reproduced by `scripts/decompose_bomex_launch_contrast.py`. The next physical correction requires validating this scalar transport against a controlled inversion case, rather than suppressing the diagnosed term by hand.
+
+## Navigation and latest result, 15 September 2026
+
+For the active configuration and module map, start with [column_code_map.md](column_code_map.md) and the [configuration inventory](../scm/configs/README.md). The teaching notebooks use `atm407.toml` (Richardson boundary layer, simple shallow convection, mass-flux deep convection); the current launch-layer drying investigation uses the separate UW candidate. The generic `default.toml` is older and different. The ATM407 reference generator now defaults explicitly to the notebook configuration instead of the generic base. No checkpoint, notebook physics selection or generic physics default was changed in this cleanup.
+
+**Matched-time comparison completed:** from archived hour 5.75, both closures were evolved for 900 s with four internal 225 s updates. Baseline water change at 825 m is **−0.030651 g/kg**; Gaussian joint-launch change is **−0.041593 g/kg**, or **35.7% more drying**. Water residuals are below 1.36e-9 kg/m²/s and absolute energy residuals below 0.007 W/m². This rules out the Gaussian launch replacement as a standalone remedy in this local test. It does not demonstrate that lowering launch mass flux is the physically correct solution.
+
+**Physical fix remains open:** the established mechanism is excess shallow water-flux divergence across the launch/inversion cell, not spurious rain removal or loss of total water. The underlying closure error has not yet been isolated sufficiently to justify changing a physical coefficient. Do not call the substep facility a fix for that physical bias. Next isolate the plume/environment water contrast and entrainment/detrainment contribution to the overlying flux at matched time integration, retaining the baseline launch closure. No equilibrium rerun is justified by this result.
+
+Evidence: `outputs/column/diagnostics/bomex_matched_launch_225.json`. Twenty-nine targeted tests pass, including a new guard that the ATM407 reference generator selects `atm407.toml`. Organization changes add navigation and status labels, repair an obsolete RH-threshold comment, and retain all historical code/configs because some remain imports or inherited parents. No files were deleted.
+
+## Start here, 15 September 2026 — internal shallow substeps verified
+
+**Numerical correction implemented, opt-in:** `uw_shallow_maximum_timestep_s` now bounds internal steps of the complete UW shallow operator. The source, plume and moving inversion are reconstructed from the evolving state on every internal step; returned tendencies represent the final endpoint and rain is time averaged. The CAM inversion formula itself was verified against the saved reference, not removed. Zero (the default) retains the legacy path, so existing configurations and checkpoints are unchanged.
+
+One archived-state 900 s call with a 225 s internal maximum reproduces the previous four explicit 225 s calls **exactly in total-water and theta_l profiles**: water change at 825 m is **−0.041593 g/kg**, water residual **1.36e-9 kg/m²/s**, and energy residual **0.003754 W/m²**. This prevents the misleading coarse-step moistening in this test. **It does not fix the persistent physical drying or validate the closure.** Twenty-eight targeted tests pass. Evidence: `outputs/column/diagnostics/bomex_internal_substeps_225.json`; implementation and limitations are described in [the audit](column_bomex_transport_audit_2026-09-14.md).
+
+**Latest diagnostic:** the late-state moistening from the joint Gaussian launch closure does not survive shorter evolving-state updates. Starting from saved BOMEX hour 5.75 and evolving shallow physics alone for 900 s gives total-water changes at 825 m of **+0.026335 g/kg** with one 900 s step, **−0.044034** with two 450 s steps, and **−0.041593** with four 225 s steps. Temperature, vapor, condensate and winds evolve; pressure, TKE and boundary-layer depth are held fixed. This is a local consistency test, not a new BOMEX integration or a validated equilibrium. The baseline single 900 s update gives −0.035496 g/kg; a refined baseline has not been tested, so this is not a converged comparison of the two closures.
+
+The 450-to-225 s difference is 0.002441 g/kg across the entire water profile and 0.001031 K in liquid-water potential temperature. A further eight-step **112.5 s** trial gives **−0.040401 g/kg**, with maximum differences from 225 s of **0.001193 g/kg** and **0.000531 K**. Differences approximately halve under refinement, consistent with first-order time convergence toward drying; this is not proof of full-model convergence. Integrated water residuals are below 1.36e-9 kg/m²/s and absolute thermodynamic-energy residuals below 0.030 W/m². Conservation therefore does not establish time accuracy: the coarse-step sign reversal is not evidence of physical improvement. Twelve diagnostic tests pass. Production physics, defaults and checkpoints remain unchanged. Results: `outputs/column/diagnostics/bomex_inversion_substeps.json` and `bomex_inversion_substeps_fine.json`; runner: `scripts/check_bomex_inversion_substeps.py`.
+
+Implemented the source and below-cloud transport contract in the **experimental UW scheme**, including native interior TKE handoff, reconstructed source thermodynamics/winds, shared source diagnosis for the implicit CIN correction, pressure-face geometry, and conservative subcloud scalar/momentum fluxes. The refined-grid adapter now handles interface TKE explicitly. The surface TKE boundary still uses the nearest interior value because this turbulence implementation has no separate surface TKE; legacy states without interface data use a documented interpolation fallback. This remains a UW-inspired implementation, not a fully validated CAM port.
+
+**42 distinct targeted tests pass**, including unchanged frozen-state water/energy closure and numerical-step convergence. One requested six-hour, 20-level, 900 s BOMEX screening was completed with unchanged benchmark forcing and configuration overrides. No new equilibrium run was performed.
+
+| metric | before source correction | after correction | screening limit |
+|---|---:|---:|---:|
+| maximum absolute theta_l change | 0.510 K | 0.580 K | 0.5 K |
+| maximum absolute total-water change | 0.599 g/kg | 1.007 g/kg | 0.5 g/kg |
+| late rain | 0.365 mm/day | 0.111 mm/day | 0.1 mm/day |
+
+**Mixed outcome, not overall validation:** rain falls substantially, but the water-profile error worsens. At approximately 825 m the column now dries by 1.007 g/kg and warms by 0.574 K; at 498 m it gains approximately 0.53 g/kg and develops cloud fraction 0.259. Near 1823 m it moistens by approximately 0.67 g/kg and cools by 0.580 K. Boundary-layer depth remains approximately 662 m; cloud water path falls from 0.0455 to 0.0347 kg/m². All three unchanged screening gates still fail.
+
+**Launch-layer budget completed:** an instrumented replay exactly reproduces the 1.007247 g/kg drying at approximately 825 m and late rain 0.111152 mm/day. Over six hours, shallow convection contributes **−1.028933 g/kg**, boundary-layer transport **+0.506862**, and prescribed forcing **−0.485174**. Deep convection, dry adjustment, condensation and cloud microphysics contribute essentially zero total-water change there. During hours 3–6, shallow water flux entering the layer is **2.621 kg/m²/day**, while upward export is **4.115 kg/m²/day**. The associated shallow theta_l warming is +3.777 K/day, partly offset by boundary-layer and imposed cooling. The imbalance is specifically the shallow flux divergence across the launch/inversion cell, not hidden rainout or a missing water source in the diagnostic.
+
+The subcloud moving-inversion term is zero at this layer throughout the replay; the overall implicit-CIN/positivity scaling remains 1. A frozen hour-3 replay exactly matches recorded raw fluxes. Plume mass flux decreases from 0.07872 at launch to 0.01495 kg/m²/s at the first overlying face, ruling out mass-flux growth there. Holding that plume fixed and substituting CAM's upper-cell environmental reconstruction leaves this face's water flux unchanged. **A separate source-area cap is active**: the requested 0.22264 kg/m²/s is reduced to 0.07872; the next two face-area caps are inactive. Do not confuse this with the inactive overall transport scaling or deep-convection cap diagnostics.
+
+**Joint launch closure tested on saved inputs:** a diagnostic CAM-style Gaussian closure increases both launch mass flux and conditional velocity by about 24%, retaining a 10% source area. At saved hours 0, 3 and 5.75, the shallow total-water tendency at 825 m changes from **−5.974 to −7.997**, **−3.799 to −5.267**, and **−3.408 to +2.528 g/kg/day**, respectively. These are fixed-state tendencies, not new six-hour integrations. All three baseline raw-flux replays are exact. All source parcels are saturated, so the extra unsaturated-source LCL constraint is not needed for this diagnostic. Density, CIN and ascent retain the host definitions; this is not execution of CAM's complete scheme.
+
+The final-state sign reversal is explained by the moving-inversion term: the fraction of inversion-layer mass transported during the step rises from **0.17182 to 0.21344**, crossing the reconstructed inversion fraction **0.19495**. This adds **3.0001 kg/m²/day** to the entering water flux, or **+7.2491 g/kg/day** in the affected cell. Without that displacement contribution, the joint trial would give approximately **−4.721 g/kg/day**, still worse drying. At hour 3, changing velocity alone while retaining the old mass flux gives −4.237 g/kg/day, also worse than baseline. The active source cap is therefore not established as the cause of the drying, and replacing it is not a robust standalone cure.
+
+**Next:** use the same refined time integration for both the baseline and joint launch closures when comparing transport. The joint refined solution still dries; its 900 s sign reversal is no longer a reason to prefer it. After a matched-time comparison, return to the diagnosed excess upward water export at the launch layer. Internal substeps hold TKE and boundary depth fixed and add plume evaluations; they are not a claim of full coupled time convergence. No equilibrium run or default promotion is justified yet.
+
+Seven short plume trials were completed; six new analytic tests pass (ten including the existing budget-arithmetic tests). Maximum trial water residual is 1.32e-9 kg/m²/s and maximum absolute energy residual is 0.02942 W/m², within unchanged tolerances. Results and full profiles: `outputs/column/diagnostics/bomex_joint_launch_trials.json`; runner: `scripts/test_bomex_launch_closure.py`. The runner replaces only its in-memory diagnostic launch block and restores the original function afterward. Production code, defaults, notebooks and checkpoints are unchanged.
+
+New artifacts: `bomex_launch_budget_20_6h.json`, `bomex_launch_budget_20_6h_summary.json`, and `bomex_launch_flux_hour3_caps.json` under `outputs/column/diagnostics`. Every step's plume input, native interface TKE and parameters, plus the final column state, is saved for short replay tests. Four new diagnostic tests pass. Maximum full-budget water mismatch is 0.000114 g/kg/day; maximum theta_l mismatch is 0.002151 K/day. Integrated water storage matches the endpoint within 5.6e-8 g/kg. No physics, defaults, notebooks or checkpoints were changed by this diagnostic work.
+
+Results: `outputs/column/diagnostics/bomex_source_subcloud_20_6h.json`. Implementation and reproduction details are in [the audit follow-up](column_bomex_transport_audit_2026-09-14.md). Defaults, notebooks and checkpoints were not changed by this work; the extensive pre-existing changes from earlier work remain untouched.
+
+## Previous stage — after the ascent correction
+
+The benchmark inputs and the plume's numerical ascent/interface defect have been corrected. See the [audit and implementation follow-up](column_bomex_transport_audit_2026-09-14.md). The benchmark now uses published specific water, liquid-water potential temperature, scalar/momentum forcing, and a surface-referenced height datum. The experimental UW plume uses a physical buoyancy-sorting distance, adaptive error control, and co-located interface fluxes.
+
+All three archived frozen states converge across 50/25/10 m internal steps: maximum water-flux difference **0.00941 kg/m²/day**, MSE-flux difference **0.205 W/m²**, and top-height difference **0.00757 m**. These are numerical checks, not physical validation of the flux magnitudes. Frozen-state water/energy closure also passes, including a partially entered top cell.
+
+The final **20-level, six-hour BOMEX** run still fails its local screening gates:
+
+| quantity | result | gate |
+|---|---:|---:|
+| maximum liquid-potential-temperature change | 0.510 K | 0.5 K |
+| maximum total-water change | 0.599 g/kg | 0.5 g/kg |
+| late rain | 0.365 mm/day | 0.1 mm/day |
+
+This is closer than the pre-correction screening result (1.643 g/kg water change and 0.781 mm/day rain), but both the benchmark and plume changed; the improvement cannot be attributed to one alone. Cloud water path is 0.0455 kg/m², maximum cloud fraction 0.264, and diagnosed boundary-layer depth 662 m.
+
+Validation: 26 targeted tests pass. Three existing tests of other TKE/EDMF configurations fail their unchanged resolution thresholds under the corrected benchmark; details are in the follow-up. The older broad claims of convergence do not survive the corrected inputs.
+
+**Source-contract audit completed:** CAM's reconstructed source liquid potential temperature is 0.078–0.090 K cooler on matched source-layer support. Current source-level TKE is 0.110–0.139 m²/s² versus a layer-weighted proxy of 0.187–0.219; exact CAM averaging requires native interface TKE, which the shallow interface currently does not receive. Most decisively, four subcloud interior interfaces have zero shallow water flux, while the isolated CAM reconstruction gives nonzero flux with the same launch mass flux. Details and caveats are in the audit follow-up. Four new reference-contract tests pass. No production physics changed in this audit.
+
+**Next:** implement one consistent source/subcloud contract: retain native interface TKE and physical interface geometry, use reconstructed virtual-liquid source thermodynamics and source winds, and connect conservative subcloud scalar fluxes to above-cloud transport. Apply the same source definition in the implicit CIN correction. Test water/energy closure and frozen inputs before one six-hour 20-level BOMEX run. This is not yet a validated CAM port. Do not tune rain thresholds to compensate, switch designs on the assumption that UW itself failed, or run another long equilibrium yet.
+
+The UW candidate remains experimental. No production default or notebook checkpoint was changed by this correction. The September 12 checkpoint remains evidence of bulk equilibrium under its recorded criteria, not validation of the unresolved shallow-cloud structure. Older entries below are development history; their “fixed”, “ruled out”, and “current” labels apply to their dated experiments, not universally.
+
+## Historical status, 12 September 2026
+
+**The column is now tested against an observed case.** BOMEX (Barbados, 1969) held its
+trade-wind layer steady under measured forcing and surface fluxes, so a column given the
+same forcing must hold the observed sounding. `scripts/bomex_observed_steady_state.py`
+runs the production physics that way and scores it. No LES download is needed. Full
+detail, with every criterion fixed before its run, is under "BOMEX observed balance,
+production physics, 11 Sep".
+
+**Production fails that test through four separate defects.**
+- A. Condensation rains 95% of new cloud water out at once at cloud base
+  (`cloud_ls_precip_fraction`), which heats the subcloud layer.
+- B. The deep scheme fires in a trade-cumulus regime, because its CAPE parcel barely
+  mixes with the dry air around it.
+- C. The simple shallow scheme cannot carry water into the cloud layer at any setting.
+- D. Condensation at RH 0.90 puts too much cloud at cloud base, which caps UW's mixing.
+
+**Promoted 12 September: both fixes are in `atm407.toml`.**
+- `cloud_ls_precip_fraction` 0.95 -> 0.0, so condensation no longer rains 95% of new
+  cloud water out at once (defect A).
+- `cape_entrainment_rate = 5.0e-5` added under `[mass_flux]`, diluting the closure's
+  CAPE parcel while the plume stays at 5.0e-6 (defect B). `configuration.py` maps it to
+  `mf_cape_entrainment_rate`.
+- The 400-day test of both together passes every criterion: gates pass (drift 0.0001),
+  surface temperature +0.02 K, saturated band unchanged at 0.09, deep rain 1.94 mm/day,
+  cloud-base mass flux 0.0082 against 0.0086.
+- The reference checkpoint is now that run. The previous reference is kept at
+  `outputs/atm407_tests/atm407_equilibrium_20level_reference_pre12sep.*`.
+  `notebooks/data/README.md` and the notebook 02 instructor note carry the new numbers.
+- Checked afterwards on BOMEX with the promoted config: the subcloud warming is gone
+  (+0.13 to +0.35 K at 0-475 m, was +0.78 to +0.90) and rain falls to 0.45-0.50 mm/day
+  from 1.6-1.7. The water criterion still fails, which is defect C.
+- Pinned by `scm/test_cape_parcel_split.py` (the split reproduces the single knob when
+  matched, dilutes CAPE without touching the plume's transport, and the production config
+  carries both changes) and by a new cloud-fraction test in `scm/test_convection_uw.py`.
+- Full test suite after promotion: 152 passed, 1 expected-fail. With the four new tests:
+  156 passed, 1 expected-fail, 0 failures.
+
+**C is the open one.** The UW path is the chosen replacement. Fixed so far: the phase
+partition contract, and the mixing collapse (our own layer closure was never switched on
+in `uw_candidate_v1.toml`). Behind default-off switches:
+`uw_shallow_keep_crossed_interface` (keep a plume that stops mid-layer, with CAM's
+cloud-fraction weighting). BOMEX still fails at 20 and 40 levels, now on one defect: with
+the layer closure on, water stalls just under cloud base because the closure merges the
+cloudy layer into the mixed layer. See "Where the stop rule stands, 12 Sep".
+
+**Reproducing the evidence.** `scripts/bomex_observed_steady_state.py` (the scored check,
+`--set key=value` for experiments), `scripts/trace_bomex_budget.py` (per-scheme budget),
+`scripts/trace_uw_mixing.py`, `scripts/count_uw_plumes.py`,
+`scripts/compare_dilute_cape.py`, `scripts/trace_shallow_throttles.py`. Lab equilibrium
+tests use `scripts/make_atm407_reference.py` with `--output-label`, never the unlabelled
+reference. Note that `outputs/` is gitignored, so every result file and the downloaded CAM
+sources must be regenerated in a fresh clone, and the test checkpoints in
+`notebooks/data/` carry labels; the unlabelled pair is the reference the notebooks use.
+
 > September 7 audit: start with [the reconciled status and recovery plan](column_audit_2026-09-07.md). The notes below are preserved development history, not a consistent current specification. In particular, their claims of grid convergence, failed shared partitioning, completed UW cloud-fraction handoff, and a precipitation-efficiency shortfall are not established by the current evidence. Do not promote a configuration on those claims.
 
 > Current reference (10 Sep): `atm407.toml`, label `atm407_plume_stop` (boundary-layer `k_diff = 40`, plume stops at neutral buoyancy). 800 days on a 5 m slab after the stop was switched on: TOA +0.46 W/m2, surface -0.23 W/m2, surface temperature 289.0 K, CAPE 566 J/kg, theta_v drop 0.47 K. Passes every equilibrium gate. The notebooks use it. The `atm407_flux_v1` baseline in the next note is superseded.
@@ -1031,6 +1184,717 @@ on option 1.
 
 Full test suite with the stop on in `atm407.toml`: 148 passed, 1 expected-fail, 0 failures.
 
+### BOMEX observed balance, production physics, 11 Sep. Three defects found.
+
+**Why this test.** BOMEX is an observed case, not only an LES case. Off Barbados in
+June 1969 the trade-wind layer held steady for days. The measured forcing and surface
+fluxes were balanced by turbulence and shallow cumulus at every height. So a column
+given the same forcing and fluxes should hold the observed sounding. No LES download is
+needed.
+
+`scripts/bomex_observed_steady_state.py` runs the `atm407.toml` physics at the
+production 900 s step. It swaps in the observed surface fluxes (in production's flux
+layers) and the case's prescribed 2 K/day cooling in place of radiation. Output goes to
+`outputs/column/diagnostics/bomex_observed_steady_state*.json`.
+`scripts/trace_bomex_budget.py` splits each level's change by scheme. Its columns sum to
+the actual change at every level.
+
+Criteria fixed before the first run:
+- θ within 0.5 K of the observed sounding at every level below 2.5 km after 6 h;
+- total water within 0.5 g/kg of it;
+- rain below 0.1 mm/day over hours 3-6.
+
+**A setup defect, fixed in the script.**
+- `initialize_bomex` in `scm/case_benchmarks.py` holds θ and water constant from the
+  case top (3.5 km) to the model top. The upper troposphere starts 1.5 to 24 million
+  times supersaturated.
+- With condensation on, that caused all of the first run's rain and a full-cover cloud
+  aloft.
+- The script now extends the sounding above 3.5 km. It continues the case's own θ
+  gradient to a 195 K tropopause and holds RH at its 3.5 km value (0.26). Water never
+  increases upward.
+- Water path fell from 0.53 to 0.025 kg/m2. The scored profile moved under 0.1 K. Water
+  moved up to 0.17 g/kg at the surface.
+- `case_benchmarks.py` is not changed yet, because many tests use it. `run_bomex` has no
+  condensation, so the existing tests never condense that air. Anything that partitions
+  water over the whole column would.
+
+**Result: production fails all three criteria at every resolution.**
+
+| levels | worst θ change | worst water change | rain, mm/day |
+|---|---|---|---|
+| 20 | +0.90 K at 475 m | -0.99 g/kg at 1240 m | 1.73 |
+| 40 | +0.83 K at 1655 m | -1.13 g/kg at 1375 m | 1.74 |
+| 80 | +1.02 K at 1583 m | -1.34 g/kg at 1583 m | 1.64 |
+
+**Budget trace, 20 levels, hours 3-6.**
+- Nothing carries water above about 900 m.
+  - At 1240 m the cloud layer dries at exactly the forcing rate (-3.8 g/kg/day).
+  - Boundary-layer mixing stops at its 700-900 m top.
+  - The deep plume stops at 475 m.
+  - The shallow scheme is scaled down by CAPE: its factor 1/(1 + CAPE/600) is about
+    0.28 at the CAPE of about 1500 J/kg.
+- Water piles up at 475 m, where the observed RH is 0.96.
+  - Production condenses above RH 0.90 and rains 95% of new condensate out at once
+    (`cloud_ls_precip_fraction = 0.95`).
+  - That heats the layer at 9.5 K/day and is all of the 1.7 mm/day of rain.
+  - Boundary-layer mixing carries the heat down, and the subcloud layer warms about
+    3 K/day.
+
+**Test: no instant rain-out (`cloud_ls_precip_fraction = 0`), diagnostic only.**
+Criteria fixed before: rain below 0.1 mm/day, and the 0-475 m θ change under 0.5 K.
+- Subcloud warming: gone (-0.35 to +0.02 K, was +0.8 to +0.9). This confirms the
+  rain-out as its cause.
+- Rain: not fixed. It rose to 4.24, 2.64 and 1.60 mm/day at 20, 40 and 80 levels. At 20
+  levels, 3.96 of the 4.24 is deep convection and 0.28 is cloud microphysics.
+- Cloud layer: dries more (-1.47 g/kg at 1240 m). Deep convection now dries it,
+  through compensating subsidence.
+- Production not changed.
+
+**Status.**
+- **A. Instant rain-out at RH 0.90 heats the cloud base.** Confirmed.
+- **B. Deep convection fires and rains in a regime observed to have only shallow,
+  non-raining cumulus.** In production, A's heating caps the plume at 475 m and hides
+  this. There is a lead, not tested:
+  - Production's CAPE parcel mixes in outside air at 5e-6 per Pa, about 0.05 per km near
+    the surface.
+  - CESM2's ZM computes CAPE with a parcel mixing about 1 per km (Neale et al. 2008;
+    from memory, not checked against the paper). A dry free troposphere then suppresses
+    deep convection.
+- **C. Nothing moistens the 1-2 km cloud layer.** Not traced.
+
+**Test for B: stronger CAPE-parcel mixing, 11 Sep. Confirmed in BOMEX.**
+
+Static check first: dilute CAPE on the BOMEX start sounding, and on the lab's settled
+tropical column (`notebooks/data/atm407_equilibrium_20level.npz`).
+
+| `entrainment_rate`, per Pa | about per km near the surface | BOMEX CAPE, J/kg | tropical column CAPE, J/kg |
+|---|---|---|---|
+| 5e-6 (production) | 0.06 | 1332 | 511 |
+| 2e-5 | 0.23 | 62 | 311 |
+| 3e-5 | 0.34 | 34 | 240 |
+| 4e-5 | 0.45 | 27 | 188 |
+| 5e-5 | 0.57 | 21 | 150 |
+| 1e-4 (about CESM2) | 1.13 | 5 | 56 |
+
+Criteria fixed before: worth a run if CESM2-like mixing brings BOMEX under the 50 J/kg
+trigger while the tropical column stays above 200.
+- CESM2-like mixing fails the tropical side (56).
+- Rates of 2.5-3.5e-5 pass both on paper.
+- The tropical column would settle to a new state, so only an equilibrium run answers
+  the climate question.
+- The same knob also sets the plume's own mixing.
+
+BOMEX runs at 20 levels, with rain-out off so A does not hide B. Criteria fixed before:
+deep rain below 0.1 mm/day confirms B.
+
+| `entrainment_rate` | deep rain | microphysics rain | subcloud θ change | subcloud water change | water change at 1240 m |
+|---|---|---|---|---|---|
+| 5e-6 | 3.96 mm/day | 0.28 | -0.35 to +0.02 K | +0.7 to +0.8 g/kg | -1.47 g/kg |
+| 3e-5 | 0.21 | 0.48 | +0.12 to +0.33 | +1.0 | -1.03 |
+| 5e-5 | 0.00 | 0.50 | +0.13 to +0.35 | +1.05 | -0.95 |
+
+- B is confirmed. At 5e-5 the deep scheme stays off in BOMEX. At 3e-5 it still rains
+  0.21 mm/day.
+- With A and B both off, the subcloud θ passes, but the check still fails at every grid:
+  - Rain is 0.45-0.50 mm/day. All of it is cloud microphysics turning the cloud water
+    piled up at 475 m into rain (water path 0.19 kg/m2, cloud fraction 0.5 there).
+  - The surface moisture is trapped below about 900 m: +1.05 g/kg below it, -0.95 g/kg
+    at 1240 m.
+  - At 40 and 80 levels, θ near the 1.6 km inversion also warms 0.8-1.0 K.
+- What remains is defect C. The shallow scheme moves heat up (+0.7 to +1.0 K/day at
+  1.2-2.5 km) but almost no water (+0.03 g/kg/day at 1240 m). The observed balance
+  needs cumulus to carry water up into the cloud layer.
+- Production not changed.
+
+**Trace of C: the simple shallow scheme, 11 Sep. Its design, not a setting.**
+Shallow-scheme water tendency at the BOMEX start, 20 levels, removing one throttle at a
+time (g/kg/day; removing the CAPE cut alone gives exactly the production column):
+
+| height | RH | production | `detrain_rh` = 1 | no caps | all three off |
+|---|---|---|---|---|---|
+| 0-475 m | 0.80-0.96 | -0.33 | -0.70 | -1.67 | -20.2 |
+| 803 m | 0.94 | -0.26 | -0.51 | -1.34 | -14.7 |
+| 1240 m | 0.87 | -0.01 | +0.12 | -0.06 | +3.4 |
+| 1800 m | 0.48 | +0.24 | +0.47 | +1.22 | +13.6 |
+| 2451 m | 0.29 | +0.33 | +0.58 | +1.68 | +16.9 |
+
+- The 1.5 K/day heat cap binds and cuts the transport about 5 times. The CAPE cut
+  changes nothing while the cap binds.
+- At every setting the water goes to 1.8-2.5 km, where RH is lowest, not into the
+  1-1.5 km cloud layer. The scheme relaxes each level toward the subcloud water, capped
+  at RH `detrain_rh`, so a level already near that RH gets nothing.
+- It cools the subcloud layer: 1.5 K/day at production settings, 43 K/day with the
+  throttles off. Its heat measure is cp T + L q with no g z term, which overstates the
+  upward heat excess.
+- So C is the scheme's design. It is a relaxation, not a plume. CESM2 (CLUBB) and GFDL
+  AM4 (UW shallow) use PDF or plume schemes here. The fix is the paused UW shallow work,
+  now with the BOMEX observed balance as its target rather than only a water-path gate.
+
+**Equilibrium tests of A and B, started 11 Sep.** Three 400-day runs on the 5 m slab,
+from the current reference, with `scripts/make_atm407_reference.py`:
+- A: `--cloud-ls-precip-fraction 0`, label `rainout0_5m`.
+- B: `outputs/atm407_tests/entrain5e5.toml` (`entrainment_rate` 5e-5), label
+  `entrain5e5_5m`.
+- A and B together, label `rainout0_entrain5e5_5m`.
+
+Criteria fixed before:
+- every equilibrium gate passes;
+- deep rain at least 1 mm/day (reference 1.98), so deep convection still works in the
+  tropical column;
+- RH95 mass fraction no higher than the reference's 0.09.
+
+400 days may be too short to settle, since the reference needed 800 after the stop. If a
+run fails only the drift gate, extend it before judging.
+
+**UW candidate on the BOMEX observed balance, 11 Sep. Fails, and worse on finer grids.**
+`scm/configs/uw_candidate_v1.toml` as it stands (UW turbulence and UW shallow, surface
+fluxes handed to the boundary layer). It sits on `default.toml`, not `atm407.toml`.
+
+| levels | worst θ change | worst water change | rain, mm/day | water path, kg/m2 |
+|---|---|---|---|---|
+| 20 | +0.66 K at 1240 m | +1.88 g/kg at the surface | 4.12 | 0.001 |
+| 40 | +1.20 K at 1375 m | +3.32 g/kg at the surface | 2.89 | 0.002 |
+| 80 | +2.26 K at 678 m | +5.69 g/kg at the surface | 3.94 | 0.001 |
+
+- The surface moisture piles up in the lowest level, and more so on finer grids.
+- The cloud layer still dries (-1.36 g/kg at 1240 m at 20 levels).
+- Output: `outputs/column/diagnostics/bomex_observed_steady_state_uw_candidate_v1.json`.
+
+Budget trace (`scripts/trace_bomex_budget.py --config scm/configs/uw_candidate_v1.toml`):
+- A and B are in this config too, with the lab's values (`cloud_ls_precip_fraction`
+  0.95, `entrainment_rate` 5e-6).
+- 20 levels: rain is 3.33 mm/day deep and 0.79 large-scale. The UW shallow scheme does
+  nothing at any level, which matches the known launch bug. The cloud layer dries at
+  -5.1 g/kg/day at 1240 m: the forcing plus the deep scheme's subsidence.
+- 80 levels: rain is 0.48 deep, 1.72 shallow, 1.46 large-scale and 0.27 microphysics.
+  - The UW shallow scheme cools the lowest level at 34.5 K/day, and condensation makes
+    fog there (+25.8 K/day).
+  - Water piles up in the lowest 200 m at about 9 g/kg/day. The turbulence is not
+    mixing the surface moisture through the subcloud layer.
+  - Between 450 and 700 m the turbulence and shallow tendencies swing ±20-70 g/kg/day
+    from one level to the next.
+
+UW candidate with A and B off (`--set cloud_ls_precip_fraction=0 entrainment_rate=5e-5`),
+to see UW's own defects:
+
+| levels | worst θ change | worst water change | rain, mm/day | water path, kg/m2 |
+|---|---|---|---|---|
+| 20 | +0.45 K at 475 m (pass) | +1.18 g/kg at the surface | 0.06 (pass) | 0.152 |
+| 40 | +0.68 K at 1655 m | +1.82 g/kg at the surface | 0.16 | 0.091 |
+| 80 | +2.61 K at 1072 m | -5.57 g/kg at 1072 m | 2.68 | 0.188 |
+
+- At 20 levels the subcloud layer gains about 1.1 g/kg, and the cloud layer dries at
+  the no-physics rate (-0.91 against -0.94 g/kg). The shallow scheme does nothing.
+- At 80 levels it blows up near 1 km.
+- UW's own defects, in order to trace: the surface moisture pile-up (every grid), the
+  shallow plume that does not launch (20 levels), the swings near the boundary-layer top
+  (80 levels).
+
+**UW surface pile-up: not a surface-mixing fault.** UW diffusivity at the BOMEX start,
+with the observed fluxes:
+- Mixing near the surface is reasonable and consistent across grids: 3-27 m2/s in the
+  lowest 90 m, rising to about 190 m2/s at 400 m.
+- The diagnosed depth is 759, 768 and 775 m at 20, 40 and 80 levels.
+- Mixing is zero or nearly zero across cloud base: 0.74 m2/s near 800 m at 20 levels,
+  and 0 at 556-720 m at 40 levels.
+- So moisture can leave the subcloud layer only in the shallow plume. On 20 levels the
+  plume never launches.
+- Working hypothesis, not yet checked later in the run: the pile-up is the missing
+  cloud-base export, not the surface layer. [Corrected below: only half of it.]
+
+**Checked later in the run (A and B off): two causes, not one.**
+- At 20 levels the shallow plume is computed and then discarded. It reports a cloud-base
+  mass flux of 0.10, then 0.05 kg/m2/s, but its tendencies are zero. This matches the
+  launch bug in "UW on BOMEX: step 4".
+- The mixed layer collapses inside the subcloud layer. At 20 levels the diffusivity at
+  361 m falls from 179 to 0 m2/s within 3 h, while the diagnosed depth stays near
+  830 m. Water piles up below 250 m (18.95 g/kg at the surface against 17.00 at 475 m
+  by hour 6).
+- At 40 levels the diffusivity flips between 0 and 200 m2/s (the cap) at neighbouring
+  interfaces, and the pattern moves from hour to hour. This looks like a time-step
+  instability of the local closure at 900 s. It is untested.
+
+**Why the mixed layer collapses: traced step by step, 20 levels.** Criterion fixed
+before: condensation heating is the cause if cloud forms at 475 m first and the 361 m
+interface turns stable in the same step. Confirmed:
+
+| time | θv(475 m) - θv(247 m) | cloud water at 475 m | cloud fraction at 475 m | diffusivity at 361 m |
+|---|---|---|---|---|
+| start | -0.05 K | 0 | 0 | 179 m2/s |
+| 0.25 h | +0.28 K | 0.13 g/kg | 0.27 | 0 |
+| 1.75 h | 0.00 K | 0.11 g/kg | 0.25 | 0 |
+| 2.00 h | -0.06 K | 0.11 g/kg | 0.25 | 200 |
+| 2.25 h | +0.35 K | 0.17 g/kg | 0.31 | 0 |
+
+- The observed RH at 475 m is 0.96, above the 0.90 threshold. Condensation there makes
+  0.13 g/kg of cloud water and 27% cover in the first step.
+- Its latent heat warms the level 0.33 K, and the interface below turns stable.
+- Each time the step erodes, the next condensation rebuilds it.
+
+**Time-step test: 60 s instead of 900 s, all grids.** Criteria fixed before: the 80-level
+θ error falls below 1 K, and the worst water change agrees within 0.5 g/kg across grids.
+
+| levels | worst θ change | worst water change | rain, mm/day |
+|---|---|---|---|
+| 20 | +0.43 K at 475 m | +1.92 g/kg at the surface | 0.06 |
+| 40 | -0.68 K at 1128 m | +1.65 g/kg at the surface | 0.10 |
+| 80 | +0.99 K at 678 m | -2.18 g/kg at 678 m | 0.34 |
+
+- The 80-level blow-up shrinks (θ +2.61 to +0.99 K, rain 2.68 to 0.34 mm/day).
+- The grids still disagree on water, with opposite signs. Fails.
+- The surface pile-up stays at 60 s, so it is not a time-step artifact.
+- The time step is part of the fine-grid problem, not all of it.
+
+**New defect D: condensation at RH 0.90 puts cloud and heating at the top of the
+subcloud layer.** The level spanning cloud base gets 27% cover and 0.13 g/kg, where the
+benchmark doc expects about 10% cover for BOMEX. A is what happens to that condensate
+afterwards (95% rains out). D is the condensation itself. It caps UW's mixed layer. In
+production with A off, the subcloud θ still passed, so the Richardson scheme is less
+sensitive to it.
+
+**Test of D: no partial condensation (`condensation_rh_crit` 1.0), 20 levels.** Criterion
+fixed before: D causes the collapse if the diffusivity at 361 m stays above 10 m2/s at
+every step through 3 h. Fails at 2.25 h.
+- For the first 1.75 h the diffusivity holds at 141-153 m2/s. At 0.90 it fell to 0
+  after one step. So D causes the early collapse.
+- The subcloud layer keeps moistening, because the discarded plume exports nothing. The
+  475 m level saturates by 2 h. Condensation then starts, and the diffusivity is 0 from
+  2.25 h to 5 h, apart from brief openings.
+- So the main cause is the missing cloud-base export: the plume discarded on 20 levels.
+  D only brings the collapse forward. Next: the plume bookkeeping fix, judged against
+  the BOMEX observed balance instead of the old cloud-fraction test.
+
+**Plume bookkeeping fix, 11 Sep: switch `uw_shallow_keep_crossed_interface`, off by
+default.**
+- CAM's `uwshcu.F90` finds where the updraft velocity reaches zero inside a layer (its
+  penetration depth). It keeps the fluxes through the interfaces the plume crossed, so
+  the plume's mass detrains in the layer where it stops. (This is from a summary of the
+  source, not checked line by line.)
+- Our `_integrate_one_column` discarded the whole plume whenever it stopped between two
+  levels, even after crossing the interface between them.
+- With the switch on, w2 is interpolated within the 50 m sub-step, so a plume that
+  crosses the interface and stops in the same sub-step is caught. The step-5 attempt
+  missed those.
+- The flux through the crossed interface uses the plume state and w2 at the crossing.
+- With the switch off, results are bit-identical: the old recording code moved into a
+  helper unchanged.
+
+Criteria fixed before the run (UW candidate, A and B off, 20 levels, 900 s):
+- the plume is kept in at least 12 of 24 steps;
+- the subcloud water change after 6 h is under 0.5 g/kg (was +1.1 to +1.2);
+- the 1240 m water change is above -0.5 g/kg (was -0.91, no-physics -0.94);
+- the UW tests pass. Any that fail are reported, not loosened.
+
+Result: **partial.**
+- Switch off: the BOMEX check matches the saved run exactly, and the 17 UW tests pass.
+- Switch on, 20 levels: the cloud layer now gets water. The 1240 m change is -0.10 g/kg
+  (was -0.91). That passes.
+- The subcloud pile-up stays, slightly worse: +1.4 to +1.9 g/kg. That fails. The plume
+  takes its water from its source level at 803 m, which dries 1.13 g/kg, not from the
+  subcloud layer.
+- 40 and 80 levels still fail (water -2.75 g/kg at 720 m, and +5.85 g/kg at the
+  surface).
+- The old test `test_uw_bomex_long_timestep_is_bounded_at_development_resolutions`
+  fails with the switch on:
+  - maximum cloud fraction 0.20 against 0.15 at 20 and 40 levels. A nearly stopped
+    plume has a small velocity, so its diagnosed area hits the 0.20 cap.
+  - the 20-40 level differences in water path (0.049) and mass flux (0.13) exceed 0.02.
+- The switch stays off by default. My first count of kept plumes read the deep scheme's
+  plume-top diagnostic by mistake and is being redone.
+- Recount from the shallow scheme's own output: kept in 9 of 24 steps with the switch
+  on (0 with it off), median top 1062 m. Fails the 12-of-24 criterion.
+- Budget with the switch on, 20 levels, hours 3-6
+  (`scripts/trace_bomex_budget.py ... uw_shallow_keep_crossed_interface=true`):
+  - The plume moves water from 803 m (-5.25 g/kg/day) to 1240 m (+4.20).
+  - The subcloud layer still gains 3-7 g/kg/day, because the turbulence leaves it in
+    the lowest 250 m.
+  - At 247 and 475 m the shallow scheme cools at 13.7 and 45.9 K/day while moving no
+    water. Condensation heats the same levels back at 13.75 and 45.70 K/day. That looks
+    like an evaporate-and-recondense loop every step. The likely source is the phase
+    partition: UW splits water at full saturation, production condenses above RH 0.90.
+    Not yet checked in the code.
+- Switch on plus no partial condensation (`condensation_rh_crit` 1.0), same criteria:
+  - subcloud water +1.4 to +1.6 g/kg: fails;
+  - 1240 m water -0.41 g/kg: passes;
+  - θ within 0.5 K: passes.
+  - 40 and 80 levels still fail.
+- Every fix on the UW path has exposed the next defect. Per the standing rule, the next
+  step is to reassess against CESM2 and GFDL, not another patch.
+
+**Partition mismatch: confirmed in the code.** `uw_shallow_convection` re-partitions
+every level below `uw_shallow_maximum_height_m` (4 km) with `partition_mse`, which
+condenses only at full saturation. UW turbulence (`boundary_layer_uw.py`) and
+production condensation both use `partition_water` with `condensation_rh_crit` (0.90).
+So each step the shallow scheme evaporates the cloud water condensation just made, and
+condensation makes it again. That is the ±46 K/day loop at 475 m.
+
+**Reassessment against CESM2 and GFDL, 11 Sep.**
+- CESM2 (CAM6) has one PDF closure, CLUBB, for turbulence, shallow cumulus and cloud
+  macrophysics. There is no second rule for when water condenses.
+- GFDL AM4 hands the UW shallow scheme's condensate to the Tiedtke cloud scheme. It
+  does not re-partition it with a different rule.
+- So both keep one phase partition for every scheme that touches water. Making UW
+  shallow use `partition_water` is the contract both references follow, not another
+  patch. The UW path stays, as chosen under the cloud-deck options.
+- Order from here: the partition contract in UW shallow, then the BOMEX check again.
+  A and B go to promotion only if their equilibrium tests pass.
+
+**Partition contract in UW shallow, 11 Sep. Done; the loop is gone.**
+- `uw_shallow_convection` now uses `partition_water` when `condensation_rh_crit` is
+  below 1, as UW turbulence does. At 1 (the code default, used by the unit tests) it
+  keeps `partition_mse`.
+- Criteria fixed before:
+  - UW tests pass: 17 pass.
+  - Shallow and condensation tendencies at 247 and 475 m under 2 K/day: now under 0.2
+    (were ±46).
+  - BOMEX result reported.
+- BOMEX with the partition fix alone: almost unchanged at every grid. At 20 levels θ is
+  +0.45 K, water +1.19 g/kg, rain 0.05 mm/day. At 80 levels: +2.63 K, -5.63 g/kg,
+  2.61 mm/day. The loop cancelled itself in the net state, so removing it changes little.
+- Partition fix plus `uw_shallow_keep_crossed_interface`:
+  - 20 levels: about the same as the switch alone (cloud layer -0.06 g/kg at 1240 m,
+    subcloud +1.4 to +1.9 g/kg).
+  - 80 levels: blows up (+21.5 K at 1583 m, -12.1 g/kg, 15 mm/day). Without the
+    partition fix it was +2.4 K. Not traced.
+  - The switch stays off by default, so the default path is not affected.
+
+**Where the UW path stands, 11 Sep. Paused for a decision.**
+- Fixed: the partition contract.
+- Partial: the plume bookkeeping (behind a switch, off; kept in 9 of 24 steps).
+- Open:
+  - the subcloud mixing collapses under cloud-base condensation (D), which blocks the
+    plume's supply;
+  - fine grids are unstable at 900 s;
+  - the switch and the partition fix together blow up at 80 levels.
+- Each fix still exposes another defect.
+- Full test suite after these changes: 152 passed, 1 expected-fail, 0 failures.
+
+**Decision, 12 Sep: stay on UW, with a stop rule.** The question was whether the failures
+are bugs in our copy or limits of UW's design. UW was built and tuned on BOMEX and runs
+in GFDL AM4 and CAM5 on grids as coarse as ours, so a faithful copy should pass. Every
+failure so far has been a bug in our copy: discarded plumes, and a partition rule that
+disagreed with our own condensation.
+
+The stop rule, fixed now:
+- fix the two known problems, namely the mixing that collapses below cloud base and the
+  fine-grid instability;
+- then run the BOMEX observed balance at 20 and 40 levels. If it still fails, switch
+  designs;
+- switch immediately if a fix requires changing UW's physics rather than our copy.
+
+To tell a copying bug from a design limit quickly, CAM's own UW source is downloaded to
+`outputs/cam_reference/` (gitignored) for a side-by-side reading, rather than the web
+summaries used so far: `uwshcu.F90` (5111 lines) from ESCOMP/CAM, and `eddy_diff.F90`
+(3386 lines) plus its wrapper from ESCOMP/atmospheric_physics, where the turbulence moved
+under `schemes/bretherton_park`.
+
+**Reading 1: CAM never discards a plume.** In `uwshcu.F90`, when the updraft velocity
+`wtw` reaches zero at interface k, it sets `kpen = k` and jumps out of the ascent loop
+(lines 2770-2777). Everything computed up to interface k-1 stands. It then solves a
+quadratic for `ppen`, the penetration distance into layer `kpen`, bounded to that layer's
+depth (lines 2875-2898). So our `uw_shallow_keep_crossed_interface` switch is the right
+shape, and the old discard was a copying bug.
+
+**Reading 2: why our cloud fraction hits the cap.** CAM's cumulus fraction is the sum of
+the updraft fractions at a layer's two interfaces, which is twice the layer mean, with the
+core fraction itself capped at `rmaxfrac` = 0.10 (lines 2807-2810, 4099). In the layer
+where the plume stops it uses `cufrc(kpen) = (ufrc(kpen-1) + 0) * (-ppen) / dp`
+(line 4103): the top interface contributes zero, and the result is scaled by how much of
+the layer the plume actually occupies.
+
+Ours does neither in the stopping layer. It assigns twice the core area of the single
+crossed interface to the whole layer, so it lands on the 0.20 cap. That is what failed
+`test_uw_bomex_long_timestep_is_bounded_at_development_resolutions` at 0.15, both for the
+reverted attempt and for the current switch. The fix is CAM's weighting: one interface's
+area, scaled by the penetration depth.
+
+**Cloud-fraction weighting applied, 12 Sep. The cap failure is fixed.** `record_interface`
+now takes a `layer_share` used only on the crossing path, following CAM's `cufrc(kpen)`.
+With the switch on, the old test's cloud assertions now pass: maximum cloud fraction
+0.003 at 20 levels and 0.041 at 40, against the 0.15 limit (was 0.20 at both). Water path
+and boundary-layer depth pass as well. What still fails there is grid convergence: the
+20-to-40 level differences are 0.049 in water path and 0.132 in mass flux, both against a
+0.02 limit. With the switch off the UW tests pass unchanged (17).
+
+**The mixing collapse is the local-Richardson path, and our own layer closure fixes it.**
+CAM's turbulence (`eddy_diff.F90`, `caleddy`) uses first-order closure only for stable
+layers. For convective layers it diagnoses a layer-wide TKE and entrainment closure, and
+`zisocl` deliberately extends a convective layer through adjacent weakly stable
+interfaces, stopping only when the stability is too strong. A single stable interface
+inside the layer therefore cannot cut the mixing. Ours has exactly this structure in
+`scm/uw_layers.py`, but `uw_candidate_v1.toml` never switches it on, so the candidate ran
+the local-Richardson path where one condensing interface zeroes the diffusivity.
+
+BOMEX with `uw_layer_closure = true` (A and B off, rain-out 0, mixing 5e-5):
+
+| setting | levels | worst θ | worst water | rain mm/day |
+|---|---|---|---|---|
+| local Richardson | 20 / 40 / 80 | +0.45 / +0.68 / +2.61 K | +1.18 / +1.82 / -5.57 g/kg | 0.06 / 0.16 / 2.68 |
+| layer closure | 20 / 40 / 80 | +0.67 / +0.61 / +0.81 | +1.64 / +2.11 / +2.52 | 1.07 / 0.70 / 0.92 |
+| layer closure + plume fix | 20 / 40 / 80 | +0.67 / +0.60 / +0.81 | +1.64 / +1.78 / +2.07 | 0.78 / 0.81 / 0.37 |
+
+- The subcloud pile-up is gone: at 20 levels the surface-to-475 m changes are -0.08 to
+  +0.12 g/kg, against +1.0 to +1.2 before.
+- The 80-level blow-up is gone (+2.61 K and -5.57 g/kg become +0.81 and +2.07), and the
+  three grids now give the same sign and similar size. That is the convergence the stop
+  rule asked about.
+- What remains: water now piles just below cloud base instead (+1.64 g/kg at 803 m at 20
+  levels, +1.8 to +2.1 g/kg at 1128-1319 m at 40 and 80), θ runs 0.6-0.8 K warm, and rain
+  is 0.4-1.1 mm/day against the 0.1 limit. So the check still fails, but on one defect
+  rather than four.
+
+The collapse criterion set earlier is met. With the layer closure on, the diffusivity at
+361 m is 71, 107 and 102 m2/s at hours 0, 3 and 5.75, never zero, against 179 falling to 0
+after one step on the local-Richardson path.
+
+**The new defect: the convective layer extends too deep.** In the same trace the diagnosed
+depth grows from 640 m to 1023 m in three hours, and the water at 803 m rises from 14.85
+to 16.29 g/kg: the closure mixes the subcloud layer straight through the transition layer
+instead of stopping under cloud base and handing the moisture to the plume. BOMEX's
+subcloud layer is about 500 m deep. So the extension test is the thing to compare with
+CAM's `zisocl` next.
+
+**Reading 3: what CAM's extension test actually compares.** In `eddy_diff.F90` the live
+test is `do while ( -dl2n2 > -rinc*l2n2/(1-rinc) )` with `rinc = -0.04` (lines 2776,
+104). `dl2n2` is the candidate interface's stability integral and `l2n2` the layer's
+accumulated one, so a layer extends while the new interface's stable work stays under
+about 4% of the unstable work already gathered. The two variants that would bring the
+surface flux into the test, through the TKE `wint`, are both commented out (lines
+2774-2775).
+
+Ours (`scm/uw_layers.py`) uses the same 4% ratio, but adds a surface-buoyancy seed to the
+driving side, `0.30 * (source * thickness)^(2/3) * mass / b1`. That term grows as the
+layer thickens, so a layer fed by a surface flux can keep paying for the next stable
+interface and climb through the inversion. That is the hypothesis for the over-deep layer;
+it is untested.
+
+Criteria fixed before the test, at 20 levels with the layer closure on: the diagnosed
+depth stays under 700 m through 6 h (the interface below cloud base is at 639 m), and the
+water change at 803 m falls under 0.5 g/kg, from +1.64.
+
+**Result: the seed is not the cause. Both criteria fail, and the change is reverted.**
+With the seed off the depth still reaches 1023 m at hour 3 (640 m at hours 0 and 5.75, so
+the over-extension is intermittent), and the water at 803 m still piles to +1.52 g/kg.
+The rest of the column changed only slightly, mostly for the better (1240 m water -0.31
+against -0.71, subcloud -0.33 to -0.04). `scm/uw_layers.py` is back to its earlier state.
+
+The layer extends when the 803 m layer goes cloudy (cloud fraction 0.51 there): the
+cloud-topped layer above stops looking stable, so the closure merges it into the mixed
+layer instead of leaving cumulus to carry the moisture up. That is the next thing to
+trace, and CAM's SRCL and decoupling logic in `zisocl` is the reference for it.
+
+**Why the closure swallows the cloud layer: traced, 12 Sep.** Criterion fixed before: the
+merge is driven by the cumulus cloud if the moist stability at the 639 m interface turns
+negative in the same steps that the 803 m layer goes cloudy. Confirmed, at 20 levels with
+the layer closure on:
+
+| hour | N2 at 639 m | label | K at 639 m | cloud fraction at 803 m | depth |
+|---|---|---|---|---|---|
+| 0.0 | +7.8e-5 | none | 1.3 m2/s | 0.00 | 640 m |
+| 2.0 | +1.6e-5 | none | 5.9 | 0.22 | 640 |
+| 2.5 | +4.6e-6 | none | 16.4 | 0.25 | 640 |
+| 3.0 | -5.9e-7 | convective | 40.0 | 0.39 | 361 |
+| 5.0 | -2.5e-6 | convective | 140.0 | 0.52 | 1023 |
+
+As the shallow scheme detrains condensate into the 803 m layer, the grid-mean cloud
+fraction there climbs. Our moist stability weights the saturated and unsaturated
+buoyancy frequencies by that cloud fraction, so the interface below turns conditionally
+unstable, the closure labels it convective, and it merges with the surface layer. The
+turbulence then mixes to 1 km and the moisture never reaches the cumulus layer.
+
+So the defect is a feedback between two schemes: the shallow scheme's own cloud is fed
+back into the turbulence's stability, which then destroys the layering the shallow scheme
+depends on.
+
+**Test: let the turbulence's stability ignore condensate, 12 Sep.** CAM builds its
+saturated fraction from the cloud fraction too (`trbintd`, with a liquid-water threshold),
+so the structure matches ours; which cloud the host hands in is not visible in the two
+downloaded files. `uw_stability_condensate` (default `grid`, so nothing changes) can set
+it to `none`. Criteria fixed before: depth under 700 m through 6 h, water at 803 m under
+0.5 g/kg, water at 1240 m above -0.5.
+
+Result: the merge is gone, the ventilation is not.
+- Water at 803 m is -0.42 g/kg, where it piled at +1.5 to +1.6. That criterion passes.
+- Water at 1240 m is -1.01 g/kg, against -0.94 with no physics at all. That fails: the
+  cloud layer receives nothing.
+- The moisture stacks up at the surface instead: +2.36, +2.08, +1.66 g/kg at 0, 89 and
+  247 m.
+- So the plume is still not exporting, with or without the merge. The switch is kept
+  because it isolates the mechanism, and it is inert by default.
+
+**Where the stop rule stands, 12 Sep.**
+- Mixing collapse below cloud base: fixed, by running the layer closure our code already
+  had. A copying bug, in that the candidate config never switched it on.
+- Fine-grid instability: largely fixed by the same change. The 80-level blow-up is gone
+  and the three grids agree in sign and size. The old test's 20-to-40 convergence
+  assertions still fail (water path 0.049, mass flux 0.132, limit 0.02).
+- BOMEX at 20 and 40 levels still fails. The bounded step the user approved is now
+  finished: the merge was traced and can be switched off, and the check still fails,
+  because the shallow plume does not export enough moisture on its own.
+- By the rule as written, that means switching designs. The evidence is now more mixed
+  than when the rule was set: the collapse and the merge were both our own bugs, but the
+  remaining failure is the plume's transport, which is UW's own physics rather than our
+  copy of it, and the rule says to switch immediately in that case.
+- Not decided here; it is the user's call.
+- Full test suite after the cloud-fraction weighting: 152 passed, 1 expected-fail.
+
+### Split CAPE-parcel knob: equilibrium test, 12 Sep. Passes everything.
+
+400 days on the 5 m slab from the current reference, with `mf_cape_entrainment_rate` 5e-5
+and the plume left at 5e-6 (`outputs/atm407_tests/cape_entrain5e5.toml`).
+
+| | reference | B, one knob (800 d) | split knob |
+|---|---|---|---|
+| every gate passes | yes | yes | **yes** |
+| surface temperature | 289.03 K | 288.15 | **288.91** |
+| TOA net | +0.46 W/m2 | +0.49 | +0.62 |
+| deep rain | 1.98 mm/day | 1.70 | **1.89** |
+| total rain | 3.16 | 3.05 | 3.14 |
+| cloud water path | 0.219 kg/m2 | 0.222 | 0.222 |
+| CAPE | 566 J/kg | 121 | 181 |
+| RH95 mass fraction | 0.09 | 0.17 | **0.09** |
+| cloud-base mass flux | 0.0086 kg/m2/s | 0.0035 | 0.0082 |
+
+All four criteria pass: gates (drift 0.013), deep rain 1.89, RH95 unchanged at 0.09, and
+the surface shifts only -0.12 K against a 0.3 K limit. Deep convection is intact
+(cloud-base mass flux 0.0082 against 0.0086), while the closure parcel is diluted enough
+to keep deep convection out of BOMEX (0.00 mm/day there). The band growth and the 0.9 K
+cooling came entirely from raising the plume's own mixing, which the split avoids.
+
+So there are now two promotion candidates, each passing its criteria alone: A (rain-out
+off) and the split knob.
+
+**Both together, 400 days: every criterion passes.** (`rainout0_cape_entrain5e5_5m`.)
+
+| | reference | A | split knob | A + split |
+|---|---|---|---|---|
+| every gate passes | yes | yes | yes | **yes** |
+| surface temperature | 289.03 K | 289.01 | 288.91 | **289.05** |
+| TOA net | +0.46 W/m2 | +0.72 | +0.62 | +0.75 |
+| surface net | -0.23 W/m2 | +0.04 | -0.06 | +0.00 |
+| total rain | 3.16 mm/day | 3.15 | 3.14 | 3.15 |
+| deep rain | 1.98 | 2.00 | 1.89 | **1.94** |
+| large-scale rain | 1.12 | 0.00 | 1.19 | 0.00 |
+| microphysics rain | 0.06 | 1.15 | 0.06 | 1.21 |
+| cloud water path | 0.219 kg/m2 | 0.335 | 0.222 | 0.338 |
+| CAPE | 566 J/kg | 567 | 181 | 183 |
+| RH95 mass fraction | 0.09 | 0.09 | 0.09 | **0.09** |
+| cloud-base mass flux | 0.0086 kg/m2/s | 0.0086 | 0.0082 | **0.0082** |
+
+Gates: drift 0.0001, TOA 0.747, surface 0.000, residual 0.017. Surface temperature moves
++0.02 K against a 0.3 K limit, and the saturated band is unchanged. The two changes are
+independent in effect: A moves rain from the condensation scheme to the microphysics and
+raises cloud water path 54%, the split knob cuts the closure's CAPE from 566 to 183 while
+leaving deep rain and cloud-base mass flux intact.
+
+**Recommendation: promote both, together.** They fix defects A and B, which the observed
+BOMEX balance showed, at no measurable cost to the lab climate. Promotion is the user's
+call and needs: `cloud_ls_precip_fraction = 0.0` and the new CAPE-parcel rate in
+`atm407.toml`, a `[mass_flux]` mapping for `mf_cape_entrainment_rate` in
+`configuration.py`, a regenerated reference checkpoint, and the notebook notes updated for
+the new cloud water path. Defects C and D would remain open.
+
+### Equilibrium tests of A and B, 12 Sep. A passes; A+B needs longer.
+
+400 days on the 5 m slab from the current reference. Criteria were fixed before the runs
+(every gate passes, deep rain at least 1 mm/day, RH95 mass fraction no higher than 0.09).
+
+| | reference | A: rain-out 0 | A+B: rain-out 0, mixing 5e-5 |
+|---|---|---|---|
+| every gate passes | yes | **yes** | no (drift only) |
+| surface temperature | 289.03 K | 289.01 | 288.59 |
+| TOA net | +0.46 W/m2 | +0.72 | +0.08 |
+| surface net | -0.23 W/m2 | +0.04 | -0.38 |
+| total rain | 3.16 mm/day | 3.15 | 3.09 |
+| deep rain | 1.98 | 2.00 | 1.78 |
+| large-scale rain | 1.12 | 0.00 | 0.00 |
+| microphysics rain | 0.06 | 1.15 | 1.31 |
+| cloud water path | 0.219 kg/m2 | 0.335 | 0.344 |
+| CAPE | 566 J/kg | 567 | 124 |
+| RH95 mass fraction | 0.09 | **0.09** | 0.17 |
+| cloud-base mass flux | 0.0086 kg/m2/s | 0.0086 | 0.0035 |
+
+**A passes all three criteria.** The rain simply moves from the condensation scheme to
+the cloud microphysics; the total is unchanged. The climate barely moves: surface
+temperature within 0.02 K, deep convection and the saturated band unchanged. The cloud
+water path rises 53%, which is the real change, since the column now holds the
+condensate it used to rain out. A is a promotion candidate.
+
+**A+B fails only the drift gate** (0.077 K against 0.05; TOA, surface and column closure
+all pass). The column is still cooling toward a new state, 0.44 K below the reference,
+with CAPE cut from 566 to 124 and the cloud-base mass flux down 60%. Its RH95 fraction
+of 0.17 fails the band criterion, but that reading is provisional while it is still
+drifting. Extended by another 400 days before judging.
+
+**B alone fails only the drift gate too** (0.084), with the same signature as A+B:
+surface temperature 288.53 K (0.49 below the reference), TOA +0.07 W/m2, CAPE 123 J/kg,
+cloud-base mass flux 0.0035 kg/m2/s, RH95 fraction 0.17. Its large-scale rain is still
+1.27 mm/day, since A is off. So B, not A, drives the cooling, the CAPE cut and the wider
+saturated band. Extended by another 400 days.
+
+So on the lab column the two changes separate cleanly: A moves rain between schemes and
+leaves the climate alone; B resets the convective state. If B's band growth survives the
+longer run, it is a real cost to weigh against the BOMEX gain, and the band at 810-910
+hPa is already open problem 1.
+
+**A+B at 800 days: settled, and it fails on the band.** Every gate now passes (drift
+0.024, TOA +0.47 W/m2, surface -0.11, residual 0.076) and deep rain is 1.72 mm/day, so
+two of the three criteria pass. The RH95 mass fraction stays at 0.17 against the 0.09
+limit, and that reading is no longer provisional. Surface temperature settles at
+288.23 K, 0.80 K below the reference, with CAPE 122 J/kg and cloud-base mass flux
+0.0035 kg/m2/s.
+
+**Where B's band comes from: a new saturated layer at 380 hPa, not the 865-910 hPa
+band.** Settled profiles, reference against A+B:
+
+| p hPa | RH ref | RH A+B | cloud ref | cloud A+B | T ref | T A+B |
+|---|---|---|---|---|---|---|
+| 305 | 0.66 | 0.43 | 0.00 | 0.00 | 217.7 | 221.3 |
+| 380 | 0.94 | 0.97 | 0.20 | 0.44 | 227.7 | 221.1 |
+| 460 | 0.52 | 0.86 | 0.00 | 0.00 | 239.4 | 232.7 |
+| 540 | 0.31 | 0.64 | 0.00 | 0.00 | 249.0 | 242.8 |
+| 750 | 0.68 | 0.38 | 0.00 | 0.00 | 262.6 | 262.6 |
+| 810 | 0.88 | 0.62 | 0.00 | 0.00 | 267.0 | 266.2 |
+| 865 | 0.99 | 1.00 | 0.78 | 1.00 | 272.8 | 271.7 |
+| 910 | 0.99 | 1.00 | 0.67 | 0.84 | 276.7 | 275.7 |
+
+- The 865-910 hPa band is nearly unchanged. The extra RH95 mass is a new saturated layer
+  at 380 hPa, with cloud cover up from 0.20 to 0.44.
+- The upper troposphere cools 6-7 K at 380-540 hPa and moistens sharply, while 685-810
+  hPa dries.
+- That makes the column's existing cold, low convective top worse, so B as one knob is
+  not acceptable for production as it stands.
+
+**Why one knob is the wrong shape.** `entrainment_rate` sets both the closure's CAPE
+parcel and the plume's own mixing. CESM2 keeps these separate: ZM dilutes its CAPE parcel
+at about 1 per km while the plume's transport mixing is its own. Raising ours did both at
+once, which is what moved the detrainment and cooled the upper troposphere.
+
+Next: give the closure parcel its own rate (`mf_cape_entrainment_rate`, defaulting to
+`entrainment_rate`, so unset is bit-identical), keep the plume at 5e-6, and retest.
+Criteria fixed before:
+- BOMEX at 20 levels: deep rain below 0.1 mm/day;
+- lab equilibrium, 400 days: every gate passes, deep rain at least 1 mm/day, RH95 mass
+  fraction no higher than 0.09, and surface temperature within 0.3 K of the reference.
+
+**B settled at 800 days: same verdict.** Every gate passes (drift 0.022) and deep rain is
+1.70 mm/day, but RH95 stays at 0.17 and the surface settles at 288.15 K, 0.88 K below the
+reference, with CAPE 121 J/kg and cloud-base mass flux 0.0035 kg/m2/s. A+B at 800 days is
+that same climate with A's rain moved between schemes (cloud water path 0.344 against
+0.222). So B as one knob fails the band criterion whether or not A is on.
+
+**Split knob, first results, 12 Sep.**
+- Unset, `mf_cape_entrainment_rate` is bit-identical: the production BOMEX check matches
+  the saved run exactly, and the convection tests pass (23 passed, 1 expected-fail).
+- BOMEX at 20 levels with only the closure parcel diluted (5e-5) and rain-out off: deep
+  rain 0.00 mm/day. That meets the criterion B needed. The rest of the check is as
+  before (subcloud +1.05 g/kg, -0.95 g/kg at 1240 m), since C is untouched.
+- The 400-day lab equilibrium test is running (`cape_entrain5e5_5m`).
+- For promotion, `configuration.py` has no `[mass_flux]` mapping for this key yet; the
+  test config sets it under `[params]`.
+- Full test suite after the split: 152 passed, 1 expected-fail, 0 failures.
+
 ### Link map and fix classification, 10 Sep
 
 The open problems fall into three clusters. Problems inside a cluster share a
@@ -1266,6 +2130,7 @@ the RRTMG harness or a published benchmark before the next is started.
    for a CO2 doubling, RRTMG 3.63. The earlier "calibrated to 3.708" used a different
    basis. This matters for the notebook's CO2 experiments. The k-distribution fit
    includes a doubled-CO2 case, so a candidate that passes fixes this too.
+   [Fixed 11 Sep in the production config; see "CO2 fix" below.]
 
    **Longwave, step 2, 11 Sep: 4 bands x 3 g-points, shared g-point shares. Fails.**
    `scripts/fit_longwave_kdistribution.py --edges four --gpoints 3`, 4000 steps.
@@ -1366,6 +2231,14 @@ the RRTMG harness or a published benchmark before the next is started.
    today's radiation. Small fix to do first: the CO2 forcing is 30% too strong. The CO2
    term only acts away from the control CO2, so correcting it changes the notebook's CO2
    experiments but not the lab's equilibrium.
+
+   **CO2 fix, done 11 Sep.** `lw_band_co2_log_factor` in `atm407.toml` was scaled by
+   0.758 (solved by bisection) to [0.00, 0.0145, 0.1727, 0.0859]. A CO2 doubling now
+   forces 3.63 W/m2 on the reference with clear sky and ozone off (RRTMG 3.62), and
+   3.57 with ozone (was 4.65). The control climate is bit-identical, because the term
+   is zero at the control CO2. The notebooks' CO2 experiments now respond about 24%
+   less. Notebook 1's demo at 800 ppm still shows opposite signs (lower troposphere
+   +0.083, stratosphere -0.105 K/day; before, +0.108 and -0.139).
 8. **Pressure broadening.** Line absorption currently has no p-dependence beyond
    layer mass.
 9. **Condensate sedimentation** (`cloud_sedimentation_speed`, implemented,

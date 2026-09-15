@@ -137,6 +137,15 @@ def mass_flux_convection(state, grid, params):
     nlevels = t.shape[1]
 
     entrainment = _column_param(params, 'entrainment_rate', 5.0e-6, t, batch)  # per Pa
+    # The closure's CAPE parcel and the plume's own mixing are separate in CESM2: ZM
+    # dilutes its CAPE parcel at about 1 per km while the plume carries its own
+    # entrainment. Ours was one knob, so raising it to stop spurious deep convection in
+    # BOMEX also moved the plume's detrainment and cooled the upper troposphere 6-7 K
+    # (tests of 11-12 Sep 2026). Unset, this is the plume's rate and nothing changes.
+    if 'mf_cape_entrainment_rate' in params:
+        cape_entrainment = _column_param(params, 'mf_cape_entrainment_rate', 5.0e-6, t, batch)
+    else:
+        cape_entrainment = entrainment
     # Only the flux transport remains. The legacy transport, removed 10 Sep 2026,
     # lost about 120 W/m2 of column moist static energy and hid it with a uniform
     # correction.
@@ -170,7 +179,7 @@ def mass_flux_convection(state, grid, params):
 
     # use dilute CAPE for the closure
     cape_val = dilute_cape(
-        t, q, p, entrainment,
+        t, q, p, cape_entrainment,
         condensate_retention=cond_retain,
         condensate_fallout=cond_fallout,
         max_pressure_step=params.get('mf_cape_max_pressure_step', 1000.0),
@@ -279,7 +288,7 @@ def mass_flux_convection(state, grid, params):
             trial_t,
             trial_q,
             p,
-            entrainment,
+            cape_entrainment,
             condensate_retention=cond_retain,
             condensate_fallout=cond_fallout,
             max_pressure_step=params.get('mf_cape_max_pressure_step', 1000.0),

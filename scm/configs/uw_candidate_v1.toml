@@ -1,3 +1,5 @@
+# Experimental UW development configuration; not validated for teaching promotion.
+# Current BOMEX screening and runner overrides are documented in ../../docs/column_code_map.md.
 [run]
 label = "uw_candidate_v1"
 

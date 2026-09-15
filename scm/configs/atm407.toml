@@ -1,4 +1,5 @@
 # Accepted ATM407 configuration with conservative mass-flux convection.
+extends = "legacy_base.toml"
 [run]
 mode = "full"
 scheme = "mf"
@@ -60,11 +61,12 @@ albedo = 0.32
 lw_band_weights = [0.10, 0.25, 0.35, 0.30]
 lw_band_wv_kappa = [0.00, 0.10, 0.22, 0.40]
 lw_band_co2_base_tau = [0.00, 0.15, 0.65, 0.35]
-# calibrated so a CO2 doubling forces +3.7 W/m2, the standard value, which
-# lets the lab's numbers be compared against published estimates. this term is
+# calibrated 11 Sep 2026 so a CO2 doubling gives the same instantaneous clear-sky
+# forcing as RRTMG on the reference column (3.62 W/m2; it was 4.72, 30% too strong,
+# see docs/column_open_problems.md). this term is
 # multiplied by log(co2 / co2_ref) and the control runs at co2 = co2_ref, so it
 # has no effect whatsoever on the equilibrium state -- only on the forcing.
-lw_band_co2_log_factor = [0.00, 0.0191, 0.2279, 0.1134]
+lw_band_co2_log_factor = [0.00, 0.0145, 0.1727, 0.0859]
 lw_band_trace_scale = [0.00, 0.20, 0.60, 0.20]
 sw_band_weights = [0.55, 0.30, 0.15]
 sw_band_wv_kappa = [0.00, 0.015, 0.00]
@@ -116,7 +118,14 @@ cloud_autoconv_qc_thresh = 2.0e-4
 cloud_autoconv_qc_scale = 4.0e-4
 cloud_autoconv_power = 2.0
 cloud_evap_tau = 3600.0
-cloud_ls_precip_fraction = 0.95
+# Promoted 12 Sep 2026 from 0.95. At 0.95, condensation rained 95% of new cloud
+# water out at once; at the top of the BOMEX subcloud layer, where the observed air
+# sat at RH 0.96, that heated the layer 9.5 K/day and warmed the subcloud layer about
+# 3 K/day (defect A in docs/column_open_problems.md). Rain now leaves through the
+# microphysics instead. 400-day test: every gate passes, surface temperature within
+# 0.02 K, saturated band unchanged; cloud water path rises 0.219 -> 0.335 kg/m2
+# because the column now holds the condensate it used to rain out.
+cloud_ls_precip_fraction = 0.0
 cloud_rh_evap = 0.70
 cloud_rh_min = 0.90
 cloud_qc_ref = 8.0e-4
@@ -160,6 +169,14 @@ enforce_mse_conservation = true
 transport_form = "flux"
 entrainment_rate = 5.0e-6
 detrainment_rate = 5.0e-6
+# Added 12 Sep 2026. The closure's CAPE parcel mixes at this rate; the plume keeps
+# entrainment_rate above. CESM2 separates the two the same way, diluting ZM's CAPE
+# parcel at about 1 per km. With one knob, the rate needed to stop deep convection
+# firing in BOMEX (defect B) also moved the plume's detrainment: 0.9 K cooler, CAPE
+# 566 -> 121, and the saturated band doubled. Splitting them keeps BOMEX deep rain at
+# zero with the lab climate intact (surface -0.12 K, band unchanged, cloud-base mass
+# flux 0.0086 -> 0.0082).
+cape_entrainment_rate = 5.0e-5
 plume_decay_rate = 1.5e-4
 tau_cape = 21600.0
 precip_efficiency = 0.80
@@ -252,10 +269,9 @@ convection_scheme = "mass_flux"
 # any lower value appeared to drive the column to 223 K. That collapse was
 # unintended cloud shortwave absorption, not this scheme: [radiation.clouds]
 # enabled = false was being ignored whenever cloud microphysics was active. With
-# that fixed, 0.95 gives the best-converged column the project has produced
-# (TOA -0.24 W/m2, drifting 0.002 K/day) and takes mass at RH >= 95% from 0.15
-# to 0.11. The saved reference is generated at this value; changing it makes the
-# reference stale.
+# that fixed, sub-saturated thresholds became usable. The current September 12
+# notebook reference uses 0.90, not the older 0.95 experiment. Its provenance
+# and remaining cloud-layer limitations are in notebooks/data/README.md.
 condensation_rh_crit = 0.90
 dry_adjustment_enabled = true
 dry_adjustment_max_lapse_excess = 3.0
@@ -381,4 +397,6 @@ mf_rain_evap_coefficient = 0.0
 # (Zhang-McFarlane). Without this it carried about 5 W/m2 of heat from the
 # stratosphere into the troposphere. See docs/column_open_problems.md, 10 Sep.
 # Equilibrium with it: TOA +0.46 W/m2, surface temperature 289.0 K.
+# After the 12 Sep rain-out and CAPE-parcel changes above: TOA +0.75 W/m2,
+# surface temperature 289.05 K, CAPE 183 J/kg, cloud water path 0.338 kg/m2.
 mf_plume_stop_at_neutral_buoyancy = true

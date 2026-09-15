@@ -77,8 +77,20 @@ def uw_moist_turbulence(state, grid, params):
 
     layers = None
     if params.get('uw_layer_closure', False):
+        # The stability below weights saturated and unsaturated buoyancy by cloud
+        # fraction, as CAM's trbintd does. Our grid cloud also carries what the shallow
+        # scheme detrained, so a cumulus layer can turn the interface below it
+        # conditionally unstable and the closure then merges the cumulus layer into the
+        # mixed layer (traced 12 Sep 2026). Set 'none' to let the stability ignore
+        # condensate entirely.
+        if str(params.get('uw_stability_condensate', 'grid')) == 'none':
+            stability_liquid = torch.zeros_like(qc)
+            stability_fraction = torch.zeros_like(q)
+        else:
+            stability_liquid = qc
+            stability_fraction = state.get('cloud_fraction', torch.zeros_like(q))
         layers = layer_diffusivity(
-            t, q, qc, state.get('cloud_fraction', torch.zeros_like(q)),
+            t, q, stability_liquid, stability_fraction,
             u, v, p, dp, height, surface_buoyancy, params)
         heat_diffusivity = layers['heat']
         momentum_diffusivity = layers['momentum']
@@ -162,6 +174,7 @@ def uw_moist_turbulence(state, grid, params):
         "du": (u_new - u) / timestep,
         "dv": (v_new - v) / timestep,
         "tke": layer_tke,
+        "tke_interfaces": interface_tke,
         "heat_diffusivity": heat_diffusivity,
         "moist_stability": layers['stability'] if layers is not None else torch.zeros_like(heat_diffusivity),
         "turbulent_layer_labels": layers['labels'] if layers is not None else torch.full_like(heat_diffusivity, -1, dtype=torch.long),

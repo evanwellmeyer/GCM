@@ -6,6 +6,18 @@ from scm.physics_grid import conservative_remap, layer_overlap, make_physics_gri
 from scm.thermo import dp_from_ps, make_grid, pressure_at_full, pressure_at_half
 
 
+def test_interface_tke_round_trip_keeps_host_face_values():
+    host = make_grid(20, dtype=torch.float64)
+    ps = torch.tensor([100000.0, 93000.0], dtype=torch.float64)
+    mapping = make_physics_grid(host, ps, sublevels=3, top=.65)
+    values = mapping.host_interfaces[:, 1:-1] / 100000.
+    state = {'ps': ps, 'tke_interfaces': values}
+    refined = mapping.state_to_physics(state)
+    assert refined['tke_interfaces'].shape[1] == mapping.grid['nlevels'] - 1
+    restored = mapping.output_to_host({'tke_interfaces': refined['tke_interfaces']})
+    assert torch.allclose(restored['tke_interfaces'], values, atol=1e-12)
+
+
 def test_overlap_finds_pressure_shared_by_layers():
     source = torch.tensor([0.0, 400.0, 1000.0])
     target = torch.tensor([0.0, 250.0, 700.0, 1000.0])

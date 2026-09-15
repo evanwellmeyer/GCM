@@ -278,6 +278,10 @@ def physics_step(state, grid, params, rad_cache=None, ls_forcing=None):
     state['v'] = state['v'] + bl_dv * dt
     if 'tke' in bl_out:
         state['tke'] = bl_out['tke']
+    if 'tke_interfaces' in bl_out:
+        state['tke_interfaces'] = bl_out['tke_interfaces']
+    else:
+        state.pop('tke_interfaces', None)
     if 'boundary_layer_depth_m' in bl_out:
         state['boundary_layer_depth_m'] = bl_out['boundary_layer_depth_m']
 

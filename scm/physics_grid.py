@@ -40,6 +40,20 @@ def _as_batched_interfaces(interfaces, *, device=None, dtype=None):
     return values
 
 
+def interpolate_interfaces(values, source, target):
+    """Interpolate an intensive interior-face diagnostic in pressure."""
+    source, target = source[:, 1:-1].contiguous(), target[:, 1:-1].contiguous()
+    if values.shape != source.shape:
+        raise ValueError('interior-face diagnostic does not match its pressure grid')
+    if source.shape[1] == 1:
+        return values.expand(-1, target.shape[1])
+    upper = torch.searchsorted(source, target).clamp(1, source.shape[1] - 1)
+    lower = upper - 1
+    bottom, top = source.gather(1, lower), source.gather(1, upper)
+    fraction = ((target - bottom) / (top - bottom)).clamp(0., 1.)
+    return values.gather(1, lower) + fraction * (values.gather(1, upper) - values.gather(1, lower))
+
+
 def _broadcast_batches(first, second):
     batch = max(first.shape[0], second.shape[0])
     if first.shape[0] not in (1, batch) or second.shape[0] not in (1, batch):
@@ -172,6 +186,9 @@ class PhysicsGrid:
         """Copy the column state and refine the intensive atmospheric fields."""
 
         refined = dict(state)
+        if 'tke_interfaces' in state:
+            refined['tke_interfaces'] = interpolate_interfaces(
+                state['tke_interfaces'], self.host_interfaces, self.physics_interfaces)
         for name in _state_fields:
             if name in state:
                 refined[name] = self.to_physics(state[name])
@@ -183,6 +200,9 @@ class PhysicsGrid:
         """Return layer-shaped scheme outputs to the host grid conservatively."""
 
         restored = dict(output)
+        if 'tke_interfaces' in output:
+            restored['tke_interfaces'] = interpolate_interfaces(
+                output['tke_interfaces'], self.physics_interfaces, self.host_interfaces)
         physics_levels = self.grid["nlevels"]
         for name, values in output.items():
             if (

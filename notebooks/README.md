@@ -15,6 +15,8 @@ jupyter lab
 
 Run the notebooks in order. Both load `scm/configs/atm407.toml` and the canonical files in `notebooks/data/`; do not substitute an experimental checkpoint unless the assignment specifically asks for it.
 
+For developers: `scm/configs/default.toml` now aliases this teaching setup; the UW/BOMEX candidate remains a separate experiment. See the [configuration inventory](../scm/configs/README.md) and [active code map](../docs/column_code_map.md). Passing equilibrium criteria does not remove the documented cloud-profile limitations.
+
 ## How to work through the notebooks
 
 Read the text before each code cell, then run the cells one at a time from top to bottom. Many sections ask you to predict what will happen before running an experiment. Write down your prediction first, even if you are unsure, and then compare it with the model output.

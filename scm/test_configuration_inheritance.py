@@ -5,6 +5,21 @@ import pytest
 from scm.configuration import extract_param_overrides, load_run_config
 
 
+def test_default_and_teaching_configuration_are_identical():
+    default = load_run_config()
+    teaching = load_run_config('scm/configs/atm407.toml')
+    teaching.pop('_config_path')
+    assert default == teaching
+
+
+def test_explicit_legacy_experiment_does_not_inherit_new_teaching_params(tmp_path):
+    experiment = tmp_path / 'experiment.toml'
+    experiment.write_text('[run]\nlabel = "isolated"\n')
+    params = extract_param_overrides(load_run_config(experiment))
+    assert params['cloud_ls_precip_fraction'] == .95
+    assert 'mf_cape_entrainment_rate' not in params
+
+
 def test_flux_candidate_inherits_complete_atm407_configuration():
     config = load_run_config('scm/configs/atm407_flux_v1.toml')
     params = extract_param_overrides(config)

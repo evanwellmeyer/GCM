@@ -361,6 +361,11 @@ def geopotential(t, q, p, grid):
     nlevels = t.shape[1]
     tv = virtual_temperature(t, q)
     z = torch.zeros_like(t)
+    # Benchmark grids may specify the surface datum explicitly. Legacy grids
+    # retain their existing lowest-level datum until their own migration.
+    if 'height_surface_pressure_pa' in grid:
+        surface = torch.as_tensor(grid['height_surface_pressure_pa'], device=p.device, dtype=p.dtype)
+        z[:, -1] = Rd * tv[:, -1] * torch.log(surface / p[:, -1]) / g
 
     for k in range(nlevels - 2, -1, -1):
         dlnp = torch.log(p[:, k + 1] / p[:, k].clamp(min=1.0))

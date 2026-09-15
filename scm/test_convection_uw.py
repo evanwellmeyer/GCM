@@ -130,3 +130,18 @@ def test_uw_bomex_long_timestep_is_bounded_at_development_resolutions():
         results[0]["shallow_mass_flux_kgm2s"]
         - results[1]["shallow_mass_flux_kgm2s"]
     ) < 0.02
+
+
+def test_keeping_a_crossed_interface_bounds_the_stopping_layer_cloud():
+    # A plume that stops inside a layer used to be discarded whole. With the switch on
+    # its flux through the crossed interface is kept, and the cloud fraction in the
+    # stopping layer follows CAM's cufrc(kpen): one interface's area, scaled by the
+    # penetration depth. Without that weighting the layer sat on the 0.20 cap.
+    for levels in (20, 40):
+        result = run_bomex(
+            make_grid(levels), hours=6.0, timestep=900.0, use_shallow=True,
+            scheme="uw", shallow_scheme="uw",
+            parameter_updates={"uw_shallow_keep_crossed_interface": True},
+        )
+        assert result["maximum_cloud_fraction"] < 0.15
+        assert result["cloud_water_path_kgm2"] < 0.10

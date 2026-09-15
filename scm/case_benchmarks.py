@@ -7,9 +7,9 @@ from scm.boundary_layer_edmf_v3 import edmf_boundary_layer
 from scm.column_model import initial_state, update_derived
 from scm.convection_shallow import shallow_convection
 from scm.convection_uw import uw_shallow_convection
-from scm.shallow_plume_v2 import shallow_plume
+from scm.shallow_plume_v2 import shallow_plume, partition_plume
 from scm.ensemble import default_params
-from scm.thermo import Lv, Rd, cp, g, geopotential, kappa, p0, relative_humidity
+from scm.thermo import Lv, Rd, cp, g, geopotential, kappa, p0, relative_humidity, saturation_specific_humidity
 
 
 def linear_profile(height, points, values):
@@ -64,29 +64,46 @@ def initialize_dry_mixed_layer(grid):
 
 
 def initialize_bomex(grid):
+    """Siebesma et al. (2003), Table B1, in specific-water units.
+
+    Select a surface-referenced height datum on this benchmark grid. Above the
+    published 3 km sounding, append a subsaturated free troposphere for the
+    full-column grid; that extension is not part of the scored case.
+    """
+    grid['height_surface_pressure_pa'] = 101500.0
     state, params = benchmark_state(grid, 101500.0)
-    for _ in range(2):
+    for _ in range(12):
         height = model_height(state, grid)
         theta = linear_profile(
             height,
-            [0.0, 520.0, 700.0, 1480.0, 2000.0, 3500.0],
-            [298.7, 298.7, 299.39375, 302.4, 308.4, 313.675],
+            [0.0, 520.0, 1480.0, 2000.0, 3000.0],
+            [298.7, 298.7, 302.4, 308.2, 311.85],
         )
         total_water = linear_profile(
             height,
-            [0.0, 520.0, 700.0, 1480.0, 2000.0, 3500.0],
-            [0.01729, 0.01657, 0.01549, 0.01082, 0.00422, 0.00241],
+            [0.0, 520.0, 1480.0, 2000.0, 3000.0],
+            [0.0170, 0.0163, 0.0107, 0.0042, 0.0030],
         )
         wind = linear_profile(
             height,
-            [0.0, 700.0, 1480.0, 2000.0, 3500.0],
-            [-8.75, -8.75, -7.346, -6.41, -3.71],
+            [0.0, 700.0, 3000.0],
+            [-8.75, -8.75, -4.61],
         )
-        state['t'] = theta * (state['p'] / p0) ** kappa
-        state['q'] = total_water
+        state['t'], state['q'], state['qc'] = partition_plume(theta, total_water, state['p'])
+        above = height > 3000.0
+        temperature = ((311.85 + .00365 * (height - 3000.0)) * (state['p'] / p0) ** kappa).clamp(min=195.0)
+        # Match RH at the sounding top and keep the extension subsaturated.
+        index = int(torch.nonzero(height[0] <= 3000.).flatten()[0])
+        upper = max(0, index - 1)
+        share = ((3000. - height[0, index]) / (height[0, upper] - height[0, index]).clamp(min=1.))
+        pressure = state['p'][0, index] + share * (state['p'][0, upper] - state['p'][0, index])
+        relative = .003 / saturation_specific_humidity(311.85 * (pressure / p0) ** kappa, pressure)
+        humidity = torch.minimum(torch.full_like(temperature, .003), relative.clamp(max=1.) * saturation_specific_humidity(temperature, state['p']))
+        state['t'] = torch.where(above, temperature, state['t'])
+        state['q'] = torch.where(above, humidity, state['q'])
+        state['qc'] = torch.where(above, torch.zeros_like(state['qc']), state['qc'])
         state['u'] = wind
         state['v'].zero_()
-        state['qc'].zero_()
         state = update_derived(state, grid)
     return state, params
 
@@ -112,6 +129,10 @@ def apply_boundary_layer(state, grid, params, sensible_flux, moisture_flux, sche
     else:
         output = boundary_layer_mixing(state, grid, local)
     timestep = float(local['dt'])
+    if 'tke_interfaces' in output:
+        state['tke_interfaces'] = output['tke_interfaces']
+    else:
+        state.pop('tke_interfaces', None)
     state['t'] = state['t'] + output['dt'] * timestep
     state['q'] = state['q'] + output['dq'] * timestep
     state['qc'] = torch.clamp(state['qc'] + output['dqc'] * timestep, min=0.0)
@@ -159,8 +180,9 @@ def run_dry_mixed_layer(grid, hours=6.0, timestep=60.0, scheme='richardson'):
 
 
 def bomex_forcing(state, grid):
+    """Return liquid-potential-temperature and total-specific-water tendencies."""
     height = model_height(state, grid)
-    theta = state['t'] * (p0 / state['p']) ** kappa
+    theta = (state['t'] - Lv * state['qc'] / cp) * (p0 / state['p']) ** kappa
     total_water = state['q'] + state['qc']
     subsidence = linear_profile(
         height,
@@ -169,7 +191,7 @@ def bomex_forcing(state, grid):
     )
     radiative = linear_profile(
         height,
-        [0.0, 1500.0, 2500.0, 3500.0],
+        [0.0, 1500.0, 3000.0, 3500.0],
         [-2.0 / 86400.0, -2.0 / 86400.0, 0.0, 0.0],
     )
     moisture_advection = linear_profile(
@@ -181,6 +203,21 @@ def bomex_forcing(state, grid):
     theta_gradient = vertical_gradient(theta, height)
     water_gradient = vertical_gradient(total_water, height)
     return radiative - subsidence * theta_gradient, moisture_advection - subsidence * water_gradient
+
+
+def bomex_momentum_forcing(state, grid):
+    """Prescribed subsidence, geostrophic acceleration and surface stress."""
+    height = model_height(state, grid)
+    subsidence = linear_profile(height, [0., 1500., 2100., 3500.], [0., -.0065, 0., 0.])
+    geostrophic = -10.0 + .0018 * height
+    zonal = -subsidence * vertical_gradient(state['u'], height) + .376e-4 * state['v']
+    meridional = -subsidence * vertical_gradient(state['v'], height) - .376e-4 * (state['u'] - geostrophic)
+    density = state['p'][:, -1] / (Rd * state['t'][:, -1])
+    speed = torch.sqrt(state['u'][:, -1].square() + state['v'][:, -1].square()).clamp(min=1e-8)
+    stress = density * .28**2 / (state['dp'][:, -1] / g)
+    zonal[:, -1] = zonal[:, -1] - stress * state['u'][:, -1] / speed
+    meridional[:, -1] = meridional[:, -1] - stress * state['v'][:, -1] / speed
+    return zonal, meridional
 
 
 def run_bomex(
@@ -217,11 +254,14 @@ def run_bomex(
     shallow_mass_flux = torch.zeros(1)
     for _ in range(steps):
         theta_tendency, water_tendency = bomex_forcing(state, grid)
+        zonal, meridional = bomex_momentum_forcing(state, grid)
+        state['u'] = state['u'] + zonal * timestep
+        state['v'] = state['v'] + meridional * timestep
         state['t'] = state['t'] + theta_tendency * (state['p'] / p0) ** kappa * timestep
         state['q'] = torch.clamp(state['q'] + water_tendency * timestep, min=1.0e-7)
         state = update_derived(state, grid)
         density = state['p'][:, -1] / (Rd * state['t'][:, -1])
-        sensible_flux = float((density * cp * 8.0e-3)[0])
+        sensible_flux = float((density * cp * (state['ps'] / p0) ** kappa * 8.0e-3)[0])
         moisture_flux = float((density * 5.2e-5)[0])
         state, output = apply_boundary_layer(
             state, grid, params, sensible_flux, moisture_flux, scheme=scheme

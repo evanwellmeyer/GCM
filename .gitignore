@@ -5,6 +5,11 @@ __pycache__/
 outputs/
 .venv/
 .pytest_cache/
+.ipynb_checkpoints/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
 *.egg-info/
 build/
 dist/
@@ -15,3 +20,7 @@ scm*_restart.pt
 scm*_diagnostics.png
 scm_benchmark_*_results.pt
 scm_benchmark_*_report.md
+
+# Local sensitivity checkpoints; the unsuffixed teaching pair remains tracked.
+notebooks/data/atm407_equilibrium_20level_*.npz
+notebooks/data/atm407_equilibrium_20level_*.json
